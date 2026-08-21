@@ -1,0 +1,5 @@
+{
+    "llm_base_url": "http://localhost:11434/v1",
+    "small_model": "gpt-oss:20b-cloud",
+    "large_model": "gpt-oss:120b-cloud"
+}
