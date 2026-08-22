@@ -1,0 +1,46 @@
+# Environments
+.env
+.venv
+venv/
+env/
+ENV/
+
+# OAuth / Secrets
+token.json
+credentials.json
+
+# Dependencies
+node_modules/
+.npm
+
+# Excluded Folders
+paper/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Next.js
+.next/
+out/
+build/
+dataset/strova_multi_turn_customer_support.csv
+dataset/strova_multi_turn_customer_support.csv
