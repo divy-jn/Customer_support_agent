@@ -38,9 +38,17 @@ mcp = FastMCP(
 def _get_gmail_service():
     """Authenticate and return the Gmail API service."""
     creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first time.
-    if os.path.exists(TOKEN_PATH):
+    # 1. Check for token in environment variable first (for Hugging Face Spaces)
+    import json
+    if "GMAIL_TOKEN_JSON" in os.environ:
+        try:
+            token_data = json.loads(os.environ["GMAIL_TOKEN_JSON"])
+            creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+        except Exception as e:
+            print(f"Failed to parse GMAIL_TOKEN_JSON: {e}")
+
+    # 2. The file token.json stores the user's access and refresh tokens locally.
+    if not creds and os.path.exists(TOKEN_PATH):
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
         
     # If there are no (valid) credentials available, let the user log in.
