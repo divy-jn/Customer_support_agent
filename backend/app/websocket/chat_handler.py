@@ -89,12 +89,16 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
 
     await manager.connect_customer(websocket, session_id)
 
-    # Send welcome message with session ID
+    session = await _get_session(session_id)
+    history = session.get("conversation_history", [])
+
+    # Send welcome message with session ID and history
     await manager.send_personal_message({
         "type": "system",
         "session_id": session_id,
         "message": "Hello! Welcome to our customer support. How can I help you today?",
         "agent_name": "Adi",
+        "history": history,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }, session_id)
 

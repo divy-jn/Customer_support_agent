@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useToast } from "./components/Toast";
 import { API_BASE, WS_BASE } from "./lib/api";
 
@@ -97,16 +99,28 @@ export default function CustomerChatPage() {
 
       if (data.type === "system") {
         if (data.session_id) setSessionId(data.session_id);
-        setMessages((prev) => {
-          // Prevent duplicate welcome messages on reconnect
-          if (prev.some(m => m.role === "system" && m.content === data.message)) {
-            return prev;
-          }
-          return [
-            ...prev,
-            { role: "system", content: data.message, timestamp: data.timestamp },
-          ];
-        });
+        
+        // Load history on reconnect if provided
+        if (data.history && data.history.length > 0) {
+          setMessages(data.history.map(msg => ({
+            role: msg.role === "customer" ? "customer" : "agent",
+            content: msg.content,
+            timestamp: msg.timestamp,
+            agent_name: msg.agent_name || "Support",
+            status: msg.role === "customer" ? "delivered" : undefined
+          })));
+        } else {
+          setMessages((prev) => {
+            // Prevent duplicate welcome messages on reconnect
+            if (prev.some(m => m.role === "system" && m.content === data.message)) {
+              return prev;
+            }
+            return [
+              ...prev,
+              { role: "system", content: data.message, timestamp: data.timestamp },
+            ];
+          });
+        }
         setIsTyping(false);
       } else if (data.type === "typing") {
         setIsTyping(true);
@@ -271,6 +285,21 @@ export default function CustomerChatPage() {
     setAutoScroll(true);
   };
 
+  const endChat = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+    localStorage.removeItem("intellisupport_session_id");
+    localStorage.removeItem("intellisupport_customer");
+    setSessionId(null);
+    setIdentifiedCustomer(null);
+    setMessages([]);
+    setShowIdentityModal(true);
+    setDrawerOpen(false);
+    toast("Chat ended securely.", "success");
+  }, [toast]);
+
+  // Derived
   const hasMessages = messages.filter((m) => m.role !== "system").length > 0;
 
   return (
@@ -418,6 +447,15 @@ export default function CustomerChatPage() {
                 Link Account
               </button>
             )}
+            
+            {/* End Chat Button */}
+            <button
+              onClick={endChat}
+              className="text-[11px] font-medium text-[var(--text-muted)] hover:text-red-400 transition-colors px-3 py-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border)] hover:border-red-500/30"
+              title="End Chat and clear session"
+            >
+              End Chat
+            </button>
           </div>
         </header>
 
@@ -500,9 +538,10 @@ export default function CustomerChatPage() {
                   {/* Content */}
                   {msg.role === "agent" ? (
                     <div
-                      className="text-sm leading-relaxed whitespace-pre-wrap"
-                      dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }}
-                    />
+                      className="text-sm leading-relaxed whitespace-pre-wrap markdown-body"
+                    >
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                    </div>
                   ) : (
                     <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
                   )}

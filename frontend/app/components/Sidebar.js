@@ -104,6 +104,18 @@ export default function AgentSidebar() {
 
       {/* Status footer */}
       <div className="p-4 border-t border-[var(--border)]">
+        <button
+          onClick={() => {
+            // Placeholder for actual logout logic
+            window.location.href = "/";
+          }}
+          className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[var(--bg-input)] text-[var(--text-secondary)] hover:text-white hover:bg-red-500/80 transition-colors text-sm font-medium"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          Logout
+        </button>
         <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
           <span className="w-2 h-2 rounded-full bg-[var(--success)] animate-pulse" />
           System Online
