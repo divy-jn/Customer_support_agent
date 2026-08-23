@@ -59,6 +59,25 @@ async def _save_session(session_id: str, session: dict):
     else:
         session_store[session_id] = session
 
+async def get_all_active_sessions() -> list:
+    """Retrieve all active sessions from Redis or memory."""
+    if redis_client:
+        try:
+            keys = await redis_client.keys("session:*")
+            sessions = []
+            if keys:
+                values = await redis_client.mget(*keys)
+                for val in values:
+                    if val:
+                        session = json.loads(val) if isinstance(val, str) else val
+                        sessions.append(session)
+            return sessions
+        except Exception as e:
+            logger.error(f"Failed to fetch sessions from Redis: {e}")
+            return []
+    else:
+        return list(session_store.values())
+
 
 async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None):
     """
@@ -292,7 +311,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
 
                 # If escalated, notify all connected dashboard agents
                 if is_escalated:
-                    await manager.broadcast_to_agents({
+                    escalation_msg = {
                         "type": "escalation_alert",
                         "session_id": session_id,
                         "customer_id": customer_id,
@@ -300,7 +319,9 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         "urgency": result.get("urgency", "high"),
                         "last_message": message,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }, session_id)
+                    }
+                    await manager.broadcast_to_agents(escalation_msg, session_id)
+                    await manager.broadcast_to_all_agents(escalation_msg)
 
                     # Send escalation email
                     try:
@@ -336,7 +357,29 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
     except WebSocketDisconnect:
         manager.disconnect_customer(session_id)
         logger.info(f"Customer disconnected: {session_id}")
-
+        
+        # Save conversation to database
+        session = await _get_session(session_id)
+        if session and session.get("conversation_history"):
+            try:
+                from app.database import AsyncSessionLocal, Conversation, _utcnow
+                async with AsyncSessionLocal() as db:
+                    # Determine if it was escalated
+                    was_escalated = "true" if session.get("human_takeover") or any(
+                        msg.get("escalated") for msg in session.get("conversation_history", [])
+                    ) else "false"
+                    
+                    conv = Conversation(
+                        session_id=session_id,
+                        customer_id=session.get("customer_id") or 1,  # Default to guest (1) if missing
+                        transcript=json.dumps(session.get("conversation_history")),
+                        escalated=was_escalated,
+                        ended_at=_utcnow()
+                    )
+                    db.add(conv)
+                    await db.commit()
+            except Exception as e:
+                logger.error(f"Failed to save conversation to DB for session {session_id}: {e}")
 
 async def handle_agent_ws(websocket: WebSocket, session_id: str):
     """

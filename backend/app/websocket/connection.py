@@ -146,6 +146,19 @@ class ConnectionManager:
             for dead_ws in dead_connections:
                 self.disconnect_agent(dead_ws, session_id)
 
+    async def broadcast_to_all_agents(self, message: dict):
+        """Broadcast a message to all connected agents (across all sessions)."""
+        dead_connections = []
+        for session_id, agents in self.agent_connections.items():
+            for agent_ws in agents:
+                try:
+                    await agent_ws.send_text(json.dumps(message))
+                except Exception:
+                    dead_connections.append((agent_ws, session_id))
+        
+        for dead_ws, sid in dead_connections:
+            self.disconnect_agent(dead_ws, sid)
+
     # ──────────────────────────────────────────
     #  Heartbeat / Ping-Pong
     # ──────────────────────────────────────────

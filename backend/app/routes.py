@@ -213,8 +213,12 @@ async def dashboard_stats():
 @router.get("/dashboard/sessions")
 async def active_sessions():
     """Get a list of all active chat sessions."""
+    from app.websocket.chat_handler import get_all_active_sessions
+    all_sessions = await get_all_active_sessions()
+    
     sessions = []
-    for sid, session in list(session_store.items()):
+    for session in all_sessions:
+        sid = session.get("session_id")
         history = session.get("conversation_history", [])
         last_msg = history[-1]["content"] if history else ""
         sessions.append({

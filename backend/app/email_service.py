@@ -218,3 +218,51 @@ def send_system_alert_email(
     """
     html = _base_template(f"System Alert — {alert_type.upper()}", body)
     return _send_email(settings.tech_team_email, f"[Project Bestie] System Alert: {alert_type}", html)
+
+
+def send_custom_ticket_email(
+    customer_email: str,
+    customer_name: str,
+    ticket_id: int,
+    subject: str,
+    message_content: str,
+) -> dict:
+    """Send an update or custom message regarding a ticket to the customer."""
+    body = f"""
+    <p style="color:#9090a8;font-size:14px;line-height:1.6;">
+      Hi <strong style="color:#f0f0f5;">{customer_name}</strong>, here is an update regarding your support ticket.
+    </p>
+    {_info_table([
+        ("Ticket ID", f"#{ticket_id}"),
+        ("Subject", subject),
+    ])}
+    <p style="color:#f0f0f5;font-size:14px;margin-top:16px;white-space:pre-wrap;">
+      {message_content}
+    </p>
+    """
+    html = _base_template(f"Update on Ticket #{ticket_id}", body)
+    return _send_email(customer_email, f"[Project Bestie] Update on Ticket #{ticket_id}", html)
+
+
+def send_order_update_email(
+    customer_email: str,
+    customer_name: str,
+    order_id: int,
+    status: str,
+    message_content: str,
+) -> dict:
+    """Send an order status update email to the customer."""
+    body = f"""
+    <p style="color:#9090a8;font-size:14px;line-height:1.6;">
+      Hi <strong style="color:#f0f0f5;">{customer_name}</strong>, here is an update on your order.
+    </p>
+    {_info_table([
+        ("Order ID", f"#{order_id}"),
+        ("Status", f'<span style="text-transform:capitalize;">{status}</span>'),
+    ])}
+    <p style="color:#f0f0f5;font-size:14px;margin-top:16px;white-space:pre-wrap;">
+      {message_content}
+    </p>
+    """
+    html = _base_template(f"Order #{order_id} Update", body)
+    return _send_email(customer_email, f"[Project Bestie] Order #{order_id} Update", html)
