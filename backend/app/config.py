@@ -51,7 +51,8 @@ class Settings(BaseSettings):
     knowledge_base_dir: str = "./knowledge_base"
 
     # --- Email ---
-    resend_api_key: str = Field(default="", alias="RESEND_API_KEY")
+    gmail_address: str = Field(default="", alias="GMAIL_ADDRESS")
+    gmail_app_password: str = Field(default="", alias="GMAIL_APP_PASSWORD")
     support_team_email: str = Field(default="support@projectbestie.com", alias="SUPPORT_TEAM_EMAIL")
     tech_team_email: str = Field(default="tech@projectbestie.com", alias="TECH_TEAM_EMAIL")
     from_email: str = Field(default="noreply@projectbestie.com", alias="FROM_EMAIL")
