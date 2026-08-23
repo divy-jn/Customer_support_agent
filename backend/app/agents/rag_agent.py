@@ -21,6 +21,7 @@ You MUST follow these rules strictly:
 4. When referencing policies (return window, warranty period, etc.), quote the exact numbers from the context.
 5. If the customer seems frustrated, acknowledge their feelings before providing the answer.
 6. Always end with an offer to help further.
+7. If the customer asks you to place an order, create an order, or buy an item for them, politely refuse. Explain that you cannot process purchases directly, and suggest they browse the catalog and add items to their cart to checkout.
 
 CONTEXT:
 {context}
@@ -49,16 +50,24 @@ async def generate_response(
     Returns:
         Dict with response text, sources used, and retrieval metadata.
     """
-    # Step 1: Retrieve relevant context from ChromaDB
-    context = retrieve_as_context(message, top_k=top_k)
-
-    # Step 2: Build conversation context
+    # Step 1: Build conversation context text
     history_text = ""
     if conversation_history:
         recent = conversation_history[-6:]
         for msg in recent:
             role = "Customer" if msg.get("role") == "customer" else "Agent"
             history_text += f"{role}: {msg.get('content', '')}\n"
+
+    # Step 2: Retrieve relevant context from ChromaDB
+    # If there's history, append it to the message to give the retriever more context
+    search_query = message
+    if conversation_history:
+        # Use the last agent response and the current message for better semantic search context
+        last_agent_msg = next((m["content"] for m in reversed(conversation_history) if m.get("role") == "agent"), "")
+        if last_agent_msg:
+            search_query = f"{last_agent_msg} {message}"
+            
+    context = retrieve_as_context(search_query, top_k=top_k)
 
     # Step 3: Build the prompt
     system_prompt = RAG_SYSTEM_PROMPT.format(context=context)

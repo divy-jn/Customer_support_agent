@@ -107,6 +107,19 @@ def get_customer_history(customer_id: int) -> str:
         return json.dumps({"error": str(e)})
 
 
+@track_tool_call("get_chat_history")
+@_supabase_retry
+def get_chat_history(customer_id: int) -> str:
+    """Get past chat conversations for a customer."""
+    try:
+        _validate_positive_int(customer_id, "customer_id")
+        response = supabase.table("conversations").select("session_id, started_at, escalated, transcript").eq("customer_id", customer_id).order("started_at", desc=True).limit(5).execute()
+        if not response.data:
+            return json.dumps({"message": f"No previous chat history found for Customer #{customer_id}"})
+        return json.dumps(response.data, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 # ──────────────────────────────────────────────
 #  Ticket Operations
 # ──────────────────────────────────────────────
@@ -196,6 +209,30 @@ def update_ticket(
         return json.dumps({"error": str(e)})
 
 
+@track_tool_call("send_ticket_email_to_customer")
+def send_ticket_email_to_customer(
+    customer_email: str,
+    customer_name: str,
+    ticket_id: int,
+    subject: str,
+    message_content: str,
+) -> str:
+    """Send an email to the customer with an update regarding their ticket."""
+    try:
+        from app.email_service import send_custom_ticket_email
+        _validate_positive_int(ticket_id, "ticket_id")
+        result = send_custom_ticket_email(
+            customer_email=customer_email,
+            customer_name=customer_name,
+            ticket_id=ticket_id,
+            subject=subject,
+            message_content=message_content
+        )
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 # ──────────────────────────────────────────────
 #  Order Operations
 # ──────────────────────────────────────────────
@@ -262,16 +299,26 @@ def process_refund(order_id: int) -> str:
 @track_tool_call("check_inventory")
 @_supabase_retry
 def check_inventory(product_name: str) -> str:
-    """Check stock availability for a product."""
+    """Check if a specific product is in stock and get its details."""
     try:
         product_name = _validate_non_empty_str(product_name, "product_name")
-        response = supabase.table("products").select("id, name, category, price, stock, description").ilike("name", f"%{product_name}%").execute()
+        response = supabase.table("products").select("*").ilike("name", f"%{product_name}%").limit(5).execute()
         if not response.data:
-            return json.dumps([])
-        results = response.data
-        for r in results:
-            r["in_stock"] = r["stock"] > 0
-        return json.dumps(results, indent=2)
+            return json.dumps({"error": f"No products found matching '{product_name}'"})
+        return json.dumps(response.data, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@track_tool_call("list_all_products")
+@_supabase_retry
+def list_all_products() -> str:
+    """List all available products in the catalog. Does not include stock quantity."""
+    try:
+        response = supabase.table("products").select("id, name, category, price, description").execute()
+        if not response.data:
+            return json.dumps({"error": "No products found in catalog"})
+        return json.dumps(response.data, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 

@@ -24,6 +24,9 @@ You have access to the following database tools (provided as function results):
 - cancel_order: Cancel an active order
 - process_refund: Initiate a refund for a cancelled/delivered order
 - check_inventory: Check product stock availability
+- list_all_products: List all available products in the catalog
+- get_chat_history: Get past chat conversations for a customer
+- send_ticket_email_to_customer: Send an email update to a customer regarding their ticket
 
 Based on the TOOL RESULTS provided, formulate a helpful, professional response to the customer.
 
@@ -32,7 +35,9 @@ Rules:
 2. If a tool returned an error, explain the situation clearly to the customer.
 3. Be empathetic and professional.
 4. Suggest next steps when appropriate.
-5. Never expose internal database IDs or technical details to the customer — use friendly references instead."""
+5. Never expose internal database IDs or technical details to the customer — use friendly references instead.
+6. Always address the customer by their actual name if provided. Never use placeholders like [Customer Name].
+7. If the customer asks you to place an order, create an order, or buy an item for them, politely refuse. Explain that you cannot process purchases directly, and suggest they browse the catalog and add items to their cart to checkout."""
 
 
 def get_db_llm():
@@ -51,7 +56,7 @@ def determine_db_action(message: str, intent: str, customer_id: int = None) -> d
     message_lower = message.lower()
 
     # Order-related actions
-    if intent == "order_tracking" or "track" in message_lower and "order" in message_lower:
+    if intent == "order_tracking" or ("track" in message_lower and "order" in message_lower):
         # Try to extract order ID from message
         order_id = _extract_number(message, "order")
         if order_id:
@@ -59,7 +64,7 @@ def determine_db_action(message: str, intent: str, customer_id: int = None) -> d
         elif customer_id:
             return {"action": "get_customer_history", "params": {"customer_id": customer_id}}
 
-    if intent == "order_cancellation" or "cancel" in message_lower and "order" in message_lower:
+    if intent == "order_cancellation" or ("cancel" in message_lower and "order" in message_lower):
         order_id = _extract_number(message, "order")
         if order_id:
             return {"action": "cancel_order", "params": {"order_id": order_id}}
@@ -70,15 +75,26 @@ def determine_db_action(message: str, intent: str, customer_id: int = None) -> d
             return {"action": "process_refund", "params": {"order_id": order_id}}
 
     # Ticket-related actions
+    if "create" in message_lower and "ticket" in message_lower:
+        return {"action": "create_ticket", "params": {"customer_id": customer_id or 1, "subject": "New Inquiry", "description": message}}
+    
     if "ticket" in message_lower:
         ticket_id = _extract_number(message, "ticket")
         if ticket_id:
             return {"action": "get_ticket", "params": {"ticket_id": ticket_id}}
 
     # Product/inventory checks
+    if "all products" in message_lower or "list products" in message_lower:
+        return {"action": "list_all_products", "params": {}}
+        
     if intent == "product_inquiry" or "stock" in message_lower or "available" in message_lower:
         # Extract product name (rough heuristic)
         return {"action": "check_inventory", "params": {"product_name": message}}
+        
+    # Chat history
+    if "chat history" in message_lower or "last chat" in message_lower:
+        if customer_id:
+            return {"action": "get_chat_history", "params": {"customer_id": customer_id}}
 
     # Account/customer lookup
     if intent == "account_management" or intent == "billing":
@@ -98,6 +114,7 @@ async def generate_response(
     tool_results: str,
     intent: str,
     conversation_history: list[dict] = None,
+    customer_name: str = None,
 ) -> dict:
     """
     Generate a response using database tool results.
@@ -122,6 +139,7 @@ async def generate_response(
 
     user_prompt = f"""Customer's message: "{message}"
 Intent classified as: {intent}
+{f"Customer Name: {customer_name}" if customer_name else ""}
 
 TOOL RESULTS from database:
 {tool_results}

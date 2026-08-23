@@ -19,7 +19,7 @@ from app.agents import intent_router, rag_agent, db_agent, web_agent, escalation
 from app.tools import (
     lookup_customer, get_customer_history, get_ticket, create_ticket,
     update_ticket, track_order, cancel_order, process_refund, check_inventory,
-    web_search,
+    web_search, list_all_products, get_chat_history, send_ticket_email_to_customer,
 )
 
 
@@ -29,6 +29,7 @@ from app.tools import (
 class AgentState(TypedDict):
     """The state that is passed between nodes in the graph."""
     customer_id: int | None
+    customer_name: str | None
     session_id: str | None
     message: str
     conversation_history: list[dict]
@@ -121,7 +122,8 @@ async def db_plan_node(state: AgentState) -> dict:
         message=state["message"],
         tool_results=tool_results,
         intent=state["intent"],
-        conversation_history=state["conversation_history"]
+        conversation_history=state["conversation_history"],
+        customer_name=state.get("customer_name")
     )
     
     return {
@@ -155,7 +157,8 @@ async def db_execute_node(state: AgentState) -> dict:
         message=state["message"],
         tool_results=tool_results,
         intent=state["intent"],
-        conversation_history=state["conversation_history"]
+        conversation_history=state["conversation_history"],
+        customer_name=state.get("customer_name")
     )
     
     return {
@@ -183,6 +186,16 @@ def _execute_tool(action: str, params: dict) -> str:
             return process_refund(**params)
         elif action == "check_inventory":
             return check_inventory(**params)
+        elif action == "create_ticket":
+            return create_ticket(**params)
+        elif action == "update_ticket":
+            return update_ticket(**params)
+        elif action == "list_all_products":
+            return list_all_products(**params)
+        elif action == "get_chat_history":
+            return get_chat_history(**params)
+        elif action == "send_ticket_email_to_customer":
+            return send_ticket_email_to_customer(**params)
         else:
             return f"Error: Unknown DB action '{action}'"
     except Exception as e:
