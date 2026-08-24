@@ -151,7 +151,7 @@ class TestOutputGuardrails:
         assert "lookup_customer" not in result.sanitized_text
 
     def test_leaked_infrastructure_redacted(self):
-        response = "I queried our Supabase database and found your order in ChromaDB."
+        response = "I queried our Supabase database and found your order in Pinecone."
         result = validate_output(response)
         assert any("leaked_infrastructure" in v for v in result.violations)
 

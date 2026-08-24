@@ -73,7 +73,7 @@ async def route_intent_node(state: AgentState) -> dict:
 
 
 async def rag_node(state: AgentState) -> dict:
-    """Node: Answers questions using ChromaDB knowledge base."""
+    """Node: Answers questions using Pinecone knowledge base."""
     result = await rag_agent.generate_response(
         message=state["message"],
         conversation_history=state["conversation_history"]

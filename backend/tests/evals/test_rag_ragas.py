@@ -57,11 +57,11 @@ RAG_EVAL_CASES = [
 # ──────────────────────────────────────────────
 
 class TestRetrieverQuality:
-    """Tests that the ChromaDB retriever returns relevant chunks."""
+    """Tests that the Pinecone retriever returns relevant chunks."""
 
     @pytest.mark.skipif(
-        not os.path.exists(os.path.join(os.path.dirname(__file__), "..", "..", "chroma_db")),
-        reason="ChromaDB not initialized. Run ingest_knowledge.py first."
+        not os.environ.get("PINECONE_API_KEY"),
+        reason="Pinecone not configured. Set PINECONE_API_KEY first."
     )
     @pytest.mark.parametrize("case", RAG_EVAL_CASES, ids=lambda c: c["question"][:30])
     def test_retriever_returns_relevant_source(self, case):
@@ -80,8 +80,8 @@ class TestRetrieverQuality:
         )
 
     @pytest.mark.skipif(
-        not os.path.exists(os.path.join(os.path.dirname(__file__), "..", "..", "chroma_db")),
-        reason="ChromaDB not initialized."
+        not os.environ.get("PINECONE_API_KEY"),
+        reason="Pinecone not configured."
     )
     def test_retriever_relevance_scores(self):
         """Top result should have a relevance score > 0.3."""

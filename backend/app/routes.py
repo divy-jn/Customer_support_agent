@@ -283,7 +283,7 @@ async def admin_get_kb_doc(filename: str):
 
 @router.post("/admin/knowledge-base/reingest")
 async def admin_reingest_kb():
-    """Trigger re-ingestion of knowledge base into ChromaDB."""
+    """Trigger re-ingestion of knowledge base into Pinecone."""
     try:
         from app.rag.retriever import ingest_knowledge_base
         result = ingest_knowledge_base()

@@ -1,5 +1,5 @@
 """
-RAG Agent — answers customer questions using the ChromaDB knowledge base.
+RAG Agent — answers customer questions using the Pinecone knowledge base.
 
 Implements zero-hallucination by strictly grounding responses in
 retrieved context. If no relevant context is found, the agent
@@ -58,7 +58,7 @@ async def generate_response(
             role = "Customer" if msg.get("role") == "customer" else "Agent"
             history_text += f"{role}: {msg.get('content', '')}\n"
 
-    # Step 2: Retrieve relevant context from ChromaDB
+    # Step 2: Retrieve relevant context from Pinecone
     # If there's history, append it to the message to give the retriever more context
     search_query = message
     if conversation_history:
