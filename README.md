@@ -1,71 +1,50 @@
-# IntelliSupport AI
+# Customer Support Agent
 
-IntelliSupport AI is an advanced, scalable, AI-powered customer support ecosystem. It uses generative AI to instantly answer customer queries, retrieve knowledge base articles, interface with customer order databases, and escalate complex issues to human agents in real-time.
+An AI-powered customer support platform designed to provide context-aware assistance, retrieve relevant knowledge, work with customer and order data, and escalate complex conversations to human agents.
 
-## System Architecture
+## Overview
 
-The project is split into two primary components:
+The system combines conversational AI, retrieval-augmented generation, agentic workflows, backend tools, persistent conversations, and a support-agent interface.
 
-1. **Backend (FastAPI)**:
-   - **LangGraph AI Agent**: Manages the conversational state machine and orchestrates intent routing.
-   - **Vector Database (Pinecone)**: Retrieves knowledge base documents (RAG) for accurate answers.
-   - **Relational Database (Supabase)**: Stores customer and order information.
-   - **Session Store (Upstash Redis)**: Maintains persistent, high-performance WebSocket chat history.
-   - **Multi-Provider LLM Factory**: Supports rapid switching between OpenAI, Anthropic, Google, and open-source models (via vLLM/Ollama).
+## Architecture
 
-2. **Frontend (Next.js)**:
-   - Modern, responsive React dashboard built for human support agents.
-   - Real-time WebSocket connectivity for taking over AI chats.
-   - Analytics dashboard for viewing support statistics.
+- **Backend:** Python, FastAPI
+- **AI Orchestration:** LangGraph, LangChain
+- **RAG:** Pinecone
+- **Database:** Supabase PostgreSQL
+- **Frontend:** Next.js, React, Tailwind CSS
+- **Real-time:** WebSockets
+- **Deployment:** Vercel and container-based backend deployment
 
-## Tech Stack
+## Key Features
 
-- **Frontend**: Next.js, React, TailwindCSS
-- **Backend**: Python, FastAPI, LangGraph, LangChain
-- **Databases**: Pinecone (Vector), Supabase (PostgreSQL), Upstash (Redis)
-- **Deployment**: Vercel (Frontend), Hugging Face Spaces (Backend Docker Container)
+- AI-powered customer support
+- Retrieval-Augmented Generation
+- Agentic intent routing and tool use
+- Customer and order data access
+- Human-agent escalation
+- Persistent conversation history
+- Support dashboard and real-time chat
+- Automated testing and production hardening
 
-## Setup Instructions
+## Development
 
-### 1. Prerequisites
-Ensure you have the following installed:
-- Node.js (v18+)
-- Python (3.10+)
-- Git
+The project is actively evolving across AI workflows, retrieval quality, backend reliability, UI, deployment, and security.
 
-### 2. Backend Setup
-1. Navigate to the `backend/` directory.
-2. Create a virtual environment and install dependencies:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-3. Copy the `.env.example` file to `.env` and fill in your API keys (Supabase, Pinecone, Upstash Redis, and LLM Provider).
-4. Run the FastAPI server:
-   ```bash
-   uvicorn app.main:app --host 0.0.0.0 --port 8000
-   ```
+### Local Setup
 
-### 3. Frontend Setup
-1. Navigate to the `frontend/` directory.
-2. Install Node dependencies:
-   ```bash
-   npm install
-   ```
-3. Create a `.env.local` file with the following variable pointing to your backend URL:
-   ```env
-   NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
-   ```
-4. Start the Next.js development server:
-   ```bash
-   npm run dev
-   ```
+```bash
+# Backend
+cd backend
+python -m venv venv
+venv\Scripts\activate  # Windows
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-## Collaboration and Deployment
+# Frontend
+cd frontend
+npm install
+npm run dev
+```
 
-This project was built collaboratively by a cross-functional team handling UI, core AI/backend engineering, and infrastructure/databases. 
-
-To deploy this project to production:
-1. Deploy the Next.js `frontend/` directory to **Vercel**.
-2. Deploy the FastAPI `backend/` directory using the provided `Dockerfile` to **Hugging Face Spaces** or a similar container registry.
+Create your local environment configuration from `.env.example`. Never commit real credentials.
