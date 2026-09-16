@@ -1,11 +1,13 @@
 """
 Application configuration loaded from environment variables.
 """
+import os
 import re
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
 from pathlib import Path
 
+# backend/ directory — the project root for all relative paths
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -15,11 +17,13 @@ class Settings(BaseSettings):
     supabase_key: str = Field(..., alias="SUPABASE_KEY")
     database_password: str = Field(default="", alias="DATABASE_PASSWORD")
 
-    # --- Local LLM (Ollama OpenAI-compatible API) ---
-    llm_base_url: str = Field(default="http://localhost:11434/v1", alias="LLM_BASE_URL")
-    llm_small_model: str = Field(default="llama3.1:8b", alias="LLM_SMALL_MODEL")
-    llm_large_model: str = Field(default="llama3.1:8b", alias="LLM_LARGE_MODEL")
-    llm_api_key: str | None = Field(default="ollama", alias="LLM_API_KEY")
+    # --- Cloud LLM (Ollama Cloud) ---
+    llm_base_url: str = Field(default="https://ollama.com/v1", alias="LLM_BASE_URL")
+    llm_small_model: str = Field(default="nemotron-3-super", alias="LLM_SMALL_MODEL")
+    llm_large_model: str = Field(default="nemotron-3-super", alias="LLM_LARGE_MODEL")
+    llm_fallback_model: str = Field(default="gpt-oss:120b", alias="LLM_FALLBACK_MODEL")
+    llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
+    llm_timeout: int = Field(default=120, alias="LLM_TIMEOUT")  # seconds
 
     # --- Pinecone ---
     pinecone_api_key: str = Field(default="", alias="PINECONE_API_KEY")
@@ -62,33 +66,38 @@ class Settings(BaseSettings):
     # --- WebSocket ---
     ws_heartbeat_interval: int = Field(default=30, alias="WS_HEARTBEAT_INTERVAL")
     ws_max_connections_per_session: int = Field(default=5, alias="WS_MAX_CONNECTIONS_PER_SESSION")
-    ws_message_rate_limit: int = Field(default=20, alias="WS_MESSAGE_RATE_LIMIT")
+    ws_message_rate_limit: int = Field(default=20, alias="WS_MESSAGE_RATE_LIMIT")  # messages per minute
 
     # --- LangGraph ---
-    langgraph_timeout: int = Field(default=60, alias="LANGGRAPH_TIMEOUT")
+    langgraph_timeout: int = Field(default=60, alias="LANGGRAPH_TIMEOUT")  # seconds
 
     @property
     def cors_origins_list(self) -> list[str]:
-        return [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
+        """Parse comma-separated CORS origins into a list."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def knowledge_base_path(self) -> Path:
+        """Resolve knowledge_base_dir relative to backend/ root."""
         p = Path(self.knowledge_base_dir)
         return p if p.is_absolute() else (_BACKEND_ROOT / p).resolve()
 
     @property
     def _supabase_host(self) -> str:
+        """Extract the host portion from supabase_url (e.g. tesfafbkhbleipxbpcpk)."""
         match = re.search(r"https://([^.]+)\.supabase\.co", self.supabase_url)
         return match.group(1) if match else "localhost"
 
     @property
     def database_url(self) -> str:
+        """Async PostgreSQL connection string for SQLAlchemy (asyncpg)."""
         host = f"db.{self._supabase_host}.supabase.co"
         pw = self.database_password or self.supabase_key
         return f"postgresql+asyncpg://postgres:{pw}@{host}:5432/postgres"
 
     @property
     def database_url_sync(self) -> str:
+        """Sync PostgreSQL connection string for SQLAlchemy (psycopg2)."""
         host = f"db.{self._supabase_host}.supabase.co"
         pw = self.database_password or self.supabase_key
         return f"postgresql+psycopg2://postgres:{pw}@{host}:5432/postgres"

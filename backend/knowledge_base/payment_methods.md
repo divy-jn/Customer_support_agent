@@ -1,67 +1,108 @@
-# Payment Methods Guide
+# Payment Methods
 
-## Accepted Payment Methods
+## Overview
+We accept a wide range of payment methods to provide a convenient shopping experience for our Indian customers. All transactions are processed in INR (₹).
 
-### Credit & Debit Cards
-- Visa
-- Mastercard
-- American Express
-- Discover
-- RuPay (India)
+## UPI (Unified Payments Interface)
+UPI is the most popular payment method in India. We support:
+- **Google Pay (GPay)**
+- **PhonePe**
+- **Paytm UPI**
+- **BHIM UPI**
+- **Amazon Pay UPI**
+- **Any UPI-enabled banking app**
 
-Cards are charged at the time of order placement. A temporary authorization hold may appear on your statement, which is released if the order is cancelled before processing.
+### How UPI payments work:
+1. Select "UPI" at checkout.
+2. Enter your UPI ID (e.g., yourname@upi, yourname@paytm) or scan the QR code.
+3. Approve the payment request in your UPI app.
+4. Payment is confirmed instantly. You will receive a UPI reference number.
 
-### Digital Wallets
-- **PayPal**: Link your PayPal account at checkout. PayPal Purchase Protection applies.
-- **Apple Pay**: Available on Safari and iOS devices.
-- **Google Pay**: Available on Chrome and Android devices.
+### UPI Payment Issues:
+- If payment is debited but order is not confirmed, wait 30 minutes for automatic reconciliation.
+- If the issue persists, contact support with your **UPI transaction reference number**.
+- Refunds to UPI are processed within **2-3 business days**.
 
-### Bank Transfer
-- **Net Banking**: Available for select banks. You will be redirected to your bank's secure portal to authorize the payment.
-- **UPI**: Enter your UPI ID or scan the QR code at checkout. Instant confirmation.
+## Credit & Debit Cards
+We accept:
+- **Visa**
+- **Mastercard**
+- **American Express**
+- **RuPay** (India's own payment network)
 
-### Buy Now, Pay Later
-- **Klarna**: Split your payment into 4 interest-free installments over 6 weeks.
-- **Afterpay**: Pay in 4 equal installments, every 2 weeks. No interest if payments are made on time.
+All card transactions are secured with 3D Secure (OTP verification). We do not store full card details.
 
-Eligibility for BNPL is subject to approval by the provider. Late fees may apply for missed payments.
+### No-Cost EMI on Credit Cards
+No-cost EMI is available on select products with minimum order value of ₹3,000:
 
-### Gift Cards & Store Credit
-- Gift cards can be redeemed at checkout by entering the card code.
-- Store credit is automatically applied to your account and used first during checkout.
-- Gift cards do not expire and cannot be redeemed for cash.
+| Bank | 3 Months | 6 Months | 9 Months | 12 Months |
+|------|----------|----------|----------|-----------|
+| HDFC Bank | ✅ | ✅ | ✅ | ✅ |
+| ICICI Bank | ✅ | ✅ | ✅ | ❌ |
+| SBI Card | ✅ | ✅ | ❌ | ❌ |
+| Axis Bank | ✅ | ✅ | ✅ | ❌ |
+| Kotak Mahindra | ✅ | ✅ | ❌ | ❌ |
+
+The total amount remains the same — no additional interest or processing fees are charged. EMI conversion charges, if any, are borne by us.
+
+## Net Banking
+We support net banking from all major Indian banks:
+- State Bank of India (SBI)
+- HDFC Bank
+- ICICI Bank
+- Axis Bank
+- Kotak Mahindra Bank
+- Punjab National Bank (PNB)
+- Bank of Baroda
+- Canara Bank
+- Union Bank of India
+- And 50+ other banks
+
+### Net Banking Payment Issues:
+- If payment is debited but order is not confirmed, the amount is automatically refunded within **5-7 business days**.
+- For faster resolution, contact support with your **bank reference number / NEFT reference**.
+
+## Digital Wallets
+- **Paytm Wallet**
+- **PhonePe Wallet**
+- **Amazon Pay Balance**
+
+Wallet payments are confirmed instantly. Maximum wallet payment limit may apply as per RBI guidelines.
+
+## Cash on Delivery (COD)
+COD is available for most PIN codes across India.
+
+### COD Rules:
+- **Maximum order value**: ₹50,000
+- **Payment accepted**: Cash only (card-on-delivery is not supported)
+- COD is **not available** for:
+  - Orders above ₹50,000
+  - Select remote PIN codes
+  - Certain high-value items (as marked on product page)
+- A **COD convenience fee** of ₹29 may apply on orders below ₹499.
+
+### COD Order Cancellation:
+If you refuse a COD order at delivery, it will be marked as "returned" and you will not be charged. Repeated COD order refusals may result in COD being disabled for your account.
+
+## Buy Now, Pay Later (BNPL)
+Available through select partner services. Terms and conditions apply as per the BNPL provider's policies.
 
 ## Payment Security
-- All transactions are protected with **256-bit SSL/TLS encryption**.
-- We are **PCI DSS Level 1** certified.
-- We support **3D Secure (3DS)** authentication for added card security.
-- We **never store** your full credit card number on our servers.
+- All transactions use **256-bit SSL encryption**.
+- We are **PCI DSS Level 1** compliant.
+- Card payments are verified with **3D Secure OTP**.
+- UPI payments are processed through **NPCI's secure infrastructure**.
+- We **never store** your full card number, CVV, or UPI PIN.
 
-## Billing & Invoices
-- An invoice is automatically generated for every order and sent to your registered email.
-- You can download invoices from **My Orders > Order Details > Download Invoice**.
-- Business accounts can request consolidated monthly invoices.
+## Refund Timelines by Payment Method
 
-## Common Payment Issues
+| Payment Method | Refund Timeline |
+|----------------|----------------|
+| UPI | 2-3 business days |
+| Credit Card | 5-7 business days |
+| Debit Card | 5-7 business days |
+| Net Banking | 5-7 business days |
+| Wallet | 1-2 business days |
+| COD | 5-7 business days (to bank account via NEFT) |
 
-### Payment Declined
-If your payment is declined:
-1. Verify that your card details (number, expiry, CVV) are entered correctly.
-2. Ensure you have sufficient funds or credit available.
-3. Check if your bank has flagged the transaction (contact your bank).
-4. Try a different payment method.
-5. If the issue persists, contact our support team.
-
-### Double Charged
-If you see duplicate charges:
-- One may be a temporary authorization hold that will be released within 3–5 business days.
-- If both charges persist beyond 5 business days, contact our support team with your order number and bank statement screenshot.
-
-### Refund to a Different Payment Method
-Refunds are always issued to the **original payment method**. We cannot transfer refunds to a different card or account. If your original card has been closed, the refund will be routed by your bank to your new card or account.
-
-## Contact
-For payment-related issues:
-- **Email**: billing@ourstore.com
-- **Live Chat**: Available 24/7
-- **Phone**: 1-800-SUPPORT
+Refunds are always issued to the **original payment method** used during purchase.

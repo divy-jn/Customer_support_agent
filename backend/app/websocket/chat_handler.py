@@ -5,6 +5,7 @@ through the LangGraph pipeline and streams responses back.
 
 import uuid
 import json
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -16,16 +17,25 @@ from app.agents.graph import customer_support_graph, AgentState
 from app.email_service import send_escalation_email
 from app.tools import lookup_customer
 from app.guardrails import validate_input, validate_output, get_rejection_message
-from upstash_redis.asyncio import Redis
+
+# Conditional Redis import — falls back to in-memory if not installed
+try:
+    from upstash_redis.asyncio import Redis as UpstashRedis
+    _redis_available = True
+except ImportError:
+    _redis_available = False
 
 logger = logging.getLogger(__name__)
 
-# Initialize Upstash Redis if configured
+# Initialize Upstash Redis if configured AND available
 redis_client = None
-if settings.upstash_redis_url and settings.upstash_redis_token:
-    redis_client = Redis(url=settings.upstash_redis_url, token=settings.upstash_redis_token)
+if _redis_available and settings.upstash_redis_url and settings.upstash_redis_token:
+    redis_client = UpstashRedis(url=settings.upstash_redis_url, token=settings.upstash_redis_token)
 else:
-    logger.warning("Upstash Redis not configured. Using in-memory store.")
+    if not _redis_available:
+        logger.warning("upstash-redis not installed. Using in-memory session store.")
+    else:
+        logger.warning("Upstash Redis not configured. Using in-memory store.")
 
 session_store: dict[str, dict] = {}
 
@@ -44,7 +54,7 @@ async def _get_session(session_id: str, customer_id: int | None = None) -> dict:
         "session_id": session_id,
         "customer_id": customer_id,
         "conversation_history": [],
-        "human_takeover": False,
+        "mode": "ai",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     if not redis_client:
@@ -138,8 +148,32 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
             # Use sanitized message (PII redacted for logging)
             sanitized_message = guard_result.sanitized_text
 
-            # Check if this is an approval response for a pending action
             session = await _get_session(session_id, customer_id)
+
+            # Append customer message to history (sanitized)
+            session["conversation_history"].append({
+                "role": "customer",
+                "content": message,  # Keep original for LLM processing
+                "sanitized": sanitized_message,  # Sanitized for logging
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "pii_detected": guard_result.pii_detected,
+            })
+            await _save_session(session_id, session)
+
+            # Broadcast to monitoring agents
+            await manager.broadcast_to_agents({
+                "type": "customer_message",
+                "session_id": session_id,
+                "customer_id": customer_id,
+                "message": message,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }, session_id)
+
+            # If human agent has taken over, do NOT run ANY AI logic
+            if session.get("mode") == "human":
+                continue
+
+            # Check if this is an approval response for a pending action
             pending = session.get("pending_approval")
             
             if pending and message.lower().strip() in ("yes", "yeah", "yep", "sure", "ok", "okay", "go ahead", "proceed", "confirm", "do it"):
@@ -218,29 +252,6 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 }, session_id)
                 continue
 
-            # Append customer message to history (sanitized)
-            session["conversation_history"].append({
-                "role": "customer",
-                "content": message,  # Keep original for LLM processing
-                "sanitized": sanitized_message,  # Sanitized for logging
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "pii_detected": guard_result.pii_detected,
-            })
-            await _save_session(session_id, session)
-
-            # Broadcast to monitoring agents
-            await manager.broadcast_to_agents({
-                "type": "customer_message",
-                "session_id": session_id,
-                "customer_id": customer_id,
-                "message": message,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }, session_id)
-
-            # If human agent has taken over, do NOT run the AI
-            if session.get("human_takeover", False):
-                continue
-
             # Send typing indicator (only when AI will actually process)
             await manager.send_personal_message({
                 "type": "typing",
@@ -251,6 +262,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
             try:
                 initial_state: AgentState = {
                     "customer_id": customer_id,
+                    "customer_name": session.get("customer_name"),
                     "session_id": session_id,
                     "message": message,
                     "conversation_history": session["conversation_history"],
@@ -265,7 +277,23 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     "approval_granted": None,
                 }
 
-                result = await customer_support_graph.ainvoke(initial_state)
+                # Invoke LangGraph with timeout
+                timeout_secs = settings.langgraph_timeout
+                try:
+                    result = await asyncio.wait_for(
+                        customer_support_graph.ainvoke(initial_state),
+                        timeout=timeout_secs,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"LangGraph timed out after {timeout_secs}s for session {session_id}")
+                    await manager.send_personal_message({
+                        "type": "agent_response",
+                        "message": "I'm taking longer than expected to process your request. Please try again or let me connect you with a human agent.",
+                        "agent_name": "Adi",
+                        "escalated": False,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }, session_id)
+                    continue
 
                 raw_response = result.get("response", "I'm sorry, I couldn't process your request.")
                 is_escalated = result.get("escalated", False)
@@ -324,7 +352,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         "last_message": message,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
-                    await manager.broadcast_to_agents(escalation_msg, session_id)
+                    # Send escalation alert to ALL dashboard agents so they can pick it up
                     await manager.broadcast_to_all_agents(escalation_msg)
 
                     # Send escalation email
@@ -369,7 +397,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 from app.database import AsyncSessionLocal, Conversation, _utcnow
                 async with AsyncSessionLocal() as db:
                     # Determine if it was escalated
-                    was_escalated = "true" if session.get("human_takeover") or any(
+                    was_escalated = "true" if session.get("mode") == "human" or any(
                         msg.get("escalated") for msg in session.get("conversation_history", [])
                     ) else "false"
                     
@@ -443,14 +471,28 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
             elif msg_type == "takeover":
                 # Agent is taking over the conversation
                 session = await _get_session(session_id)
-                session["human_takeover"] = True
-                await _save_session(session_id, session)
-                
-                await manager.send_personal_message({
-                    "type": "system",
-                    "message": f"You are now connected with {data.get('agent_name', 'a human agent')}.",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }, session_id)
+                if session.get("mode") != "human":
+                    session["mode"] = "human"
+                    await _save_session(session_id, session)
+                    
+                    await manager.send_personal_message({
+                        "type": "system",
+                        "message": f"You are now connected with {data.get('agent_name', 'a human agent')}.",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }, session_id)
+
+            elif msg_type == "release":
+                # Agent is returning the conversation to the AI
+                session = await _get_session(session_id)
+                if session.get("mode") != "ai":
+                    session["mode"] = "ai"
+                    await _save_session(session_id, session)
+                    
+                    await manager.send_personal_message({
+                        "type": "system",
+                        "message": "You have been returned to the AI assistant. How can I help you?",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }, session_id)
 
     except WebSocketDisconnect:
         manager.disconnect_agent(websocket, session_id)

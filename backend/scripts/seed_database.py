@@ -1,146 +1,224 @@
-"""Seed Supabase with deterministic synthetic Indian e-commerce support data.
+"""
+Seed the Supabase database with deterministic Indian synthetic data.
+
+Uses the generate_indian_dataset module for consistent, reproducible data.
+Properly chains foreign keys: products → customers → orders → tickets.
 
 Usage:
     cd backend
     python -m scripts.seed_database
-
-The data is generated locally by generate_indian_dataset.py; no real customer
-information is used. Existing demo data in the five CSA tables is replaced.
 """
 
-from __future__ import annotations
-
 import sys
-from pathlib import Path
+import os
+from datetime import datetime, timedelta, timezone
 
-from supabase import Client, create_client
+from supabase import create_client, Client
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# Add parent dir to path so we can import app modules
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.config import settings
-from scripts.generate_indian_dataset import PRODUCTS, build_dataset
+from scripts.generate_indian_dataset import generate_full_dataset
 
 
-BATCH_SIZE = 100
+def seed():
+    """Main seeding function."""
+    print("=" * 60)
+    print("🇮🇳  IntelliSupport — Indian Dataset Seeder")
+    print("=" * 60)
 
-
-def chunks(items, size=BATCH_SIZE):
-    for i in range(0, len(items), size):
-        yield items[i : i + size]
-
-
-def seed(customer_count: int = 150, ticket_count: int = 600, seed: int = 42):
-    print("🔌 Connecting to Supabase...")
-    supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
-
-    customers, orders, tickets = build_dataset(
-        customer_count=customer_count,
-        ticket_count=ticket_count,
-        seed=seed,
-    )
-    print(f"📊 Generated {len(customers)} customers, {len(orders)} orders and {len(tickets)} tickets")
+    # ── Connect to Supabase ──
+    print(f"\n🔌 Connecting to Supabase...")
+    print(f"   URL: {settings.supabase_url}")
 
     try:
-        # Child tables first because of foreign keys.
-        print("🧹 Clearing old demo data...")
-        for table in ("conversations", "tickets", "orders", "products", "customers"):
-            # id > 0 matches every normal identity row without assuming the current max id.
-            supabase.table(table).delete().gt("id", 0).execute()
+        supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
+        # Quick health check
+        supabase.table("customers").select("id").limit(1).execute()
+        print("   ✅ Connected successfully.")
+    except Exception as e:
+        print(f"\n❌ FATAL: Cannot connect to Supabase!")
+        print(f"   Error: {e}")
+        print(f"   Check your SUPABASE_URL and SUPABASE_KEY in .env")
+        sys.exit(1)
 
-        print("📦 Seeding products...")
-        product_rows = [
-            {
-                "name": name,
-                "category": category,
-                "price": price,
-                "stock": stock,
-                "description": description,
+    # ── Generate dataset ──
+    print("\n📊 Generating Indian synthetic dataset (seed=42)...")
+    data = generate_full_dataset()
+    print(f"   Products:  {len(data['products'])}")
+    print(f"   Customers: {len(data['customers'])}")
+    print(f"   Orders:    {len(data['orders'])}")
+    print(f"   Tickets:   {len(data['tickets'])}")
+
+    try:
+        # ── 1. Seed Products ──
+        print("\n📦 Step 1/4 — Seeding products...")
+        product_id_map = {}  # index → actual DB id
+
+        for idx, p in enumerate(data["products"]):
+            product_data = {
+                "name": p["name"],
+                "category": p["category"],
+                "price": p["price"],
+                "stock": p["stock"],
+                "description": p["description"],
             }
-            for name, category, price, stock, description in PRODUCTS
-        ]
-        product_response = supabase.table("products").insert(product_rows).execute()
-        product_map = {row["name"]: row["id"] for row in product_response.data}
-        print(f"   ✅ {len(product_map)} products")
 
-        print("👤 Seeding customers...")
-        customer_rows = [
-            {
-                "name": customer["name"],
-                "email": customer["email"],
-                "age": customer["age"],
-                "gender": customer["gender"],
+            # Check if product already exists (by name)
+            existing = supabase.table("products").select("id").eq("name", p["name"]).execute()
+            if existing.data:
+                product_id_map[idx] = existing.data[0]["id"]
+                print(f"   ⏭️  {p['name']} already exists (ID: {existing.data[0]['id']})")
+            else:
+                res = supabase.table("products").insert(product_data).execute()
+                if not res.data:
+                    raise RuntimeError(f"Failed to insert product: {p['name']}")
+                product_id_map[idx] = res.data[0]["id"]
+                print(f"   ✅ {p['name']} → ID: {res.data[0]['id']}")
+
+        print(f"   📦 {len(product_id_map)} products ready.")
+
+        # ── 2. Seed Customers ──
+        print("\n👤 Step 2/4 — Seeding customers...")
+        customer_id_map = {}  # index → actual DB id
+
+        for idx, c in enumerate(data["customers"]):
+            customer_data = {
+                "name": c["name"],
+                "email": c["email"],
+                "age": c["age"],
+                "gender": c["gender"],
             }
-            for customer in customers
-        ]
-        inserted_customers = []
-        for batch in chunks(customer_rows):
-            inserted_customers.extend(
-                supabase.table("customers").insert(batch).execute().data
-            )
-        customer_map = {row["email"]: row["id"] for row in inserted_customers}
-        print(f"   ✅ {len(customer_map)} customers")
 
-        print("🛒 Seeding orders...")
-        order_rows = []
-        for order in orders:
-            # order customer_id/product_id are deterministic 1-based indexes into
-            # the generated lists, not database primary keys.
-            customer = customers[order["customer_id"] - 1]
-            product = PRODUCTS[order["product_id"] - 1]
-            order_rows.append(
-                {
-                    "customer_id": customer_map[customer["email"]],
-                    "product_id": product_map[product[0]],
-                    "order_date": order["order_date"],
-                    "status": order["status"],
-                    "tracking_number": order["tracking_number"],
-                }
-            )
+            # Check if customer already exists (by email)
+            existing = supabase.table("customers").select("id").eq("email", c["email"]).execute()
+            if existing.data:
+                customer_id_map[idx] = existing.data[0]["id"]
+            else:
+                res = supabase.table("customers").insert(customer_data).execute()
+                if not res.data:
+                    raise RuntimeError(f"Failed to insert customer: {c['name']} ({c['email']})")
+                customer_id_map[idx] = res.data[0]["id"]
 
+        print(f"   ✅ {len(customer_id_map)} customers seeded.")
+        # Print a few sample names
+        for i in range(min(3, len(data["customers"]))):
+            c = data["customers"][i]
+            print(f"      → {c['name']} ({c['city']}, {c['state']}) — ID: {customer_id_map[i]}")
+
+        # ── 3. Seed Orders ──
+        print("\n🛒 Step 3/4 — Seeding orders...")
+        order_id_map = {}  # order list index → actual DB id
+        order_customer_map = {}  # order list index → customer_id
+
+        orders_to_insert = []
+        for idx, o in enumerate(data["orders"]):
+            cust_id = customer_id_map[o["customer_index"]]
+            prod_id = product_id_map[o["product_index"]]
+            order_date = (datetime.now(timezone.utc) - timedelta(days=o["days_ago"])).isoformat()
+
+            orders_to_insert.append({
+                "customer_id": cust_id,
+                "product_id": prod_id,
+                "order_date": order_date,
+                "status": o["status"],
+                "tracking_number": o["tracking_number"],
+            })
+            order_customer_map[idx] = cust_id
+
+        # Insert orders in batches of 50
         inserted_orders = []
-        for batch in chunks(order_rows):
-            inserted_orders.extend(
-                supabase.table("orders").insert(batch).execute().data
-            )
-        print(f"   ✅ {len(inserted_orders)} orders")
+        for i in range(0, len(orders_to_insert), 50):
+            batch = orders_to_insert[i:i + 50]
+            res = supabase.table("orders").insert(batch).execute()
+            if not res.data:
+                raise RuntimeError(f"Failed to insert orders batch starting at index {i}")
+            inserted_orders.extend(res.data)
 
-        print("🎫 Seeding tickets...")
-        ticket_rows = []
-        for index, ticket in enumerate(tickets):
-            customer = customers[ticket["customer_id"] - 1]
-            ticket_rows.append(
-                {
-                    "customer_id": customer_map[customer["email"]],
-                    "order_id": inserted_orders[index]["id"],
-                    "subject": ticket["subject"],
-                    "description": ticket["description"],
-                    "type": ticket["type"],
-                    "status": ticket["status"],
-                    "priority": ticket["priority"],
-                    "channel": ticket["channel"],
-                    "assigned_agent": ticket["assigned_agent"],
-                    "resolution": ticket["resolution"],
-                    "satisfaction_rating": ticket["satisfaction_rating"],
-                }
-            )
+        # Map order indices to actual IDs
+        for idx, order_data in enumerate(inserted_orders):
+            order_id_map[idx] = order_data["id"]
 
-        for batch in chunks(ticket_rows):
-            supabase.table("tickets").insert(batch).execute()
-        print(f"   ✅ {len(ticket_rows)} tickets")
+        print(f"   ✅ {len(order_id_map)} orders seeded.")
 
-        print("\n" + "=" * 56)
-        print("🎉 INDIAN CSA DEMO DATA SEEDED SUCCESSFULLY")
-        print(f"   Products:  {len(product_map)}")
-        print(f"   Customers: {len(customer_map)}")
-        print(f"   Orders:    {len(inserted_orders)}")
-        print(f"   Tickets:   {len(ticket_rows)}")
-        print("   Context:   India | INR | UPI | COD | GST | PIN codes")
-        print("   Seed:      deterministic (42)")
-        print("=" * 56)
+        # Print order status distribution
+        status_counts = {}
+        for o in data["orders"]:
+            status_counts[o["status"]] = status_counts.get(o["status"], 0) + 1
+        for status, count in sorted(status_counts.items()):
+            print(f"      → {status}: {count}")
 
-    except Exception as exc:
-        print(f"❌ Seeding failed: {exc}")
-        raise
+        # ── 4. Seed Tickets ──
+        print("\n🎫 Step 4/4 — Seeding support tickets...")
+        tickets_to_insert = []
+
+        for t in data["tickets"]:
+            order_idx = t["order_index"]
+            order_id = order_id_map[order_idx]
+            cust_id = order_customer_map[order_idx]
+
+            ticket_data = {
+                "customer_id": cust_id,
+                "order_id": order_id,
+                "subject": t["subject"],
+                "description": t["description"],
+                "type": t["type"],
+                "status": t["status"],
+                "priority": t["priority"],
+                "channel": t["channel"],
+                "assigned_agent": t["assigned_agent"],
+                "resolution": t["resolution"],
+                "satisfaction_rating": t["satisfaction_rating"],
+            }
+            tickets_to_insert.append(ticket_data)
+
+        # Insert tickets in batches of 50
+        inserted_tickets = []
+        for i in range(0, len(tickets_to_insert), 50):
+            batch = tickets_to_insert[i:i + 50]
+            res = supabase.table("tickets").insert(batch).execute()
+            if not res.data:
+                raise RuntimeError(f"Failed to insert tickets batch starting at index {i}")
+            inserted_tickets.extend(res.data)
+
+        print(f"   ✅ {len(inserted_tickets)} tickets seeded.")
+
+        # Print ticket type distribution
+        type_counts = {}
+        for t in data["tickets"]:
+            type_counts[t["type"]] = type_counts.get(t["type"], 0) + 1
+        for ttype, count in sorted(type_counts.items()):
+            print(f"      → {ttype}: {count}")
+
+        # ── Summary ──
+        print("\n" + "=" * 60)
+        print("🎉 SUPABASE SEEDING COMPLETE!")
+        print(f"   Products:  {len(product_id_map)}")
+        print(f"   Customers: {len(customer_id_map)}")
+        print(f"   Orders:    {len(order_id_map)}")
+        print(f"   Tickets:   {len(inserted_tickets)}")
+        print("=" * 60)
+
+        # Print useful info for testing
+        print("\n📝 Sample data for testing:")
+        first_customer = data["customers"][0]
+        first_cust_id = customer_id_map[0]
+        print(f"   Customer: {first_customer['name']} (ID: {first_cust_id}, Email: {first_customer['email']})")
+
+        # Find an order for the first customer
+        for idx, o in enumerate(data["orders"]):
+            if o["customer_index"] == 0:
+                oid = order_id_map[idx]
+                prod = data["products"][o["product_index"]]
+                print(f"   Order:    #{oid} — {prod['name']} (₹{prod['price']:,.2f}) — Status: {o['status']}")
+                break
+
+    except Exception as e:
+        print(f"\n❌ Error during seeding: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

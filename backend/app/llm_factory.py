@@ -1,9 +1,12 @@
 import os
+import logging
 from langchain_openai import ChatOpenAI
 from app.config import settings
 
 import json
 from pathlib import Path
+
+logger = logging.getLogger("llm_factory")
 
 SETTINGS_FILE = Path(__file__).parent.parent / "settings.json"
 
@@ -24,6 +27,9 @@ def get_llm(model: str = None, provider: str = None, **kwargs):
     """
     Returns an LLM instance supporting multiple providers.
     Uses LLM_PROVIDER from env or infers from base_url/model.
+
+    Supports timeout configuration via settings.llm_timeout.
+    Falls back to settings.llm_fallback_model if primary model fails on init.
     """
     dyn = get_dynamic_settings()
     
@@ -33,9 +39,13 @@ def get_llm(model: str = None, provider: str = None, **kwargs):
     elif model == settings.llm_large_model:
         actual_model = dyn.get("large_model", model)
     elif model is None:
-        actual_model = dyn.get("large_model", "gpt-oss:120b-cloud")
+        actual_model = dyn.get("large_model", settings.llm_large_model)
 
     base_url = dyn.get("llm_base_url", settings.llm_base_url)
+    
+    # Apply timeout from settings if not explicitly provided
+    if "request_timeout" not in kwargs and "timeout" not in kwargs:
+        kwargs["request_timeout"] = settings.llm_timeout
     
     # Multi-provider routing
     prov = provider or os.getenv("LLM_PROVIDER", "openai").lower()
@@ -67,8 +77,9 @@ def get_llm(model: str = None, provider: str = None, **kwargs):
             **kwargs
         )
     else:
-        # Default to OpenAI or OpenAI-compatible (vLLM, Ollama, BigModel)
+        # Default to OpenAI or OpenAI-compatible (vLLM, Ollama Cloud)
         normalized_url = base_url.rstrip("/") if base_url else None
+        logger.debug(f"Creating LLM: model={actual_model}, url={normalized_url}")
         return ChatOpenAI(
             api_key=settings.llm_api_key or "empty",
             base_url=normalized_url,

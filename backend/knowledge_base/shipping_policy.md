@@ -1,43 +1,78 @@
 # Shipping Policy
 
-## Shipping Options
+## Overview
+We deliver across India to over 25,000+ PIN codes. All orders are shipped from our warehouses in Delhi NCR, Mumbai, and Bengaluru.
 
-| Option | Delivery Time | Cost | Availability |
-|--------|--------------|------|--------------|
-| Standard Shipping | 5–7 business days | Free on orders over $50; $4.99 otherwise | All domestic addresses |
-| Express Shipping | 2–3 business days | $9.99 | All domestic addresses |
-| Next-Day Delivery | 1 business day (order by 2 PM) | $14.99 | Metro areas only |
-| International Shipping | 10–20 business days | Varies by destination | Select countries |
+## Delivery Partners
+We work with India's leading logistics partners:
+- **Delhivery**
+- **BlueDart**
+- **DTDC**
+- **Ekart Logistics**
+- **XpressBees**
 
-## Order Processing
-- Orders placed before **2:00 PM EST** on business days are processed the same day.
-- Orders placed after 2:00 PM EST or on weekends/holidays are processed the next business day.
-- You will receive a confirmation email with a tracking number once your order ships.
+The delivery partner is assigned based on your PIN code and product type for the fastest delivery.
 
-## Tracking Your Order
-1. Log in to your account and go to **My Orders**.
-2. Click on the specific order to view the tracking number and carrier information.
-3. Click the tracking number to be redirected to the carrier's tracking page.
+## Delivery Timelines
 
-You can also track your order by entering your order number on our **Order Tracking** page.
+### Standard Delivery (Free on orders above ₹499)
+
+| Region | Estimated Delivery |
+|--------|-------------------|
+| Metro cities (Delhi NCR, Mumbai, Bengaluru, Chennai, Kolkata, Hyderabad, Pune, Ahmedabad) | 2-4 business days |
+| Tier-2 cities (Jaipur, Lucknow, Chandigarh, Kochi, Indore, Noida, Gurgaon, etc.) | 4-6 business days |
+| Other cities and towns | 7-10 business days |
+| Remote / hilly areas (J&K, Northeast, Ladakh, Andaman & Nicobar) | 10-15 business days |
+
+### Express Delivery (Available in select metros)
+Express delivery is available in Delhi NCR, Mumbai, Bengaluru, Hyderabad, Chennai, and Pune:
+- **Same-day delivery**: ₹149 (order before 12 PM)
+- **Next-day delivery**: ₹99
+
+Express delivery is subject to product availability and warehouse proximity.
+
+### Shipping Charges
+
+| Order Value | Shipping Charge |
+|-------------|----------------|
+| Above ₹499 | **FREE** |
+| Below ₹499 | ₹49 flat |
+
+## PIN Code Serviceability
+- Enter your PIN code on the product page to check delivery availability and estimated delivery date.
+- Some remote PIN codes may have limited delivery options (standard delivery only, no COD).
+- Certain heavy/oversized items (e.g., soundbars, air purifiers) may have additional shipping charges to remote areas.
+
+## Order Tracking
+Once your order is shipped, you will receive:
+1. **SMS notification** with the tracking number
+2. **Email** with a tracking link
+3. Tracking updates in **My Orders** section of your account
+
+You can track your order by:
+- Clicking the tracking link in your email/SMS
+- Entering the tracking number on the delivery partner's website
+- Checking the order status in your account under "My Orders"
 
 ## Shipping Restrictions
-- **P.O. Boxes**: We ship to P.O. Boxes via Standard Shipping only.
-- **Oversized items**: Large items (furniture, appliances) may have extended delivery times and additional shipping fees.
-- **Hazardous materials**: Certain items (batteries, chemicals) cannot be shipped via air and are limited to ground shipping.
+We currently do **not** ship to:
+- International addresses (India-only delivery)
+- PO Box addresses
+- APO/FPO addresses
 
-## International Shipping
-- Available to select countries. Check our shipping calculator at checkout for availability.
-- Customs duties and import taxes are the responsibility of the recipient.
-- International orders may take 10–20 business days depending on the destination and customs processing.
+## Delivery Attempts
+- The delivery partner will make **3 delivery attempts**.
+- If delivery fails after 3 attempts, the order is returned to our warehouse.
+- For prepaid orders: A full refund is initiated automatically.
+- For COD orders: The order is cancelled.
 
-## Delivery Issues
-- **Missing package**: If your tracking shows "delivered" but you have not received your package, please wait 24 hours (packages are sometimes marked delivered early). If still missing, contact us.
-- **Damaged package**: If your item arrives damaged, contact us within 48 hours with photos of the damage. We will arrange a replacement or refund.
-- **Wrong item received**: Contact us immediately. We will provide a prepaid return label and ship the correct item at no additional cost.
+## Delivery During Festivals & Sales
+During major sale events (Diwali Sale, Republic Day Sale, Independence Day Sale, Big Billion Days), delivery timelines may be extended by **2-3 additional days** due to high order volumes.
 
-## Contact
-For shipping inquiries:
-- **Email**: shipping@ourstore.com
-- **Live Chat**: Available 24/7
-- **Phone**: 1-800-SUPPORT (Mon–Fri, 9 AM – 6 PM EST)
+## Damaged or Missing Packages
+If your package arrives damaged or items are missing:
+1. **Do not accept** the delivery if outer packaging is visibly damaged. Ask the delivery person to return it.
+2. If you accepted the delivery and find damage, report it within **48 hours** through "My Orders" or contact support.
+3. We will arrange a **free pickup** and send a replacement or process a refund.
+
+Photos of the damaged packaging/product may be required for processing.

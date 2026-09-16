@@ -1,0 +1,28 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: AI
+      - heading "Welcome to Project Bestie" [level=2] [ref=e8]
+      - paragraph [ref=e9]: Get instant AI-powered support for orders, tickets, and more.
+      - generic [ref=e10]:
+        - generic [ref=e11]:
+          - generic [ref=e12]: Link your account (optional)
+          - textbox "Enter your email address" [ref=e13]
+        - button "Link My Account" [disabled] [ref=e14]
+      - generic [ref=e17]: or
+      - button "Continue as Guest →" [ref=e21]
+      - paragraph [ref=e22]: By continuing you agree to our terms of service. Your conversations may be recorded for quality assurance.
+    - generic [ref=e23]:
+      - banner [ref=e24]:
+        - generic [ref=e25]:
+          - generic [ref=e26]: AI
+          - generic [ref=e27]:
+            - heading "Project Bestie" [level=2] [ref=e28]
+            - generic [ref=e29]: Offline
+        - button "End Chat" [ref=e33]
+      - generic [ref=e36]:
+        - generic [ref=e37]:
+          - textbox "Connecting..." [disabled] [ref=e39]
+          - button [disabled] [ref=e40]
+        - paragraph [ref=e43]: Powered by Project Bestie · Responses may be generated
+  - alert [ref=e44]
