@@ -1,110 +1,152 @@
-# Customer Support Agent — Under Development
+# IntelliSupport - AI Customer Support Agent
 
-> **Project Status — Under Development**
->
-> Customer Support Agent (CSA) is an AI-powered customer support platform currently under active development. It combines conversational AI, retrieval-augmented generation, agentic workflows, customer and order context, and human-agent collaboration.
->
-> **Current state:**
-> - Core backend, AI orchestration, RAG, database, frontend, and real-time communication are implemented.
-> - The project is actively evolving across AI workflows, retrieval quality, backend reliability, support UX, testing, security, and deployment.
-> - Architecture and interfaces may change as development continues.
-> - This repository should be considered a work in progress rather than a finished production product.
->
-> This status section will evolve as the project moves through development, testing, hardening, and deployment.
+**IntelliSupport** is an intelligent, full-stack Customer Support Agent designed to autonomously handle customer inquiries, process complex transactions, and intelligently hand off conversations to human agents when needed. 
+
+This project demonstrates a production-minded architecture integrating **LangGraph**, **Pinecone RAG**, **Supabase**, and **FastAPI WebSockets** to create a seamless customer service experience.
 
 ---
 
-Customer Support Agent is designed to provide context-aware assistance, retrieve relevant knowledge, work with customer and order information, and escalate complex conversations to human support agents.
+## 🎯 Problem Statement
+Modern customer support is often fragmented, with basic chatbots failing to understand context, hallucinating answers, or improperly executing destructive actions (like cancellations). Furthermore, the transition from AI to human agents is often clunky and loses conversation context.
 
-## Architecture
+## 🚀 Project Objective
+Build a robust, secure, and stateful AI Customer Support Agent capable of:
+1. Grounded policy question answering using Pinecone RAG.
+2. Secure tool execution for high-risk actions (e.g., cancelling an order requires explicit user confirmation).
+3. Seamless real-time AI-to-Human handover via WebSockets.
+4. Comprehensive identity management and resource ownership validation to ensure a customer can only access their own data.
 
-* **Backend**: Python & FastAPI
-* **AI Orchestration**: LangGraph & LangChain
-* **RAG**: Pinecone
-* **Database**: Supabase PostgreSQL
-* **Session / Cache**: Upstash Redis
-* **Frontend**: Next.js, React & TailwindCSS
-* **Real-time Communication**: WebSockets
-* **LLM Providers**: OpenAI, Anthropic, Google, and open-source models through the project's model layer
-* **Deployment**: Vercel (Frontend) & container-based backend deployment
+## ✨ Key Features
+- **Intelligent Routing:** Uses LangGraph to classify intent and route inquiries to specialized sub-agents (RAG, DB, Web, Escalation).
+- **RAG for Grounded Answers:** Answers policy queries purely from an embedded knowledge base using Pinecone, with explicit source citations.
+- **High-Risk Action Gating:** Actions like `cancel_order` and `process_refund` enter a "pending approval" state, requiring explicit customer confirmation ("yes") before execution.
+- **Secure Authentication:** Implements JWT-based authentication for customers and static agent-tokens for support staff.
+- **Strict Ownership Validation:** The AI layer operates entirely within the boundaries of the authenticated `customer_id`. The LLM cannot override or fabricate user identities to access unauthorized data.
+- **AI to Human Handover:** Angry customers or complex queries seamlessly escalate to a human support agent dashboard in real-time without losing chat history.
 
-### AI & Agent Workflow
+---
 
-The backend uses an agentic architecture to combine conversational reasoning with retrieved context, external tools, and application data.
+## 🛠️ Technology Stack
+- **Backend:** Python, FastAPI, WebSockets
+- **AI Orchestration:** LangChain, LangGraph, Google Gemini (via `google-genai`)
+- **Vector DB (RAG):** Pinecone
+- **Relational DB:** Supabase (PostgreSQL)
+- **Frontend:** Next.js, React, Tailwind CSS
 
-* **Intent Routing**: Determines the appropriate support path and required tools for incoming conversations.
-* **Knowledge Retrieval**: Retrieves relevant knowledge-base information through Pinecone to ground responses.
-* **Customer & Order Context**: Works with customer and order information stored in Supabase PostgreSQL.
-* **Human Escalation**: Supports handing complex conversations to human support agents through the support interface.
-* **Persistent Sessions**: Maintains conversation and session state for consistent support interactions.
+---
 
-## Core Capabilities
+## 🏗️ Architecture Overview
 
-* AI-powered customer support conversations
-* Retrieval-Augmented Generation (RAG)
-* Agentic intent routing and tool orchestration
-* Customer and order data access
-* Human-agent escalation and takeover
-* Persistent conversation and session handling
-* Real-time support communication through WebSockets
-* Support analytics and operational workflows
+```mermaid
+graph TD
+    subgraph Frontend
+        C[Customer Chat UI]
+        A[Agent Dashboard]
+    end
 
-## Development & Deployment
+    subgraph Backend - FastAPI
+        WS[WebSocket Manager]
+        REST[REST API Endpoints]
+        G[LangGraph Orchestrator]
+    end
 
-CSA is currently under active development.
+    subgraph AI Layer
+        IR[Intent Router]
+        RAG[RAG Agent]
+        DB[DB Agent]
+        ESC[Escalation Agent]
+    end
 
-Current development is focused on improving:
+    subgraph External Services
+        PIN[Pinecone Vector DB]
+        SUP[Supabase PostgreSQL]
+        LLM[Google Gemini API]
+    end
 
-* Agent and LangGraph workflows
-* Retrieval quality and RAG pipelines
-* Tool reliability and backend architecture
-* Real-time customer/support-agent communication
-* Frontend UX and support workflows
-* Testing and production hardening
-* Deployment and infrastructure
+    C <-->|JWT Auth WS| WS
+    A <-->|Agent Auth WS| WS
 
-### Local Setup
+    WS --> G
+    REST --> SUP
 
-#### Backend
+    G --> IR
+    IR --> RAG
+    IR --> DB
+    IR --> ESC
 
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-# Windows: venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+    RAG <--> PIN
+    DB <--> SUP
+    
+    IR <--> LLM
+    RAG <--> LLM
+    DB <--> LLM
+    ESC <--> LLM
 ```
 
-#### Frontend
+### How LangGraph is used
+LangGraph models the AI conversation as a state machine. It begins with an **Intent Router** which dynamically selects the next node (RAG, Database Tools, Web Search, or Human Escalation). This enables multi-turn planning, conditional logic, and robust recovery if a tool fails.
 
+### How RAG/Pinecone is used
+Documents in the `backend/knowledge_base` are chunked and embedded into Pinecone. When the Intent Router detects a policy question, the RAG Agent queries Pinecone to fetch the top matching document chunks and uses them as strict `CONTEXT`. The LLM is explicitly instructed to cite the source file (e.g., `return_policy.md`) and is restricted from utilizing external knowledge.
+
+### How Supabase is used
+Supabase acts as the primary datastore for customers, orders, products, tickets, and conversation histories. It also provides Row Level Security (RLS) to ensure that backend API keys are required for access, locking down the public API.
+
+### WebSockets & Human Handover
+The `WebSocketManager` maintains live connections for both customers and agents. 
+- When an AI determines an escalation is necessary (or if the user explicitly requests a human), the session's `mode` is flipped to `human`.
+- The AI execution is paused, and messages are directly routed between the customer and the human agent.
+- Once resolved, the agent releases the session, and LangGraph resumes control.
+
+### Authentication & Security Model
+- **Customers** receive a JWT token upon login which dictates their identity.
+- **Resource Ownership:** The authenticated `customer_id` is securely injected into all DB tools by the backend execution layer (`graph.py`). The LLM cannot spoof a different `customer_id`.
+- **Agent Dashboard:** Protected by a static `AGENT_SECRET` for demonstration purposes.
+
+---
+
+## 🚀 Running the Project Locally
+
+### 1. Environment Setup
+Create a `.env` file in the `backend/` directory by copying the example template:
+```bash
+cd backend
+cp .env.example .env
+```
+Fill in the necessary keys for Supabase, Pinecone, and Gemini API.
+
+### 2. Backend Startup
+Requires Python 3.10+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate  # Or .venv\Scripts\activate on Windows
+pip install -r requirements.txt
+
+# Run the FastAPI server
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+### 3. Frontend Startup
+Requires Node.js 18+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
+Access the application:
+- Customer UI: `http://localhost:3000`
+- Agent Dashboard: `http://localhost:3000/agent`
 
-Create your local environment configuration from `.env.example` and add the required credentials locally.
-
-### Deployment
-
-The application is structured for independent frontend and backend deployment. The frontend can be deployed through Vercel, while the backend can be deployed as a container using the repository's deployment configuration.
-
-## Project Structure
-
-```text
-Customer_support_agent/
-├── backend/          # API, agents, tools, retrieval and business logic
-├── frontend/         # Support dashboard and user interface
-├── dataset/          # Project data and supporting resources
-├── docs/             # Project documentation
-└── .env.example      # Safe environment template
+### 4. Running Tests
+```bash
+cd backend
+# Run all tests
+python -m pytest tests/ -v
 ```
 
-## Security
-
-Never commit real API keys, database passwords, tokens, or other credentials. Use environment variables or a managed secret store for sensitive configuration.
-
-## License
-
-This project is licensed under the terms of the repository's `LICENSE` file.
+## 🔮 Future Improvements
+While the current architecture is robust for a major project submission, future iterations would benefit from:
+- A production-grade Identity Provider (OAuth2/OIDC) instead of custom JWT handling.
+- A distributed WebSocket layer using Redis Pub/Sub to support horizontal scaling across multiple FastAPI instances.
+- A background task queue (like Celery) for non-blocking asynchronous email delivery in production scenarios.

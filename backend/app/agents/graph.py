@@ -6,6 +6,7 @@ All runs are automatically traced to LangSmith when LANGCHAIN_TRACING_V2=true.
 import os
 from typing import TypedDict, Annotated, Sequence
 import operator
+import asyncio
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 
@@ -110,13 +111,15 @@ async def db_plan_node(state: AgentState) -> dict:
                 "action": action,
                 "params": params,
                 "message": confirm_msg,
+                "customer_id": state.get("customer_id"),
+                "session_id": state.get("session_id"),
             },
             "response": confirm_msg,
             "escalated": False,
         }
     
     # Low-risk action — execute immediately
-    tool_results = _execute_tool(action, params)
+    tool_results = await asyncio.to_thread(_execute_tool, action, params, state.get("customer_id"))
     
     result = await db_agent.generate_response(
         message=state["message"],
@@ -147,11 +150,13 @@ async def db_execute_node(state: AgentState) -> dict:
             "escalated": False,
             "pending_approval": None,
         }
-    
+    if pending.get("customer_id") and pending.get("customer_id") != state.get("customer_id"):
+        return {"response": "Approval blocked: Identity mismatch.", "escalated": False, "pending_approval": None}
+
     # Execute the approved action
     action = pending["action"]
     params = pending["params"]
-    tool_results = _execute_tool(action, params)
+    tool_results = await asyncio.to_thread(_execute_tool, action, params, state.get("customer_id"))
     
     result = await db_agent.generate_response(
         message=state["message"],
@@ -169,13 +174,19 @@ async def db_execute_node(state: AgentState) -> dict:
     }
 
 
-def _execute_tool(action: str, params: dict) -> str:
-    """Execute a database tool by name."""
+def _execute_tool(action: str, params: dict, authenticated_customer_id: int | None) -> str:
+    """Execute a database tool by name, injecting the authenticated customer_id securely."""
     try:
+        # Security Boundary: Force the customer_id for all customer-scoped actions
+        # This completely overwrites any customer_id the LLM tried to pass
+        if action in ["get_customer_history", "track_order", "cancel_order", "process_refund", "get_ticket", "create_ticket", "update_ticket"]:
+            if authenticated_customer_id:
+                params["customer_id"] = authenticated_customer_id
+            
         if action == "lookup_customer":
             return lookup_customer(**params)
         elif action == "get_customer_history":
-            return get_customer_history(**params)
+            return get_customer_history(customer_id=params.get("customer_id"))
         elif action == "get_ticket":
             return get_ticket(**params)
         elif action == "track_order":

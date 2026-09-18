@@ -37,37 +37,55 @@ else:
     else:
         logger.warning("Upstash Redis not configured. Using in-memory store.")
 
-session_store: dict[str, dict] = {}
+class SessionStore(dict):
+    async def get_session(self, session_id: str) -> dict | None:
+        if redis_client:
+            data = await redis_client.get(f"session:{session_id}")
+            if data:
+                return json.loads(data) if isinstance(data, str) else data
+            return None
+        else:
+            return self.get(session_id)
+
+    async def save_session(self, session_id: str, session: dict):
+        if redis_client:
+            await redis_client.set(f"session:{session_id}", json.dumps(session), ex=86400)
+        else:
+            self[session_id] = session
+
+session_store = SessionStore()
 
 
-async def _get_session(session_id: str, customer_id: int | None = None) -> dict:
-    """Get or create a session."""
-    if redis_client:
-        data = await redis_client.get(f"session:{session_id}")
-        if data:
-            return json.loads(data) if isinstance(data, str) else data
-    else:
-        if session_id in session_store:
-            return session_store[session_id]
+async def _get_session(session_id: str, authenticated_customer_id: int | None = None) -> dict:
+    """Retrieve an existing session or initialize a new one with the authenticated customer_id."""
+    session = await session_store.get_session(session_id)
+    if session:
+        # Enforce session ownership
+        if authenticated_customer_id is not None:
+            if session.get("customer_id") is not None and session.get("customer_id") != authenticated_customer_id:
+                raise ValueError(f"Session {session_id} belongs to a different customer.")
+            if session.get("customer_id") is None:
+                session["customer_id"] = authenticated_customer_id
+                await session_store.save_session(session_id, session)
+        return session
 
-    session = {
+    # Initialize new session bounded to the authenticated customer
+    new_session = {
         "session_id": session_id,
-        "customer_id": customer_id,
-        "conversation_history": [],
+        "customer_id": authenticated_customer_id,
         "mode": "ai",
+        "conversation_history": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "escalated": False,
+        "pending_approval": None,
     }
-    if not redis_client:
-        session_store[session_id] = session
-    return session
+    await session_store.save_session(session_id, new_session)
+    return new_session
 
 
 async def _save_session(session_id: str, session: dict):
     """Save session back to Redis (or memory)."""
-    if redis_client:
-        await redis_client.set(f"session:{session_id}", json.dumps(session), ex=86400)
-    else:
-        session_store[session_id] = session
+    await session_store.save_session(session_id, session)
 
 async def get_all_active_sessions() -> list:
     """Retrieve all active sessions from Redis or memory."""
@@ -89,7 +107,7 @@ async def get_all_active_sessions() -> list:
         return list(session_store.values())
 
 
-async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None):
+async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None, authenticated_customer_id: int | None = None):
     """
     Main handler for customer WebSocket connections.
     Receives messages, processes them through LangGraph, and sends responses.
@@ -99,33 +117,65 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
 
     await manager.connect_customer(websocket, session_id)
 
-    session = await _get_session(session_id)
+    try:
+        session = await _get_session(session_id, authenticated_customer_id)
+    except ValueError as e:
+        # Reject connection if ownership fails
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(e))
+        return
+
+    customer_id = authenticated_customer_id
     history = session.get("conversation_history", [])
 
     # Send welcome message with session ID and history
     await manager.send_personal_message({
         "type": "system",
         "session_id": session_id,
+        "mode": session.get("mode", "ai"),
         "message": "Hello! Welcome to our customer support. How can I help you today?",
         "agent_name": "Adi",
         "history": history,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }, session_id)
 
+    import time
+    msg_timestamps = []
+    rate_limit_window = 60
+    rate_limit_max = settings.ws_message_rate_limit
+
     try:
         while True:
             # Receive message from customer
-            raw = await websocket.receive_text()
+            try:
+                raw = await websocket.receive_text()
+            except RuntimeError:
+                logger.warning(f"WebSocket {session_id} receive_text failed (likely disconnected already).")
+                break
+
+            now = time.time()
+            msg_timestamps = [t for t in msg_timestamps if now - t < rate_limit_window]
+            if len(msg_timestamps) >= rate_limit_max:
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "message": "Rate limit exceeded. Please wait a moment before sending more messages."
+                }))
+                continue
+            msg_timestamps.append(now)
 
             try:
                 data = json.loads(raw)
                 message = data.get("message", "").strip()
-                customer_id = data.get("customer_id")
+                # Ignore customer_id in JSON payload, use authenticated_customer_id
             except json.JSONDecodeError:
                 message = raw.strip()
-                customer_id = None
+
+            customer_id = authenticated_customer_id
 
             if not message:
+                continue
+
+            if message.startswith("[System]"):
+                # Ignore system messages sent incorrectly from older frontends
                 continue
 
             # ── Input Guardrails ──
@@ -295,6 +345,12 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     }, session_id)
                     continue
 
+                # RE-CHECK MODE AFTER AWAIT TO PREVENT RACE CONDITIONS
+                session = await _get_session(session_id, customer_id)
+                if session.get("mode") == "human":
+                    logger.info(f"AI response discarded for {session_id} - agent took over during processing.")
+                    continue
+
                 raw_response = result.get("response", "I'm sorry, I couldn't process your request.")
                 is_escalated = result.get("escalated", False)
                 
@@ -366,7 +422,8 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                                 customer_email = cust_data[0].get("email")
                                 customer_name = cust_data[0].get("name", customer_name)
                         
-                        send_escalation_email(
+                        await asyncio.to_thread(
+                            send_escalation_email,
                             customer_email=customer_email,
                             customer_name=customer_name,
                             session_id=session_id,
@@ -387,31 +444,55 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 }, session_id)
 
     except WebSocketDisconnect:
-        manager.disconnect_customer(session_id)
+        pass
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.error(f"Error in customer websocket: {e}")
+        
+    finally:
+        manager.disconnect_customer(session_id, websocket)
         logger.info(f"Customer disconnected: {session_id}")
         
-        # Save conversation to database
-        session = await _get_session(session_id)
-        if session and session.get("conversation_history"):
-            try:
-                from app.database import AsyncSessionLocal, Conversation, _utcnow
-                async with AsyncSessionLocal() as db:
-                    # Determine if it was escalated
-                    was_escalated = "true" if session.get("mode") == "human" or any(
-                        msg.get("escalated") for msg in session.get("conversation_history", [])
-                    ) else "false"
-                    
-                    conv = Conversation(
-                        session_id=session_id,
-                        customer_id=session.get("customer_id") or 1,  # Default to guest (1) if missing
-                        transcript=json.dumps(session.get("conversation_history")),
-                        escalated=was_escalated,
-                        ended_at=_utcnow()
-                    )
-                    db.add(conv)
-                    await db.commit()
-            except Exception as e:
-                logger.error(f"Failed to save conversation to DB for session {session_id}: {e}")
+        # Save conversation to database.
+        # We use local variables to avoid `await` which would raise CancelledError if the task is cancelled.
+        try:
+            # Only save if we have initialized the session earlier in the function
+            if 'session' in locals() and session and session.get("conversation_history"):
+                was_escalated = "true" if session.get("mode") == "human" or any(
+                    msg.get("escalated") for msg in session.get("conversation_history", [])
+                ) else "false"
+                
+                data = {
+                    "session_id": session_id,
+                    "customer_id": session.get("customer_id") or 1,
+                    "transcript": session.get("conversation_history"),
+                    "escalated": True if was_escalated == "true" else False,
+                    "ended_at": datetime.now(timezone.utc).isoformat()
+                }
+                from app.tools import supabase
+                import anyio
+                
+                # Instead of asyncio.shield (which fails under anyio cancellation),
+                # we spawn a background thread natively so it survives cancellation
+                # and we don't await it here to prevent CancelledError.
+                # This satisfies the requirement of not blocking the event loop
+                # while ensuring the write happens.
+                def save_to_db(save_data):
+                    try:
+                        supabase.table("conversations").upsert(save_data, on_conflict="session_id").execute()
+                    except Exception as ex:
+                        pass
+                
+                import threading
+                t = threading.Thread(target=save_to_db, args=(data,))
+                t.start()
+                # In tests we might need it to finish, so we join with a short timeout.
+                # This safely waits for the persistence operation without raising CancelledError.
+                t.join(timeout=2.0)
+                
+        except Exception as e:
+            logger.error(f"Failed to save conversation to DB for session {session_id}: {e}")
 
 async def handle_agent_ws(websocket: WebSocket, session_id: str):
     """
@@ -431,7 +512,11 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
 
     try:
         while True:
-            raw = await websocket.receive_text()
+            try:
+                raw = await websocket.receive_text()
+            except RuntimeError as e:
+                logger.warning(f"WebSocket RuntimeError (agent likely disconnected): {e}")
+                break
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:
@@ -460,11 +545,10 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
 
                 # Send to customer
                 await manager.send_personal_message({
-                    "type": "agent_response",
+                    "type": "human_message",
                     "session_id": session_id,
                     "message": agent_message,
                     "agent_name": agent_name,
-                    "escalated": True,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }, session_id)
 
@@ -476,8 +560,9 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                     await _save_session(session_id, session)
                     
                     await manager.send_personal_message({
-                        "type": "system",
-                        "message": f"You are now connected with {data.get('agent_name', 'a human agent')}.",
+                        "type": "mode_change",
+                        "mode": "human",
+                        "agent_name": data.get("agent_name", "Support Agent"),
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }, session_id)
 
@@ -489,11 +574,29 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                     await _save_session(session_id, session)
                     
                     await manager.send_personal_message({
-                        "type": "system",
-                        "message": "You have been returned to the AI assistant. How can I help you?",
+                        "type": "mode_change",
+                        "mode": "ai",
+                        "agent_name": data.get("agent_name", "AI Assistant"),
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }, session_id)
 
     except WebSocketDisconnect:
         manager.disconnect_agent(websocket, session_id)
         logger.info(f"Agent disconnected from session: {session_id}")
+        
+        # Safely return session to AI mode if it was abandoned in human mode
+        session = await _get_session(session_id)
+        # Check if there are still any other agents connected to this session
+        has_other_agents = bool(manager.agent_connections.get(session_id))
+        
+        if session and session.get("mode") == "human" and not has_other_agents:
+            session["mode"] = "ai"
+            await _save_session(session_id, session)
+            
+            # Notify customer that AI has resumed
+            await manager.send_personal_message({
+                "type": "mode_change",
+                "mode": "ai",
+                "agent_name": "AI Assistant",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }, session_id)

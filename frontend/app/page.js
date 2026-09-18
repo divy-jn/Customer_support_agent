@@ -18,6 +18,7 @@ export default function CustomerChatPage() {
   const [isTyping, setIsTyping] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectCountdown, setReconnectCountdown] = useState(0);
+  const [chatMode, setChatMode] = useState("ai"); // "ai" or "human"
   const typingTimeoutRef = useRef(null);
 
   // Customer Identity
@@ -73,13 +74,40 @@ export default function CustomerChatPage() {
   }, [sessionId]);
 
   // ── WebSocket ──
-  const connectWebSocket = useCallback(() => {
+  const connectWebSocket = useCallback(async () => {
     if (wsRef.current && wsRef.current.readyState <= 1) return;
 
+    let token = localStorage.getItem("intellisupport_jwt");
+    if (!token) {
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/auth/dev-login?email=amit.sharma@example.com`, { method: 'POST' });
+        if (res.ok) {
+          const data = await res.json();
+          token = data.access_token;
+          localStorage.setItem("intellisupport_jwt", token);
+        } else {
+          console.error("Dev login failed:", res.status, res.statusText);
+          setMessages((prev) => [...prev, { role: "error", content: `Authentication failed: Dev login returned ${res.status}. Please check backend configuration.`, timestamp: new Date().toISOString() }]);
+          setReconnecting(false);
+          return;
+        }
+      } catch (e) {
+        console.error("Failed to fetch dev token", e);
+        setMessages((prev) => [...prev, { role: "error", content: "Network error during authentication. Backend may be unreachable.", timestamp: new Date().toISOString() }]);
+        setReconnecting(false);
+        return;
+      }
+    }
+
     const savedSession = localStorage.getItem("intellisupport_session_id");
-    const wsUrl = savedSession
+    let wsUrl = savedSession
       ? `${WS_BASE}/ws/chat/${savedSession}`
       : `${WS_BASE}/ws/chat`;
+      
+    if (token) {
+        wsUrl += `?token=${token}`;
+    }
+
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -99,6 +127,7 @@ export default function CustomerChatPage() {
 
       if (data.type === "system") {
         if (data.session_id) setSessionId(data.session_id);
+        if (data.mode) setChatMode(data.mode);
         
         // Load history on reconnect if provided
         if (data.history && data.history.length > 0) {
@@ -106,10 +135,11 @@ export default function CustomerChatPage() {
             role: msg.role === "customer" ? "customer" : "agent",
             content: msg.content,
             timestamp: msg.timestamp,
-            agent_name: msg.agent_name || "Support",
+            agent_name: msg.agent_name || (msg.human_agent ? "Support Agent" : "Adi"),
+            human_agent: msg.human_agent,
             status: msg.role === "customer" ? "delivered" : undefined
           })));
-        } else {
+        } else if (data.message) {
           setMessages((prev) => {
             // Prevent duplicate welcome messages on reconnect
             if (prev.some(m => m.role === "system" && m.content === data.message)) {
@@ -122,11 +152,28 @@ export default function CustomerChatPage() {
           });
         }
         setIsTyping(false);
+      } else if (data.type === "mode_change") {
+        setChatMode(data.mode);
+        setIsTyping(false);
       } else if (data.type === "typing") {
         setIsTyping(true);
         // Auto-clear typing indicator after 30s as a safety net
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
         typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 30000);
+      } else if (data.type === "human_message") {
+        setIsTyping(false);
+        if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "agent",
+            content: data.message,
+            agent_name: data.agent_name || "Support Agent",
+            human_agent: true,
+            timestamp: data.timestamp,
+            status: "delivered",
+          },
+        ]);
       } else if (data.type === "agent_response") {
         setIsTyping(false);
         if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
@@ -136,7 +183,6 @@ export default function CustomerChatPage() {
             role: "agent",
             content: data.message,
             agent_name: data.agent_name || "Adi",
-            escalated: data.escalated,
             timestamp: data.timestamp,
             status: "delivered",
           },
@@ -151,10 +197,20 @@ export default function CustomerChatPage() {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setIsConnected(false);
       setIsTyping(false);
       if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
+      
+      if (event.code === 1008 || event.code === 1011) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "error", content: `WebSocket connection rejected (Code: ${event.code}). Please check authentication.`, timestamp: new Date().toISOString() },
+        ]);
+        setReconnecting(false);
+        return; // Stop reconnecting
+      }
+
       setReconnecting(true);
       let countdown = 3;
       setReconnectCountdown(countdown);
@@ -201,12 +257,8 @@ export default function CustomerChatPage() {
         localStorage.setItem("intellisupport_customer", JSON.stringify(data[0]));
         toast(`Welcome back, ${data[0].name}! 🎉`, "success");
         if (wsRef.current && wsRef.current.readyState === 1) {
-          wsRef.current.send(
-            JSON.stringify({
-              message: `[System] Customer identified as ${data[0].name} (${data[0].email})`,
-              customer_id: data[0].id,
-            })
-          );
+          // Identity is handled purely by the JWT parameter in the WebSocket connection.
+          // No need to send fake [System] messages that trigger LangGraph.
         }
       } else {
         toast("No account found with that email. Try another or continue as guest.", "warning");
@@ -291,6 +343,7 @@ export default function CustomerChatPage() {
     }
     localStorage.removeItem("intellisupport_session_id");
     localStorage.removeItem("intellisupport_customer");
+    localStorage.removeItem("intellisupport_jwt");
     setSessionId(null);
     setIdentifiedCustomer(null);
     setMessages([]);
@@ -401,25 +454,33 @@ export default function CustomerChatPage() {
         )}
 
         {/* Header */}
-        <header className="border-b border-[var(--border)] px-6 py-3.5 flex items-center justify-between bg-[var(--bg-secondary)]/90 backdrop-blur-xl z-10 shrink-0">
+        <header className="border-b border-[var(--border)] px-6 py-3.5 flex items-center justify-between bg-[var(--bg-secondary)]/90 backdrop-blur-xl z-10 shrink-0 transition-colors duration-500">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-black text-sm shrink-0 shadow-lg shadow-indigo-500/20">
-              AI
-            </div>
+            {chatMode === "human" ? (
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-black text-lg shrink-0 shadow-lg shadow-amber-500/20">
+                👨‍💼
+              </div>
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-black text-sm shrink-0 shadow-lg shadow-indigo-500/20">
+                AI
+              </div>
+            )}
             <div>
               <h2 className="text-sm font-bold text-[var(--text-primary)]">
-                Project Bestie
+                {chatMode === "human" ? "Support Agent" : "AI Assistant"}
               </h2>
               <div className="flex items-center gap-1.5 text-[11px]">
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${
                     isConnected
-                      ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]"
+                      ? chatMode === "human" ? "bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.8)]" : "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]"
                       : "bg-red-400"
                   }`}
                 />
                 <span className="text-[var(--text-muted)]">
-                  {isConnected ? "Online — typically replies instantly" : reconnecting ? "Reconnecting…" : "Offline"}
+                  {isConnected 
+                    ? chatMode === "human" ? "Online — connected to human agent" : "Online — typically replies instantly" 
+                    : reconnecting ? "Reconnecting…" : "Offline"}
                 </span>
               </div>
             </div>
@@ -525,12 +586,11 @@ export default function CustomerChatPage() {
                       : "bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text-primary)] rounded-bl-md"
                   }`}
                 >
-                  {/* Escalation badge */}
-                  {msg.role === "agent" && msg.escalated && (
-                    <div className="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-amber-500/20">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                      <span className="text-[10px] text-amber-400 font-semibold uppercase tracking-wider">
-                        Human Agent Connected
+                  {/* Human Agent badge */}
+                  {msg.role === "agent" && msg.human_agent && (
+                    <div className="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-emerald-500/20">
+                      <span className="text-[10px] text-emerald-400 font-semibold uppercase tracking-wider">
+                        Support Agent
                       </span>
                     </div>
                   )}

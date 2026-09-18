@@ -160,9 +160,9 @@ class TestProductOperations:
 
     def test_check_inventory_by_name(self):
         """Search for a product by name."""
-        result = json.loads(check_inventory("ProPhone"))
+        result = json.loads(check_inventory("PixelPro"))
         assert isinstance(result, list), f"Expected list, got: {type(result)}"
-        assert len(result) > 0, "No products matching 'ProPhone'"
+        assert len(result) > 0, "No products matching 'PixelPro'"
 
     def test_check_inventory_no_match(self):
         """Search for non-existent product returns error."""

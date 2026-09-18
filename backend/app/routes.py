@@ -3,8 +3,23 @@ REST API Routes — provides HTTP endpoints for the frontend
 to interact with tickets, customers, and dashboard data.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import json
+
+from app.dependencies import verify_admin_key, verify_agent_token, verify_customer_token
+from app.config import settings
+
+# ──────────────────────────────────────────────
+#  Development Authentication
+# ──────────────────────────────────────────────
+from pydantic import BaseModel
+from datetime import datetime, timedelta, timezone
+import jwt
+
+class DevLoginRequest(BaseModel):
+    customer_id: int
+
+# Move dev_login below
 
 from app.tools import (
     lookup_customer, get_customer_history, get_ticket, create_ticket,
@@ -18,6 +33,32 @@ from app.websocket.chat_handler import session_store
 from app.email_service import send_ticket_created_email, send_resolution_email
 
 router = APIRouter()
+
+@router.post("/auth/dev-login")
+async def dev_login(email: str):
+    """
+    DEVELOPMENT ONLY endpoint.
+    Generates a JWT token for the specified email.
+    Fails if the application is not in debug mode or if the customer doesn't exist.
+    """
+    if not settings.debug_mode:
+        raise HTTPException(status_code=403, detail="Development login is disabled in production")
+        
+    from app.tools import supabase
+    res = supabase.table("customers").select("id").eq("email", email).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    customer_id = res.data[0]["id"]
+        
+    expiration = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expiration_minutes)
+    payload = {
+        "sub": str(customer_id),
+        "role": "customer",
+        "exp": expiration
+    }
+    
+    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return {"access_token": token, "token_type": "bearer"}
 
 
 # ──────────────────────────────────────────────
@@ -46,8 +87,10 @@ async def list_customers(limit: int = 50, offset: int = 0):
 
 
 @router.get("/customers/{customer_id}/history")
-async def customer_history(customer_id: int):
+async def customer_history(customer_id: int, authenticated_customer_id: int = Depends(verify_customer_token)):
     """Get a customer's order and ticket history."""
+    if customer_id != authenticated_customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this customer's history")
     result = get_customer_history(customer_id)
     return json.loads(result)
 
@@ -66,17 +109,22 @@ async def list_tickets(limit: int = 50, offset: int = 0, status: TicketStatus = 
 
 
 @router.get("/tickets/{ticket_id}")
-async def get_ticket_detail(ticket_id: int):
+async def get_ticket_detail(ticket_id: int, authenticated_customer_id: int = Depends(verify_customer_token)):
     """Get details of a specific ticket."""
     result = get_ticket(ticket_id)
     data = json.loads(result)
     if "error" in data:
         raise HTTPException(status_code=404, detail=data["error"])
+        
+    # Enforce ownership: only the ticket owner (or an agent, though this route is for customers) can view it
+    if data.get("customer_id") != authenticated_customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this ticket")
+        
     return data
 
 
 @router.post("/tickets", status_code=201)
-async def create_new_ticket(ticket: TicketCreate):
+async def create_new_ticket(ticket: TicketCreate, _: bool = Depends(verify_agent_token)):
     """Create a new support ticket."""
     result = create_ticket(
         customer_id=ticket.customer_id,
@@ -98,7 +146,9 @@ async def create_new_ticket(ticket: TicketCreate):
             customer_data = json.loads(customer_result)
             if isinstance(customer_data, list) and customer_data:
                 c = customer_data[0]
-                send_ticket_created_email(
+                import asyncio
+                await asyncio.to_thread(
+                    send_ticket_created_email,
                     customer_email=c.get("email", ""),
                     customer_name=c.get("name", "Customer"),
                     ticket_id=data["ticket_id"],
@@ -114,7 +164,7 @@ async def create_new_ticket(ticket: TicketCreate):
 
 @router.patch("/tickets/{ticket_id}")
 @router.put("/tickets/{ticket_id}")
-async def update_existing_ticket(ticket_id: int, update: TicketUpdate):
+async def update_existing_ticket(ticket_id: int, update: TicketUpdate, _: bool = Depends(verify_agent_token)):
     """Update a ticket's status, priority, resolution, or assigned agent."""
     result = update_ticket(
         ticket_id=ticket_id,
@@ -135,7 +185,9 @@ async def update_existing_ticket(ticket_id: int, update: TicketUpdate):
             ticket_data = json.loads(ticket_result)
             if ticket_data.get("customers"):
                 c = ticket_data["customers"]
-                send_resolution_email(
+                import asyncio
+                await asyncio.to_thread(
+                    send_resolution_email,
                     customer_email=c.get("email", ""),
                     customer_name=c.get("name", "Customer"),
                     ticket_id=ticket_id,
@@ -153,17 +205,22 @@ async def update_existing_ticket(ticket_id: int, update: TicketUpdate):
 # ──────────────────────────────────────────────
 
 @router.get("/orders/{order_id}/track")
-async def track_order_status(order_id: int):
+async def track_order_status(order_id: int, authenticated_customer_id: int = Depends(verify_customer_token)):
     """Track the status of a specific order."""
     result = track_order(order_id)
     data = json.loads(result)
     if "error" in data:
         raise HTTPException(status_code=404, detail=data["error"])
+        
+    # Enforce ownership
+    if data.get("customer_id") != authenticated_customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to track this order")
+        
     return data
 
 
 @router.post("/orders/{order_id}/cancel")
-async def cancel_order_endpoint(order_id: int):
+async def cancel_order_endpoint(order_id: int, _: bool = Depends(verify_agent_token)):
     """Cancel an active order."""
     result = cancel_order(order_id)
     data = json.loads(result)
@@ -173,7 +230,7 @@ async def cancel_order_endpoint(order_id: int):
 
 
 @router.post("/orders/{order_id}/refund")
-async def refund_order_endpoint(order_id: int):
+async def refund_order_endpoint(order_id: int, _: bool = Depends(verify_agent_token)):
     """Process a refund for an order."""
     result = process_refund(order_id)
     data = json.loads(result)
@@ -211,7 +268,7 @@ async def dashboard_stats():
 
 
 @router.get("/dashboard/sessions")
-async def active_sessions():
+async def active_sessions(_: bool = Depends(verify_agent_token)):
     """Get a list of all active chat sessions."""
     from app.websocket.chat_handler import get_all_active_sessions
     all_sessions = await get_all_active_sessions()
@@ -227,6 +284,8 @@ async def active_sessions():
             "message_count": len(history),
             "last_message": last_msg[:100],
             "created_at": session.get("created_at"),
+            "mode": session.get("mode", "ai"),
+            "escalated": session.get("escalated", False),
         })
     return {"active_sessions": sessions, "total": len(sessions)}
 
@@ -236,7 +295,7 @@ async def active_sessions():
 # ──────────────────────────────────────────────
 
 @router.get("/admin/health")
-async def admin_health_check():
+async def admin_health_check(_: bool = Depends(verify_admin_key)):
     """Aggregated health check for all services."""
     llm = check_llm_health()
     vectordb = check_vectordb_health()
@@ -259,21 +318,21 @@ async def admin_health_check():
 
 
 @router.get("/admin/system-info")
-async def admin_system_info():
+async def admin_system_info(_: bool = Depends(verify_admin_key)):
     """Get system configuration and version info."""
     return get_system_info()
 
 
 @router.get("/admin/knowledge-base")
 @router.get("/admin/knowledge")
-async def admin_list_kb():
+async def admin_list_kb(_: bool = Depends(verify_admin_key)):
     """List all knowledge base documents."""
     docs = list_knowledge_base_docs()
     return {"documents": docs, "total": len(docs)}
 
 
 @router.get("/admin/knowledge-base/{filename}")
-async def admin_get_kb_doc(filename: str):
+async def admin_get_kb_doc(filename: str, _: bool = Depends(verify_admin_key)):
     """Read a specific knowledge base document."""
     content = get_knowledge_base_doc(filename)
     if content is None:
@@ -282,7 +341,7 @@ async def admin_get_kb_doc(filename: str):
 
 
 @router.post("/admin/knowledge-base/reingest")
-async def admin_reingest_kb():
+async def admin_reingest_kb(_: bool = Depends(verify_admin_key)):
     """Trigger re-ingestion of knowledge base into Pinecone."""
     try:
         from app.rag.retriever import ingest_knowledge_base
@@ -305,7 +364,7 @@ async def admin_reingest_kb():
 from app.logger import get_recent_logs
 
 @router.get("/admin/logs")
-async def admin_get_logs(level: str = None, search: str = None, limit: int = 100):
+async def admin_get_logs(level: str = None, search: str = None, limit: int = 100, _: bool = Depends(verify_admin_key)):
     """Get recent activity from the production JSON log file with optional filtering."""
     if limit <= 0:
         raise HTTPException(status_code=400, detail="Limit must be a positive integer")
@@ -316,7 +375,7 @@ async def admin_get_logs(level: str = None, search: str = None, limit: int = 100
 from app.middleware.tracking import get_aggregate_metrics
 
 @router.get("/admin/metrics")
-async def admin_get_metrics():
+async def admin_get_metrics(_: bool = Depends(verify_admin_key)):
     """Get aggregate LLM, tool, and guardrail metrics for the admin dashboard."""
     return get_aggregate_metrics()
 
@@ -324,7 +383,7 @@ async def admin_get_metrics():
 from app.websocket.connection import get_connection_metrics
 
 @router.get("/admin/connections")
-async def admin_get_connection_metrics():
+async def admin_get_connection_metrics(_: bool = Depends(verify_admin_key)):
     """Get WebSocket connection metrics."""
     return get_connection_metrics()
 
@@ -338,12 +397,12 @@ class LLMSettingsUpdate(BaseModel):
 
 @router.get("/admin/llm-settings")
 @router.get("/admin/settings")
-async def admin_get_llm_settings():
+async def admin_get_llm_settings(_: bool = Depends(verify_admin_key)):
     """Get the current dynamic LLM settings."""
     return get_dynamic_settings()
 
 @router.post("/admin/llm-settings")
-async def admin_update_llm_settings(settings_update: LLMSettingsUpdate):
+async def admin_update_llm_settings(settings_update: LLMSettingsUpdate, _: bool = Depends(verify_admin_key)):
     """Update the dynamic LLM settings."""
     new_settings = settings_update.model_dump()
     try:

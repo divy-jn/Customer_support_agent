@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS tickets (
     resolution TEXT,
     satisfaction_rating INT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    closed_at TIMESTAMP WITH TIME ZONE
 );
 
 -- 5. Create Conversations Table

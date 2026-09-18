@@ -28,7 +28,13 @@ class Settings(BaseSettings):
     # --- Pinecone ---
     pinecone_api_key: str = Field(default="", alias="PINECONE_API_KEY")
     pinecone_index_name: str = Field(default="knowledge-base", alias="PINECONE_INDEX_NAME")
-    embedding_model: str = Field(default="all-MiniLM-L6-v2", alias="EMBEDDING_MODEL")
+
+    # --- Security & Auth ---
+    admin_api_key: str = Field(default="", alias="ADMIN_API_KEY")
+    agent_secret: str = Field(default="", alias="AGENT_SECRET")
+    jwt_secret: str = Field(default="", alias="JWT_SECRET")
+    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
+    jwt_expiration_minutes: int = Field(default=1440, alias="JWT_EXPIRATION_MINUTES")
 
     # --- Redis ---
     upstash_redis_url: str = Field(default="", alias="UPSTASH_REDIS_URL")
@@ -123,6 +129,13 @@ class Settings(BaseSettings):
         if v.upper() not in valid:
             raise ValueError(f"LOG_LEVEL must be one of {valid}")
         return v.upper()
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def validate_jwt_secret(cls, v, info):
+        if not v:
+            return "dev-secret-key"
+        return v
 
     model_config = {
         "env_file": str(_BACKEND_ROOT / ".env"),
