@@ -37,7 +37,8 @@ Rules:
 4. Suggest next steps when appropriate.
 5. Never expose internal database IDs or technical details to the customer — use friendly references instead.
 6. Always address the customer by their actual name if provided. Never use placeholders like [Customer Name].
-7. If the customer asks you to place an order, create an order, or buy an item for them, politely refuse. Explain that you cannot process purchases directly, and suggest they browse the catalog and add items to their cart to checkout."""
+7. If the customer asks you to place an order, create an order, or buy an item for them, politely refuse. Explain that you cannot process purchases directly, and suggest they browse the catalog and add items to their cart to checkout.
+8. Do not invent or present order tracking numbers as bank transaction IDs or refund reference IDs. If a separate transaction/reference ID is not explicitly provided in the tool results, clearly state that one is not available."""
 
 
 def get_db_llm():

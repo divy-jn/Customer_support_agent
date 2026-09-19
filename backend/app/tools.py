@@ -126,13 +126,18 @@ def get_chat_history(customer_id: int) -> str:
 
 @track_tool_call("get_ticket")
 @_supabase_retry
-def get_ticket(ticket_id: int) -> str:
-    """Get detailed information about a specific support ticket."""
+def get_ticket(ticket_id: int, customer_id: int | None = None) -> str:
+    """Get details of a specific ticket, including updates."""
     try:
         _validate_positive_int(ticket_id, "ticket_id")
         response = supabase.table("tickets").select("*, customers(name, email)").eq("id", ticket_id).execute()
         if not response.data:
             return json.dumps({"error": f"Ticket #{ticket_id} not found"})
+            
+        # Enforce customer ownership
+        if customer_id is not None and response.data[0].get("customer_id") != customer_id:
+            return json.dumps({"error": f"Ticket #{ticket_id} not found or does not belong to you"})
+            
         return json.dumps(response.data[0], indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -184,14 +189,28 @@ def update_ticket(
     resolution: str = None,
     assigned_agent: str = None,
     satisfaction_rating: int = None,
+    customer_id: int | None = None,
 ) -> str:
-    """Update an existing support ticket."""
+    """Update a ticket's status, priority, resolution, or assigned agent."""
     try:
         _validate_positive_int(ticket_id, "ticket_id")
+        
+        # Enforce customer ownership
+        if customer_id is not None:
+            existing = supabase.table("tickets").select("customer_id").eq("id", ticket_id).execute()
+            if not existing.data or existing.data[0].get("customer_id") != customer_id:
+                return json.dumps({"error": f"Ticket #{ticket_id} not found or does not belong to you"})
+
         updates = {}
         if status:
+            if status not in ["open", "in_progress", "waiting_on_customer", "closed"]:
+                return json.dumps({"error": "Invalid status"})
             updates["status"] = status
+            if status == "closed":
+                updates["closed_at"] = "now()"
         if priority:
+            if priority not in ["low", "medium", "high", "urgent"]:
+                return json.dumps({"error": "Invalid priority"})
             updates["priority"] = priority
         if resolution:
             updates["resolution"] = resolution
@@ -239,13 +258,18 @@ def send_ticket_email_to_customer(
 
 @track_tool_call("track_order")
 @_supabase_retry
-def track_order(order_id: int) -> str:
+def track_order(order_id: int, customer_id: int | None = None) -> str:
     """Track the current status and delivery information of an order."""
     try:
         _validate_positive_int(order_id, "order_id")
         response = supabase.table("orders").select("*, products(name, category, price), customers(name)").eq("id", order_id).execute()
         if not response.data:
             return json.dumps({"error": f"Order #{order_id} not found"})
+            
+        # Enforce customer ownership
+        if customer_id is not None and response.data[0].get("customer_id") != customer_id:
+            return json.dumps({"error": f"Order #{order_id} not found or does not belong to you"})
+            
         return json.dumps(response.data[0], indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -253,13 +277,18 @@ def track_order(order_id: int) -> str:
 
 @track_tool_call("cancel_order")
 @_supabase_retry
-def cancel_order(order_id: int) -> str:
+def cancel_order(order_id: int, customer_id: int | None = None) -> str:
     """Cancel an active order. Only orders with status 'active' can be cancelled."""
     try:
         _validate_positive_int(order_id, "order_id")
-        response = supabase.table("orders").select("status").eq("id", order_id).execute()
+        response = supabase.table("orders").select("status, customer_id").eq("id", order_id).execute()
         if not response.data:
             return json.dumps({"error": f"Order #{order_id} not found"})
+            
+        # Enforce customer ownership
+        if customer_id is not None and response.data[0].get("customer_id") != customer_id:
+            return json.dumps({"error": f"Order #{order_id} not found or does not belong to you"})
+            
         if response.data[0]["status"] != "active":
             return json.dumps({
                 "error": f"Cannot cancel order #{order_id}. Current status: {response.data[0]['status']}. Only active orders can be cancelled."
@@ -272,13 +301,18 @@ def cancel_order(order_id: int) -> str:
 
 @track_tool_call("process_refund")
 @_supabase_retry
-def process_refund(order_id: int) -> str:
+def process_refund(order_id: int, customer_id: int | None = None) -> str:
     """Initiate a refund for an order. Must be cancelled or delivered."""
     try:
         _validate_positive_int(order_id, "order_id")
-        response = supabase.table("orders").select("status").eq("id", order_id).execute()
+        response = supabase.table("orders").select("status, customer_id").eq("id", order_id).execute()
         if not response.data:
             return json.dumps({"error": f"Order #{order_id} not found"})
+            
+        # Enforce customer ownership
+        if customer_id is not None and response.data[0].get("customer_id") != customer_id:
+            return json.dumps({"error": f"Order #{order_id} not found or does not belong to you"})
+            
         if response.data[0]["status"] not in ("cancelled", "delivered"):
             return json.dumps({
                 "error": f"Cannot refund order #{order_id}. Current status: {response.data[0]['status']}. Order must be cancelled or delivered."

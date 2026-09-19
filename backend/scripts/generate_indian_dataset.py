@@ -139,10 +139,19 @@ SUPPORT_AGENTS = [
 # ──────────────────────────────────────────────
 def generate_customers(count: int = 30) -> list[dict]:
     """Generate synthetic Indian customers."""
-    customers = []
-    used_emails = set()
+    # Always guarantee the demo customer exists
+    customers = [{
+        "name": "Amit Sharma",
+        "email": "amit.sharma@example.com",
+        "age": 30,
+        "gender": "Male",
+        "city": "Bengaluru",
+        "state": "Karnataka",
+        "pin_code": "560001",
+    }]
+    used_emails = {"amit.sharma@example.com"}
 
-    for i in range(count):
+    for i in range(1, count):
         if i % 2 == 0:
             first = random.choice(MALE_FIRST_NAMES)
             gender = "Male"

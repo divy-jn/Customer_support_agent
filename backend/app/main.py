@@ -13,7 +13,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, WebSocket, Request
+from fastapi import FastAPI, WebSocket, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -23,6 +23,7 @@ from app.routes import router as api_router
 from app.websocket.chat_handler import handle_customer_ws, handle_agent_ws
 
 from app.logger import setup_logger, set_trace_id
+from app.dependencies import verify_agent_ws_token
 
 # ──────────────────────────────────────────────
 #  Logging
@@ -193,23 +194,25 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(api_router, prefix="/api/v1", tags=["api"])
 
 
+from app.dependencies import verify_agent_ws_token, verify_customer_ws_token
+
 # ──────────────────────────────────────────────
 #  WebSocket Endpoints
 # ──────────────────────────────────────────────
 @app.websocket("/ws/chat")
-async def ws_chat_no_session(websocket: WebSocket):
+async def ws_chat_no_session(websocket: WebSocket, authenticated_customer_id: int = Depends(verify_customer_ws_token)):
     """Customer chat — auto-generates a session ID."""
-    await handle_customer_ws(websocket, session_id=None)
+    await handle_customer_ws(websocket, session_id=None, authenticated_customer_id=authenticated_customer_id)
 
 
 @app.websocket("/ws/chat/{session_id}")
-async def ws_chat(websocket: WebSocket, session_id: str):
+async def ws_chat(websocket: WebSocket, session_id: str, authenticated_customer_id: int = Depends(verify_customer_ws_token)):
     """Customer chat — resumes an existing session."""
-    await handle_customer_ws(websocket, session_id=session_id)
+    await handle_customer_ws(websocket, session_id=session_id, authenticated_customer_id=authenticated_customer_id)
 
 
 @app.websocket("/ws/agent/{session_id}")
-async def ws_agent(websocket: WebSocket, session_id: str):
+async def ws_agent(websocket: WebSocket, session_id: str, _: bool = Depends(verify_agent_ws_token)):
     """Agent dashboard — monitor and take over a customer session."""
     await handle_agent_ws(websocket, session_id=session_id)
 

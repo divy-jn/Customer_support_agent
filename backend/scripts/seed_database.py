@@ -112,35 +112,48 @@ def seed():
         order_id_map = {}  # order list index → actual DB id
         order_customer_map = {}  # order list index → customer_id
 
+        # Fetch existing orders to prevent duplicates
         orders_to_insert = []
+        existing_orders_res = supabase.table("orders").select("id, tracking_number, customer_id, product_id").execute()
+        existing_orders = {}
+        for row in existing_orders_res.data:
+            key = f"{row['customer_id']}_{row['product_id']}_{row.get('tracking_number', '')}"
+            existing_orders[key] = row["id"]
+
         for idx, o in enumerate(data["orders"]):
             cust_id = customer_id_map[o["customer_index"]]
             prod_id = product_id_map[o["product_index"]]
-            order_date = (datetime.now(timezone.utc) - timedelta(days=o["days_ago"])).isoformat()
-
-            orders_to_insert.append({
-                "customer_id": cust_id,
-                "product_id": prod_id,
-                "order_date": order_date,
-                "status": o["status"],
-                "tracking_number": o["tracking_number"],
-            })
-            order_customer_map[idx] = cust_id
+            key = f"{cust_id}_{prod_id}_{o.get('tracking_number', '')}"
+            
+            if key in existing_orders:
+                order_id_map[idx] = existing_orders[key]
+                order_customer_map[idx] = cust_id
+            else:
+                order_date = (datetime.now(timezone.utc) - timedelta(days=o["days_ago"])).isoformat()
+                orders_to_insert.append({
+                    "_idx": idx, # temporary for mapping back
+                    "customer_id": cust_id,
+                    "product_id": prod_id,
+                    "order_date": order_date,
+                    "status": o["status"],
+                    "tracking_number": o["tracking_number"],
+                })
+                order_customer_map[idx] = cust_id
 
         # Insert orders in batches of 50
         inserted_orders = []
         for i in range(0, len(orders_to_insert), 50):
-            batch = orders_to_insert[i:i + 50]
+            batch = [{k: v for k, v in item.items() if k != "_idx"} for item in orders_to_insert[i:i + 50]]
             res = supabase.table("orders").insert(batch).execute()
             if not res.data:
                 raise RuntimeError(f"Failed to insert orders batch starting at index {i}")
-            inserted_orders.extend(res.data)
+            
+            # Map inserted IDs back
+            for j, inserted_row in enumerate(res.data):
+                original_idx = orders_to_insert[i + j]["_idx"]
+                order_id_map[original_idx] = inserted_row["id"]
 
-        # Map order indices to actual IDs
-        for idx, order_data in enumerate(inserted_orders):
-            order_id_map[idx] = order_data["id"]
-
-        print(f"   ✅ {len(order_id_map)} orders seeded.")
+        print(f"   ✅ {len(orders_to_insert)} new orders seeded. (Total mapped: {len(order_id_map)})")
 
         # Print order status distribution
         status_counts = {}
@@ -151,27 +164,35 @@ def seed():
 
         # ── 4. Seed Tickets ──
         print("\n🎫 Step 4/4 — Seeding support tickets...")
+        # Fetch existing tickets to prevent duplicates
         tickets_to_insert = []
+        existing_tickets_res = supabase.table("tickets").select("id, customer_id, order_id, subject").execute()
+        existing_tickets = {}
+        for row in existing_tickets_res.data:
+            key = f"{row['customer_id']}_{row['order_id']}_{row['subject']}"
+            existing_tickets[key] = row["id"]
 
         for t in data["tickets"]:
             order_idx = t["order_index"]
             order_id = order_id_map[order_idx]
             cust_id = order_customer_map[order_idx]
-
-            ticket_data = {
-                "customer_id": cust_id,
-                "order_id": order_id,
-                "subject": t["subject"],
-                "description": t["description"],
-                "type": t["type"],
-                "status": t["status"],
-                "priority": t["priority"],
-                "channel": t["channel"],
-                "assigned_agent": t["assigned_agent"],
-                "resolution": t["resolution"],
-                "satisfaction_rating": t["satisfaction_rating"],
-            }
-            tickets_to_insert.append(ticket_data)
+            key = f"{cust_id}_{order_id}_{t['subject']}"
+            
+            if key not in existing_tickets:
+                ticket_data = {
+                    "customer_id": cust_id,
+                    "order_id": order_id,
+                    "subject": t["subject"],
+                    "description": t["description"],
+                    "type": t["type"],
+                    "status": t["status"],
+                    "priority": t["priority"],
+                    "channel": t["channel"],
+                    "assigned_agent": t["assigned_agent"],
+                    "resolution": t["resolution"],
+                    "satisfaction_rating": t["satisfaction_rating"],
+                }
+                tickets_to_insert.append(ticket_data)
 
         # Insert tickets in batches of 50
         inserted_tickets = []
@@ -182,7 +203,7 @@ def seed():
                 raise RuntimeError(f"Failed to insert tickets batch starting at index {i}")
             inserted_tickets.extend(res.data)
 
-        print(f"   ✅ {len(inserted_tickets)} tickets seeded.")
+        print(f"   ✅ {len(tickets_to_insert)} new tickets seeded.")
 
         # Print ticket type distribution
         type_counts = {}

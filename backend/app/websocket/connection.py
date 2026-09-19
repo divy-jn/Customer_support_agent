@@ -90,14 +90,16 @@ class ConnectionManager:
             },
         )
 
-    def disconnect_customer(self, session_id: str):
+    def disconnect_customer(self, session_id: str, websocket: WebSocket = None):
         """Remove a customer's connection."""
         if session_id in self.active_connections:
-            del self.active_connections[session_id]
-            _connection_metrics["total_customer_disconnects"] += 1
+            # Only remove if the disconnecting websocket matches the currently active one
+            if websocket is None or self.active_connections[session_id] == websocket:
+                del self.active_connections[session_id]
+                _connection_metrics["total_customer_disconnects"] += 1
 
-            # Cancel heartbeat
-            self._cancel_heartbeat(session_id)
+                # Cancel heartbeat
+                self._cancel_heartbeat(session_id)
 
             logger.info(
                 f"Customer disconnected: {session_id}",

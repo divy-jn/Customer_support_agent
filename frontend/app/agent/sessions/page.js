@@ -69,10 +69,14 @@ export default function LiveSessionsPage() {
     selectedSessionRef.current = session;
     setSessionMessages([]);
     setIsMonitoring(true);
-    setHasTakenOver(false);
+    setHasTakenOver(session.mode === "human");
     if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
 
-    const ws = new WebSocket(`${WS_BASE}/ws/agent/${session.session_id}`);
+    let token = localStorage.getItem("intellisupport_jwt");
+    let wsUrl = `${WS_BASE}/ws/agent/${session.session_id}`;
+    if (token) wsUrl += `?token=${token}`;
+    
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
@@ -106,6 +110,12 @@ export default function LiveSessionsPage() {
           )
         );
         toast("🚨 Escalation alert! Customer requires human attention.", "error");
+      } else if (data.type === "mode_change") {
+        if (data.mode === "human") {
+          setHasTakenOver(true);
+        } else if (data.mode === "ai") {
+          setHasTakenOver(false);
+        }
       }
     };
 
@@ -115,7 +125,11 @@ export default function LiveSessionsPage() {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = setTimeout(() => {
         if (selectedSessionRef.current) {
-          const ws2 = new WebSocket(`${WS_BASE}/ws/agent/${selectedSessionRef.current.session_id}`);
+          let token = localStorage.getItem("intellisupport_jwt");
+          let wsUrl = `${WS_BASE}/ws/agent/${selectedSessionRef.current.session_id}`;
+          if (token) wsUrl += `?token=${token}`;
+          
+          const ws2 = new WebSocket(wsUrl);
           wsRef.current = ws2;
           ws2.onmessage = ws.onmessage;
           ws2.onclose = ws.onclose;
@@ -169,6 +183,17 @@ export default function LiveSessionsPage() {
       );
       setHasTakenOver(true);
       toast("You've taken over this conversation.", "success");
+    }
+  };
+
+  // Release conversation back to AI
+  const releaseSession = () => {
+    if (wsRef.current && wsRef.current.readyState === 1) {
+      wsRef.current.send(
+        JSON.stringify({ type: "release" })
+      );
+      setHasTakenOver(false);
+      toast("Released conversation to AI Assistant.", "info");
     }
   };
 
@@ -268,32 +293,43 @@ export default function LiveSessionsPage() {
                   </h3>
                   <SessionTimer startTime={selectedSession.created_at || new Date().toISOString()} />
                 </div>
-                <p className="text-xs text-[var(--text-muted)]">
+                <p className="text-xs text-[var(--text-muted)] mt-1 flex items-center gap-2">
                   {isMonitoring ? (
                     <span className="flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                       Monitoring live
                     </span>
-                  ) : "Disconnected"}{" "}
-                  · {sessionMessages.length} messages
-                  {hasTakenOver && (
-                    <span className="ml-2 bg-emerald-500/20 text-emerald-400 text-[9px] px-1.5 py-0.5 rounded-full font-bold">
-                      TAKEN OVER
+                  ) : "Disconnected"}
+                  <span>·</span>
+                  <span>{sessionMessages.length} messages</span>
+                  <span>·</span>
+                  {hasTakenOver || selectedSession?.mode === "human" ? (
+                    <span className="text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                      👨‍💼 Human Agent Active
+                    </span>
+                  ) : (
+                    <span className="text-blue-400 font-medium bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+                      🤖 AI Assistant Active
                     </span>
                   )}
                 </p>
               </div>
-              <button
-                onClick={takeoverSession}
-                disabled={hasTakenOver}
-                className={`px-4 py-2 text-xs font-medium rounded-xl transition-all ${
-                  hasTakenOver
-                    ? "bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 cursor-default"
-                    : "btn-glow"
-                }`}
-              >
-                {hasTakenOver ? "✓ Taken Over" : "Take Over Conversation"}
-              </button>
+              
+              {hasTakenOver || selectedSession?.mode === "human" ? (
+                <button
+                  onClick={releaseSession}
+                  className="px-4 py-2 text-xs font-medium rounded-xl transition-all bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30"
+                >
+                  🤖 Release / Resume AI
+                </button>
+              ) : (
+                <button
+                  onClick={takeoverSession}
+                  className="px-4 py-2 text-xs font-medium rounded-xl transition-all btn-glow"
+                >
+                  👨‍💼 Take Over / Pause AI
+                </button>
+              )}
             </div>
 
             {/* Messages */}
