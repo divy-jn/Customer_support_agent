@@ -3,7 +3,8 @@
 ## Agent vs Skill vs Tool
 - **Agent**: Owns a domain (e.g., `ProductAgent`, `OrderAgent`). Responsible for deciding *which* skill to invoke based on customer intent.
 - **Skill**: Owns a workflow or Standard Operating Procedure (SOP). Determines *how* to solve a specific problem (e.g., `ProductInformationSkill`, `WarrantySkill`). A skill is purely declarative and defines the steps, rules, and allowed tools.
-- **Tool**: A specific technical capability (e.g., `retrieve_as_context`, `cancel_order`). Tools are executed externally and securely via a registry.
+- **Tool**: A specific technical capability (e.g., `retrieve_as_context`, `cancel_order`).
+  *(Note: Authoritative tool registration and centralized ToolRegistry infrastructure is a future integration gap. Phase C strictly validates tool requests against individual skill-side allowlists.)*
 
 ## Architecture
 

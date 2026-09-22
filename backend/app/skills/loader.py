@@ -1,11 +1,18 @@
 import os
 import yaml
+import re
 from pathlib import Path
 from pydantic import ValidationError
 from typing import Optional
 
 from app.skills.base import SkillDefinition, SkillMetadata, SkillWorkflow, SkillPolicy
 from app.models import RiskLevel
+
+SEMVER_REGEX = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-zA-Z0-9-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-zA-Z0-9-]*))*))?"
+    r"(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$"
+)
 
 class SkillLoader:
     @staticmethod
@@ -47,10 +54,18 @@ class SkillLoader:
             
         # Extract fields to match our nested structure
         try:
+            domain = parsed.get("domain")
+            if not domain:
+                raise ValueError("Skill metadata is missing required field: 'domain'")
+
+            version_str = str(parsed.get("version", "1.0.0"))
+            if not SEMVER_REGEX.match(version_str):
+                raise ValueError(f"Invalid semantic version: '{version_str}'")
+
             metadata = SkillMetadata(
                 name=parsed.get("name"),
-                version=str(parsed.get("version", "1.0.0")),
-                domain=parsed.get("domain") or "general",
+                version=version_str,
+                domain=domain,
                 purpose=parsed.get("purpose")
             )
             
@@ -72,7 +87,7 @@ class SkillLoader:
             try:
                 risk_level = RiskLevel(risk_val)
             except ValueError:
-                risk_level = RiskLevel.READ_ONLY
+                raise ValueError(f"Invalid risk_level '{risk_val}'. Must be one of: {[e.value for e in RiskLevel]}")
                 
             policy = SkillPolicy(
                 allowed_tools=pol_config.get("allowed_tools", []),
@@ -81,7 +96,12 @@ class SkillLoader:
                 requires_confirmation=pol_config.get("requires_confirmation", False)
             )
             
-            return SkillDefinition(metadata=metadata, workflow=workflow, policy=policy)
+            return SkillDefinition(
+                metadata=metadata, 
+                workflow=workflow, 
+                policy=policy, 
+                instructions=markdown_body
+            )
             
-        except ValidationError as e:
+        except (ValidationError, ValueError) as e:
             raise ValueError(f"Validation failed for skill {file_path}: {e}")

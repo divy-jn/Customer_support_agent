@@ -80,5 +80,5 @@ class SkillRuntime:
                 skill_version=skill.metadata.version,
                 status=SkillExecutionStatus.TOOL_FAILURE,
                 message=f"Tool '{tool_name}' encountered an error during execution.",
-                failure_code=str(e)
+                failure_code=type(e).__name__
             )

@@ -26,6 +26,7 @@ class SkillDefinition(BaseModel):
     metadata: SkillMetadata
     workflow: SkillWorkflow
     policy: SkillPolicy
+    instructions: str = ""
     
     @property
     def name(self) -> str:
