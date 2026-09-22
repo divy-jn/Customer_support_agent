@@ -166,3 +166,73 @@ class DashboardStats(BaseModel):
     tickets_by_priority: dict = {}
     tickets_by_type: dict = {}
     tickets_by_status: dict = {}
+
+
+# ──────────────────────────────────────────────
+#  Semantic Router Contracts (Phase B)
+# ──────────────────────────────────────────────
+
+class RouterFailureType(str, Enum):
+    SUCCESS = "success"
+    TRANSPORT_ERROR = "transport_error"
+    AUTHENTICATION_ERROR = "authentication_error"
+    RATE_LIMIT_ERROR = "rate_limit_error"
+    TIMEOUT_ERROR = "timeout_error"
+    PARSER_ERROR = "parser_error"
+    SCHEMA_VALIDATION_ERROR = "schema_validation_error"
+    INTERNAL_ERROR = "internal_error"
+
+class RouterDiagnostics(BaseModel):
+    failure_type: RouterFailureType
+    error_message: str | None = None
+    latency_ms: int = 0
+    raw_response: str | None = None
+
+class SemanticRouteResult(BaseModel):
+    domain: str
+    intent: str
+    sentiment: str
+    urgency: str
+    confidence: float
+    is_continuation: bool = False
+    entities: dict = {}
+    diagnostics: RouterDiagnostics
+
+
+# ──────────────────────────────────────────────
+#  Workflow State Contract (Phase B)
+# ──────────────────────────────────────────────
+
+class WorkflowStatus(str, Enum):
+    IDLE = "idle"
+    IN_PROGRESS = "in_progress"
+    AWAITING_INPUT = "awaiting_input"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+from typing import TypedDict
+
+class TargetAgentState(TypedDict):
+    # Identity
+    session_id: str
+    customer_id: int | None
+    
+    # Semantic Context
+    current_domain: str | None
+    current_intent: str | None
+    sentiment: str | None
+    urgency: str | None
+    
+    # Workflow Lifecycle
+    active_workflow: str | None
+    workflow_status: WorkflowStatus | None
+    pending_action: dict | None
+    
+    # Structured Data
+    collected_entities: dict
+    escalation_status: str | None
+    turn_metadata: dict
+    
+    # Results
+    last_meaningful_result: str | None
+    router_diagnostics: dict | None

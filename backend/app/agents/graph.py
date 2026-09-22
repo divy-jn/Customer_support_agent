@@ -46,6 +46,12 @@ class AgentState(TypedDict):
     response: str | None
     escalated: bool
 
+    # Observability / Diagnostics
+    router_error_type: str | None
+    router_transport_failure: bool | None
+    router_parse_failure: bool | None
+    router_internal_failure: bool | None
+
     # Approval Gate
     pending_approval: dict | None      # {"action": str, "params": dict, "message": str}
     approval_granted: bool | None      # Set by the WebSocket handler after user responds
@@ -59,17 +65,88 @@ HIGH_RISK_ACTIONS = {"cancel_order", "process_refund"}
 #  Node Functions
 # ──────────────────────────────────────────────
 
+import logging
+import json
+from app.agents import semantic_router
+from app.agents.routing_policy import map_domain_to_route
+
+logger = logging.getLogger(__name__)
+
+# Keep strong references to background tasks to prevent them from being orphaned and garbage collected
+_shadow_tasks = set()
+
+async def _run_shadow_router(message: str, conversation_history: list, session_id: str, classification: dict):
+    """Executes the shadow router and logs the result safely."""
+    try:
+        semantic_result = await semantic_router.classify_semantic_intent(
+            message=message,
+            conversation_history=conversation_history
+        )
+        
+        target_route = map_domain_to_route(semantic_result.domain)
+        is_agreement = False
+        legacy_route = classification.get("route_to")
+        
+        if target_route in ("OrderAgent", "PaymentAgent") and legacy_route == "db_agent":
+            is_agreement = True
+        elif target_route in ("GeneralAgent", "ProductAgent") and legacy_route == "rag_agent":
+            is_agreement = True
+        elif target_route == "EscalationAgent" and legacy_route == "escalation":
+            is_agreement = True
+            
+        shadow_log = {
+            "event": "semantic_router.shadow_comparison",
+            "session_id": session_id,
+            "legacy_intent": classification.get("intent"),
+            "legacy_route": legacy_route,
+            "semantic_domain": semantic_result.domain,
+            "semantic_intent": semantic_result.intent,
+            "confidence": semantic_result.confidence,
+            "semantic_router_status": semantic_result.diagnostics.failure_type.value,
+            "failure_type": semantic_result.diagnostics.failure_type.value,
+            "agreement": is_agreement,
+            "latency_ms": semantic_result.diagnostics.latency_ms
+        }
+        logger.info(json.dumps(shadow_log))
+    except Exception as e:
+        logger.error(f"Shadow router failed unexpectedly: {e}")
+
 async def route_intent_node(state: AgentState) -> dict:
-    """Node: Classifies intent and decides routing."""
+    """Node: Classifies intent and decides routing (with Phase B Shadow Mode)."""
+    
+    # Run legacy router (Authoritative)
     classification = await intent_router.classify_intent(
         message=state["message"],
         conversation_history=state["conversation_history"]
     )
+    
+    # Fire and forget the shadow router so we do not delay the customer response
+    # Enforce bounded concurrency to prevent unbounded accumulation
+    MAX_SHADOW_TASKS = 50
+    if len(_shadow_tasks) >= MAX_SHADOW_TASKS:
+        logger.warning(f"Shadow task dropped: concurrent limit reached ({MAX_SHADOW_TASKS})")
+    else:
+        task = asyncio.create_task(
+            _run_shadow_router(
+                message=state["message"], 
+                conversation_history=state["conversation_history"], 
+                session_id=state.get("session_id", "unknown"),
+                classification=classification
+            )
+        )
+        _shadow_tasks.add(task)
+        task.add_done_callback(_shadow_tasks.discard)
+
+    # Legacy path remains 100% authoritative and returns immediately
     return {
         "intent": classification.get("intent", "general"),
         "sentiment": classification.get("sentiment", "neutral"),
         "urgency": classification.get("urgency", "medium"),
         "route_to": classification.get("route_to", "rag_agent"),
+        "router_error_type": classification.get("router_error_type"),
+        "router_transport_failure": classification.get("router_transport_failure"),
+        "router_parse_failure": classification.get("router_parse_failure"),
+        "router_internal_failure": classification.get("router_internal_failure"),
     }
 
 
