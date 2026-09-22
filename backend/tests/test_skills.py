@@ -95,8 +95,10 @@ policy:
     skill = SkillLoader.load_from_file(file_path)
     assert skill.name == "Product Information Skill"
     assert skill.metadata.version == "1.0.0"
+    assert skill.metadata.domain == "product"
     assert "query" in skill.workflow.required_inputs
     assert skill.policy.risk_level == RiskLevel.READ_ONLY
+    assert skill.instructions == "# Markdown body..."
 
 def test_malformed_frontmatter_fails_closed(tmp_path: Path):
     content = """---
@@ -121,11 +123,56 @@ purpose: "No name provided"
     with pytest.raises(ValueError):
         SkillLoader.load_from_file(file_path)
 
+def test_missing_domain_fails_closed(tmp_path: Path):
+    content = """---
+name: "Product Information Skill"
+version: "1.0.0"
+purpose: "Answer product questions"
+---
+"""
+    file_path = tmp_path / "SKILL.md"
+    file_path.write_text(content)
+    
+    with pytest.raises(ValueError, match="missing required field: 'domain'"):
+        SkillLoader.load_from_file(file_path)
+
+def test_invalid_semantic_version_fails_closed(tmp_path: Path):
+    content = """---
+name: "Product Information Skill"
+version: "version-one"
+domain: "product"
+purpose: "Answer product questions"
+---
+"""
+    file_path = tmp_path / "SKILL.md"
+    file_path.write_text(content)
+    
+    with pytest.raises(ValueError, match="Invalid semantic version"):
+        SkillLoader.load_from_file(file_path)
+
+def test_invalid_risk_level_fails_closed(tmp_path: Path):
+    content = """---
+name: "Product Information Skill"
+version: "1.0.0"
+domain: "product"
+purpose: "Answer product questions"
+policy:
+  risk_level: "super_admin"
+---
+"""
+    file_path = tmp_path / "SKILL.md"
+    file_path.write_text(content)
+    
+    with pytest.raises(ValueError, match="Invalid risk_level 'super_admin'"):
+        SkillLoader.load_from_file(file_path)
+
 def test_markdown_cannot_expand_permissions(tmp_path: Path):
     # Testing that markdown can't arbitrarily inject code execution
     # It must map exactly to Pydantic strings and lists.
     content = """---
 name: "Hacker Skill"
+version: "1.0.0"
+domain: "security"
 purpose: "Hack"
 policy:
   allowed_tools: ["system.exec('rm -rf')"]
@@ -138,8 +185,9 @@ import os; os.system('echo hacked')
     skill = SkillLoader.load_from_file(file_path)
     # The tool is just a string, it is not executed by the loader.
     assert "system.exec('rm -rf')" in skill.policy.allowed_tools
-    # The markdown body is entirely ignored and dropped by the loader.
-    # No arbitrary execution happens.
+    # The markdown body is preserved, but no arbitrary execution happens.
+    assert skill.instructions == "import os; os.system('echo hacked')"
+
 
 # ──────────────────────────────────────────────
 #  Phase C: Registry Tests
@@ -216,4 +264,4 @@ def test_tool_failure_is_caught():
     
     res = runtime.execute_tool(skill, "crash", {})
     assert res.status == SkillExecutionStatus.TOOL_FAILURE
-    assert res.failure_code == "Tool crashed"
+    assert res.failure_code == "Exception"
