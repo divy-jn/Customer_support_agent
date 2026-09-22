@@ -236,3 +236,34 @@ class TargetAgentState(TypedDict):
     # Results
     last_meaningful_result: str | None
     router_diagnostics: dict | None
+
+
+# ──────────────────────────────────────────────
+#  Skill Runtime Contracts (Phase C)
+# ──────────────────────────────────────────────
+
+class RiskLevel(str, Enum):
+    READ_ONLY = "read_only"
+    LOW_RISK_MUTATION = "low_risk_mutation"
+    HIGH_RISK_MUTATION = "high_risk_mutation"
+    EXTERNAL_SIDE_EFFECT = "external_side_effect"
+
+
+class SkillExecutionStatus(str, Enum):
+    SUCCESS = "success"
+    MISSING_REQUIRED_INPUT = "missing_required_input"
+    INVALID_INPUT = "invalid_input"
+    TOOL_NOT_ALLOWED = "tool_not_allowed"
+    POLICY_DENIED = "policy_denied"
+    CONFIRMATION_REQUIRED = "confirmation_required"
+    TOOL_FAILURE = "tool_failure"
+    WORKFLOW_FAILURE = "workflow_failure"
+
+
+class SkillExecutionResult(BaseModel):
+    skill_name: str
+    skill_version: str
+    status: SkillExecutionStatus
+    structured_output: dict = {}
+    failure_code: str | None = None
+    message: str | None = None
