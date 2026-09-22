@@ -50,7 +50,7 @@ class SkillLoader:
             metadata = SkillMetadata(
                 name=parsed.get("name"),
                 version=str(parsed.get("version", "1.0.0")),
-                domain=parsed.get("domain"),
+                domain=parsed.get("domain") or "general",
                 purpose=parsed.get("purpose")
             )
             
