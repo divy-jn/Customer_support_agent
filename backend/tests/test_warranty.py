@@ -57,7 +57,10 @@ def create_mock_supabase(return_data=None, raise_exc=None):
     # Execution result
     mock_execute = MagicMock()
     if raise_exc:
-        mock_execute.side_effect = raise_exc
+        if isinstance(raise_exc, list):
+            mock_execute.side_effect = raise_exc
+        else:
+            mock_execute.side_effect = raise_exc
     else:
         mock_execute.return_value = MagicMock(data=return_data)
         
@@ -125,8 +128,7 @@ class TestWarrantyCapability:
         mock_data = [build_mock_order(date="2026-05-10T14:00:00Z", desc="1-year warranty")]
         mock_supabase_global.table = create_mock_supabase(return_data=mock_data).table
         
-        raw_res = check_warranty_status(customer_id=10, order_id=1)
-        res = WarrantyStatusResult.model_validate_json(raw_res)
+        res = check_warranty_status(customer_id=10, order_id=1)
         
         assert res.status == WarrantyStatus.ACTIVE
         assert res.eligible_purchase is True
@@ -139,8 +141,7 @@ class TestWarrantyCapability:
         mock_data = [build_mock_order(date="2025-05-10T14:00:00Z", desc="1-year warranty")]
         mock_supabase_global.table = create_mock_supabase(return_data=mock_data).table
         
-        raw_res = check_warranty_status(customer_id=10, order_id=1)
-        res = WarrantyStatusResult.model_validate_json(raw_res)
+        res = check_warranty_status(customer_id=10, order_id=1)
         
         assert res.status == WarrantyStatus.EXPIRED
 
@@ -150,8 +151,7 @@ class TestWarrantyCapability:
         mock_data = [build_mock_order(date="2025-09-15T12:00:00Z", desc="1-year warranty")]
         mock_supabase_global.table = create_mock_supabase(return_data=mock_data).table
         
-        raw_res = check_warranty_status(customer_id=10, order_id=1)
-        res = WarrantyStatusResult.model_validate_json(raw_res)
+        res = check_warranty_status(customer_id=10, order_id=1)
         
         # now < expiry is False (they are equal), so it's expired
         assert res.status == WarrantyStatus.EXPIRED
@@ -159,38 +159,34 @@ class TestWarrantyCapability:
     @patch("app.tools.supabase")
     def test_no_matching_purchase(self, mock_supabase_global):
         mock_supabase_global.table = create_mock_supabase(return_data=[]).table
-        raw_res = check_warranty_status(customer_id=10, order_id=999)
-        res = WarrantyStatusResult.model_validate_json(raw_res)
+        res = check_warranty_status(customer_id=10, order_id=999)
         assert res.status == WarrantyStatus.NOT_FOUND
 
     @patch("app.tools.supabase")
     def test_invalid_customer(self, mock_supabase_global):
-        raw_res = check_warranty_status(customer_id=-5, order_id=1)
-        res = WarrantyStatusResult.model_validate_json(raw_res)
+        res = check_warranty_status(customer_id=-5, order_id=1)
         assert res.status == WarrantyStatus.INVALID_CUSTOMER
 
     @patch("app.tools.supabase")
     def test_missing_product_name_and_order_id(self, mock_supabase_global):
-        raw_res = check_warranty_status(customer_id=10)
-        res = WarrantyStatusResult.model_validate_json(raw_res)
+        res = check_warranty_status(customer_id=10)
         assert res.status == WarrantyStatus.INVALID_REQUEST
 
     @patch("app.tools.supabase")
     def test_cross_customer_order_access_denied(self, mock_supabase_global):
-        # Supabase mock is set up to return empty list if querying for customer_id=10 and order_id=1
-        # (Assuming the DB layer enforces eq("customer_id", 10), it wouldn't return customer 11's order)
-        mock_supabase_global.table = create_mock_supabase(return_data=[]).table
-        raw_res = check_warranty_status(customer_id=10, order_id=1)
-        res = WarrantyStatusResult.model_validate_json(raw_res)
+        # Even if the DB mistakenly returns another customer's order, the capability must catch it
+        mock_data = [build_mock_order(order_id=1, customer_id=11)]
+        mock_supabase_global.table = create_mock_supabase(return_data=mock_data).table
+        res = check_warranty_status(customer_id=10, order_id=1)
         assert res.status == WarrantyStatus.NOT_FOUND
+        assert "not found or does not belong" in res.reason
 
     @patch("app.tools.supabase")
     def test_missing_warranty_text(self, mock_supabase_global):
         mock_data = [build_mock_order(desc="Refurbished product, no guarantees.")]
         mock_supabase_global.table = create_mock_supabase(return_data=mock_data).table
         
-        raw_res = check_warranty_status(customer_id=10, order_id=1)
-        res = WarrantyStatusResult.model_validate_json(raw_res)
+        res = check_warranty_status(customer_id=10, order_id=1)
         assert res.status == WarrantyStatus.MISSING_DATA
         assert res.eligible_purchase is True  # The purchase itself is valid
         assert res.warranty_period is None
@@ -198,14 +194,32 @@ class TestWarrantyCapability:
 
     @patch("app.tools.supabase")
     def test_db_failure_sanitized(self, mock_supabase_global):
+        # Always fails -> retries exhausted
         mock_supabase_global.table = create_mock_supabase(raise_exc=ConnectionError("DB Down")).table
-        raw_res = check_warranty_status(customer_id=10, order_id=1)
-        res = WarrantyStatusResult.model_validate_json(raw_res)
+        res = check_warranty_status(customer_id=10, order_id=1)
         assert res.status == WarrantyStatus.DB_ERROR
         assert "ConnectionError" in res.reason
-        assert "DB Down" not in res.reason  # Not exposing raw error details? 
-        # Actually our code does: f"Sanitized database error: {type(e).__name__}"
+        assert "DB Down" not in res.reason  # Sanitized
         assert res.reason == "Sanitized database error: ConnectionError"
+
+    @patch("app.tools.supabase")
+    def test_db_transient_failure_retries_and_succeeds(self, mock_supabase_global):
+        # Fails twice with ConnectionError, succeeds on third
+        success_data = MagicMock(data=[build_mock_order(date="2026-05-10T14:00:00Z", desc="1-year warranty")])
+        mock_supabase_global.table = create_mock_supabase(
+            raise_exc=[ConnectionError("Trans Fail 1"), ConnectionError("Trans Fail 2"), success_data]
+        ).table
+        
+        # We need to temporarily speed up retries for the test to avoid 2+ second delays
+        # but _supabase_retry doesn't easily let us configure sleep at runtime.
+        # It's fast enough in test if mock doesn't sleep? Actually tenacity sleeps real time.
+        # To avoid slow tests, we just mock asyncio.sleep or time.sleep
+        import time
+        with patch.object(time, "sleep", return_value=None):
+            res = check_warranty_status(customer_id=10, order_id=1)
+            
+        assert res.status == WarrantyStatus.ACTIVE
+        assert res.eligible_purchase is True
 
 
 # ──────────────────────────────────────────────
@@ -222,8 +236,7 @@ class TestWarrantyAmbiguity:
         ]
         mock_supabase_global.table = create_mock_supabase(return_data=mock_data).table
         
-        raw_res = check_warranty_status(customer_id=10, product_name="SuperPhone X")
-        res = WarrantyStatusResult.model_validate_json(raw_res)
+        res = check_warranty_status(customer_id=10, product_name="SuperPhone X")
         assert res.status == WarrantyStatus.EXPIRED  # Default mock date is 2025
         assert res.order_id == 1
 
@@ -237,8 +250,7 @@ class TestWarrantyAmbiguity:
         mock_supabase_global.table = create_mock_supabase(return_data=mock_data).table
         
         # Both contain "SuperPhone X" in their lowercase name
-        raw_res = check_warranty_status(customer_id=10, product_name="SuperPhone X")
-        res = WarrantyStatusResult.model_validate_json(raw_res)
+        res = check_warranty_status(customer_id=10, product_name="SuperPhone X")
         assert res.status == WarrantyStatus.AMBIGUOUS
         assert "Multiple purchases match" in res.reason
 
@@ -249,6 +261,5 @@ class TestWarrantyAmbiguity:
         ]
         mock_supabase_global.table = create_mock_supabase(return_data=mock_data).table
         
-        raw_res = check_warranty_status(customer_id=10, product_name="SuperPhone X")
-        res = WarrantyStatusResult.model_validate_json(raw_res)
+        res = check_warranty_status(customer_id=10, product_name="SuperPhone X")
         assert res.status == WarrantyStatus.NOT_FOUND
