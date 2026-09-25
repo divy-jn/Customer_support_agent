@@ -399,107 +399,119 @@ def _parse_warranty_duration(description: str) -> relativedelta | None:
         return relativedelta(months=val)
     return None
 
-@track_tool_call("check_warranty_status")
 @_supabase_retry
-def check_warranty_status(customer_id: int, product_name: str = None, order_id: int = None) -> str:
-    """Deterministically check warranty status for a customer's purchase."""
+def _check_warranty_status_impl(customer_id: int, product_name: str = None, order_id: int = None) -> 'WarrantyStatusResult':
+    """Internal implementation of warranty check with DB retries."""
     from app.models import WarrantyStatusResult, WarrantyStatus
-    try:
-        if not isinstance(customer_id, int) or customer_id <= 0:
-            return WarrantyStatusResult(status=WarrantyStatus.INVALID_CUSTOMER, reason="Invalid customer ID").model_dump_json()
+    if not isinstance(customer_id, int) or customer_id <= 0:
+        return WarrantyStatusResult(status=WarrantyStatus.INVALID_CUSTOMER, reason="Invalid customer ID")
 
-        if order_id is None and not product_name:
-            return WarrantyStatusResult(
-                status=WarrantyStatus.INVALID_REQUEST,
-                reason="Must provide either order_id or product_name"
-            ).model_dump_json()
-
-        # Query orders for this customer
-        query = supabase.table("orders").select("id, customer_id, order_date, products(id, name, description)").eq("customer_id", customer_id)
-        if order_id is not None:
-            query = query.eq("id", order_id)
-
-        resp = query.execute()
-        if not resp.data:
-            return WarrantyStatusResult(
-                status=WarrantyStatus.NOT_FOUND,
-                reason="Order not found or does not belong to customer"
-            ).model_dump_json()
-
-        matches = resp.data
-
-        # Filter by product_name if order_id was not provided
-        if product_name and order_id is None:
-            pname_lower = product_name.lower()
-            matches = [
-                o for o in matches 
-                if o.get("products") and pname_lower in o["products"].get("name", "").lower()
-            ]
-
-        if not matches:
-            return WarrantyStatusResult(
-                status=WarrantyStatus.NOT_FOUND,
-                reason="No matching product purchase found"
-            ).model_dump_json()
-        
-        if len(matches) > 1:
-            return WarrantyStatusResult(
-                status=WarrantyStatus.AMBIGUOUS,
-                reason="Multiple purchases match the product name. Please provide an order_id."
-            ).model_dump_json()
-
-        order = matches[0]
-        prod = order.get("products") or {}
-        
-        desc = prod.get("description", "")
-        duration = _parse_warranty_duration(desc)
-        
-        order_date_str = order.get("order_date")
-        if not order_date_str:
-            return WarrantyStatusResult(status=WarrantyStatus.MISSING_DATA, reason="Order is missing order_date").model_dump_json()
-            
-        purchase_date = datetime.fromisoformat(order_date_str)
-        if purchase_date.tzinfo is None:
-            purchase_date = purchase_date.replace(tzinfo=timezone.utc)
-
-        if not duration:
-            return WarrantyStatusResult(
-                status=WarrantyStatus.MISSING_DATA,
-                eligible_purchase=True,
-                customer_id=customer_id,
-                order_id=order["id"],
-                product_id=prod.get("id"),
-                product_name=prod.get("name"),
-                purchase_date=purchase_date,
-                reason="Warranty duration could not be parsed from product description"
-            ).model_dump_json()
-
-        expiry = purchase_date + duration
-        now = _CLOCK()
-        # Ensure 'now' is timezone aware
-        if now.tzinfo is None:
-            now = now.replace(tzinfo=timezone.utc)
-
-        status = WarrantyStatus.ACTIVE if now < expiry else WarrantyStatus.EXPIRED
-
+    if order_id is None and not product_name:
         return WarrantyStatusResult(
-            status=status,
+            status=WarrantyStatus.INVALID_REQUEST,
+            reason="Must provide either order_id or product_name"
+        )
+
+    # Query orders for this customer
+    query = supabase.table("orders").select("id, customer_id, order_date, products(id, name, description)").eq("customer_id", customer_id)
+    if order_id is not None:
+        query = query.eq("id", order_id)
+
+    resp = query.execute()
+    if not resp.data:
+        return WarrantyStatusResult(
+            status=WarrantyStatus.NOT_FOUND,
+            reason="Order not found or does not belong to customer"
+        )
+
+    matches = resp.data
+
+    # Filter by product_name if order_id was not provided
+    if product_name and order_id is None:
+        pname_lower = product_name.lower()
+        matches = [
+            o for o in matches 
+            if o.get("products") and pname_lower in o["products"].get("name", "").lower()
+        ]
+
+    if not matches:
+        return WarrantyStatusResult(
+            status=WarrantyStatus.NOT_FOUND,
+            reason="No matching product purchase found"
+        )
+    
+    if len(matches) > 1:
+        return WarrantyStatusResult(
+            status=WarrantyStatus.AMBIGUOUS,
+            reason="Multiple purchases match the product name. Please provide an order_id."
+        )
+
+    order = matches[0]
+    
+    # Explicit secondary validation to prevent cross-customer data leakage
+    if order.get("customer_id") and order.get("customer_id") != customer_id:
+        return WarrantyStatusResult(
+            status=WarrantyStatus.NOT_FOUND,
+            reason="Order not found or does not belong to customer"
+        )
+
+    prod = order.get("products") or {}
+    
+    desc = prod.get("description", "")
+    duration = _parse_warranty_duration(desc)
+    
+    order_date_str = order.get("order_date")
+    if not order_date_str:
+        return WarrantyStatusResult(status=WarrantyStatus.MISSING_DATA, reason="Order is missing order_date")
+        
+    purchase_date = datetime.fromisoformat(order_date_str)
+    if purchase_date.tzinfo is None:
+        purchase_date = purchase_date.replace(tzinfo=timezone.utc)
+
+    if not duration:
+        return WarrantyStatusResult(
+            status=WarrantyStatus.MISSING_DATA,
             eligible_purchase=True,
             customer_id=customer_id,
             order_id=order["id"],
             product_id=prod.get("id"),
             product_name=prod.get("name"),
             purchase_date=purchase_date,
-            warranty_period=re.search(r"(\d+)[-\s](year|month)s?\b", desc, re.IGNORECASE).group(0),
-            warranty_expiry=expiry,
-            reason=f"Warranty expires on {expiry.strftime('%Y-%m-%d')}"
-        ).model_dump_json()
+            reason="Warranty duration could not be parsed from product description"
+        )
 
+    expiry = purchase_date + duration
+    now = _CLOCK()
+    # Ensure 'now' is timezone aware
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    status = WarrantyStatus.ACTIVE if now < expiry else WarrantyStatus.EXPIRED
+
+    return WarrantyStatusResult(
+        status=status,
+        eligible_purchase=True,
+        customer_id=customer_id,
+        order_id=order["id"],
+        product_id=prod.get("id"),
+        product_name=prod.get("name"),
+        purchase_date=purchase_date,
+        warranty_period=re.search(r"(\d+)[-\s](year|month)s?\b", desc, re.IGNORECASE).group(0),
+        warranty_expiry=expiry,
+        reason=f"Warranty expires on {expiry.strftime('%Y-%m-%d')}"
+    )
+
+@track_tool_call("check_warranty_status")
+def check_warranty_status(customer_id: int, product_name: str = None, order_id: int = None) -> 'WarrantyStatusResult':
+    """Deterministically check warranty status for a customer's purchase."""
+    from app.models import WarrantyStatusResult, WarrantyStatus
+    try:
+        return _check_warranty_status_impl(customer_id, product_name, order_id)
     except Exception as e:
         return WarrantyStatusResult(
             status=WarrantyStatus.DB_ERROR,
             reason=f"Sanitized database error: {type(e).__name__}"
-        ).model_dump_json()
+        )
 
 
 # ──────────────────────────────────────────────
