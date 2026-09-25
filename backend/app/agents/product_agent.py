@@ -83,7 +83,8 @@ _PRODUCT_INTENT_MAP: Dict[str, str] = {
     "product_question": "Product Information Skill",
     "technical_support": "Product Information Skill",
     "product_comparison": "Product Information Skill",
-    # Future: "warranty_claim": "Warranty Skill",
+    "warranty_claim": "Warranty Skill",
+    "product_warranty": "Warranty Skill",
     # Future: "product_troubleshooting": "Product Troubleshooting Skill",
 }
 
@@ -121,14 +122,28 @@ class ProductSkillResolver:
 
 PRODUCT_AGENT_IDENTITY = """You are the Product Domain Agent.
 Your responsibility is to help customers with product-related questions:
-features, specifications, availability, comparisons, and basic usage.
+features, specifications, availability, comparisons, basic usage, and warranty checking.
 
 You do NOT handle: order tracking, cancellations, refunds, billing,
 ticket creation, or escalation. If the customer asks about those,
 politely inform them that you specialize in product information and
 they will be connected with the appropriate team.
 
-Follow the skill operating instructions below precisely."""
+Follow the skill operating instructions below precisely.
+
+TOOL CALLING:
+To request a tool, output a JSON block exactly in this format on its own lines:
+```json
+{
+  "tool_call": "<tool_name>",
+  "arguments": {
+    "<arg_name>": "<arg_value>"
+  }
+}
+```
+You must stop your response after outputting a tool request. 
+The system will execute the tool and provide you with the result in the next turn.
+Once you have enough information to resolve the user's request, provide your final natural language response and DO NOT output any JSON tool call."""
 
 
 class ProductAgent:
@@ -201,81 +216,104 @@ class ProductAgent:
                 metadata={"message": input_result.message},
             )
 
-        # ── Step 3: Execute capability through SkillRuntime ──
-        # Derive the primary tool from the skill's declared allowed_tools.
-        # The agent does not maintain a second independent source of truth.
-        # NOTE: This single-primary-tool pattern is temporary for the D.1 vertical slice.
-        # Future multi-tool skills will need a richer execution plan from the skill definition.
-        if not skill.policy.allowed_tools:
-            logger.warning(
-                "ProductAgent: skill=%s has no allowed_tools declared",
-                skill.name,
-            )
-            return ProductAgentResponse(
-                response="I apologize, but I'm unable to look up product information right now.",
-                skill_used=skill.name,
-                skill_version=skill.metadata.version,
-                execution_status="no_tools_declared",
-            )
-
-        primary_tool = skill.policy.allowed_tools[0]
-        exec_result = self.skill_runtime.execute_tool(
-            skill,
-            primary_tool,
-            {"query": context.customer_message},
-        )
-
-        if exec_result.status != SkillExecutionStatus.SUCCESS:
-            logger.warning(
-                "ProductAgent: tool execution failed for skill=%s status=%s",
-                skill.name,
-                exec_result.status.value,
-            )
-            return ProductAgentResponse(
-                response=(
-                    "I apologize, but I'm unable to look up product information "
-                    "right now. Let me connect you with a human agent."
-                ),
-                skill_used=skill.name,
-                skill_version=skill.metadata.version,
-                execution_status=exec_result.status.value,
-                metadata={"failure_code": exec_result.failure_code},
-            )
-
-        # ── Step 4: Compose prompt and generate response ──
-        retrieved_context = exec_result.structured_output.get("tool_result", "")
-
+        # ── Step 3: ReAct Tool Calling Loop ──
+        MAX_ITERATIONS = 5
+        iteration = 0
+        
         system_prompt = self._build_system_prompt(skill)
-        user_prompt = self._build_user_prompt(context, retrieved_context)
+        user_prompt = self._build_user_prompt(context, "")
+        
+        # We maintain a conversation transcript for the LLM
+        conversation_history = user_prompt
+        
+        while iteration < MAX_ITERATIONS:
+            iteration += 1
+            
+            try:
+                llm_response = await self.llm_adapter.invoke(system_prompt, conversation_history)
+            except Exception as e:
+                logger.error("ProductAgent: LLM invocation failed: %s", type(e).__name__)
+                return ProductAgentResponse(
+                    response=(
+                        "I apologize, but I'm experiencing a technical issue. "
+                        "Let me connect you with a human agent."
+                    ),
+                    skill_used=skill.name,
+                    skill_version=skill.metadata.version,
+                    execution_status="llm_failure",
+                    metadata={"failure_code": type(e).__name__},
+                )
+            
+            # Parse for tool call JSON
+            import json
+            import re
+            
+            tool_call_match = re.search(r"```json\s*(\{.*?\})\s*```", llm_response, re.DOTALL)
+            if not tool_call_match:
+                # Fallback to look for raw json if no backticks
+                tool_call_match = re.search(r"(\{\s*\"tool_call\".*?\})", llm_response, re.DOTALL)
+                
+            if tool_call_match:
+                try:
+                    tool_request = json.loads(tool_call_match.group(1))
+                    tool_name = tool_request.get("tool_call")
+                    arguments = tool_request.get("arguments", {})
+                    
+                    if not tool_name:
+                        raise ValueError("Missing 'tool_call' in JSON")
+                        
+                    # Execute tool through SkillRuntime Policy Enforcer
+                    exec_result = self.skill_runtime.execute_tool(
+                        skill,
+                        tool_name,
+                        arguments,
+                    )
+                    
+                    # Ensure typed results survive the boundary and are serialized ONLY for the LLM context here.
+                    tool_result_raw = exec_result.structured_output.get("tool_result")
+                    
+                    # Dump model to json if it is a Pydantic model (like WarrantyStatusResult)
+                    if hasattr(tool_result_raw, "model_dump_json"):
+                        tool_result_str = tool_result_raw.model_dump_json()
+                    elif isinstance(tool_result_raw, str):
+                        tool_result_str = tool_result_raw
+                    else:
+                        tool_result_str = json.dumps(tool_result_raw, default=str)
+                    
+                    if exec_result.status != SkillExecutionStatus.SUCCESS:
+                        tool_result_str = f"TOOL EXECUTOR ERROR ({exec_result.status.value}): {exec_result.message}"
+                        
+                    # Append assistant's request and the tool's result to history
+                    conversation_history += f"\n\nAssistant requested tool: {tool_name}\nTool Result:\n{tool_result_str}\n\nPlease continue."
+                    
+                except json.JSONDecodeError:
+                    conversation_history += f"\n\nAssistant attempted to call a tool but provided invalid JSON. Please fix the formatting.\n\nPlease continue."
+                except Exception as e:
+                    conversation_history += f"\n\nAssistant attempted to call a tool but encountered an error: {str(e)}\n\nPlease continue."
+            else:
+                # No tool call detected, this is the final response.
+                latency_ms = int((time.time() - start_time) * 1000)
+                return ProductAgentResponse(
+                    response=llm_response,
+                    skill_used=skill.name,
+                    skill_version=skill.metadata.version,
+                    execution_status=SkillExecutionStatus.SUCCESS.value,
+                    metadata={
+                        "domain": "product",
+                        "skill_name": skill.name,
+                        "skill_version": skill.metadata.version,
+                        "latency_ms": latency_ms,
+                        "iterations": iteration
+                    },
+                )
 
-        try:
-            llm_response = await self.llm_adapter.invoke(system_prompt, user_prompt)
-        except Exception as e:
-            logger.error("ProductAgent: LLM invocation failed: %s", type(e).__name__)
-            return ProductAgentResponse(
-                response=(
-                    "I apologize, but I'm experiencing a technical issue. "
-                    "Let me connect you with a human agent."
-                ),
-                skill_used=skill.name,
-                skill_version=skill.metadata.version,
-                execution_status="llm_failure",
-                metadata={"failure_code": type(e).__name__},
-            )
-
-        latency_ms = int((time.time() - start_time) * 1000)
-
+        # ── Step 4: Max iterations exceeded ──
+        logger.warning("ProductAgent: Max tool iterations exceeded for skill=%s", skill.name)
         return ProductAgentResponse(
-            response=llm_response,
+            response="I apologize, but I'm having trouble retrieving the requested information right now. Please try again later.",
             skill_used=skill.name,
             skill_version=skill.metadata.version,
-            execution_status=SkillExecutionStatus.SUCCESS.value,
-            metadata={
-                "domain": "product",
-                "skill_name": skill.name,
-                "skill_version": skill.metadata.version,
-                "latency_ms": latency_ms,
-            },
+            execution_status="max_iterations_exceeded",
         )
 
     def _build_system_prompt(self, skill: SkillDefinition) -> str:

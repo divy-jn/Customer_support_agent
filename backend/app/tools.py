@@ -602,6 +602,37 @@ def web_search(query: str, num_results: int = 5) -> str:
         return json.dumps({"error": f"Web search failed: {str(e)}"})
 
 
+@track_tool_call("search_manufacturer_warranty")
+def search_manufacturer_warranty(manufacturer: str, customer_query: str) -> str:
+    """
+    Search for official warranty support information for a verified manufacturer.
+    
+    POLICY ENFORCEMENT:
+    Manufacturer identity must come from an authoritative DB field or explicit customer statement.
+    Guessing from product names is strictly forbidden.
+    """
+    try:
+        manufacturer = _validate_non_empty_str(manufacturer, "manufacturer")
+        customer_query = _validate_non_empty_str(customer_query, "customer_query")
+        
+        # Enforce Manufacturer Security: The manufacturer must be explicitly in the customer's query
+        # since we currently lack an authoritative DB field for manufacturer.
+        if manufacturer.lower() not in customer_query.lower():
+            return json.dumps({
+                "error": "POLICY_VIOLATION",
+                "message": f"Manufacturer '{manufacturer}' was not explicitly provided by the customer. Inference is forbidden."
+            })
+            
+        # If there is currently no trustworthy implementation capable of enforcing the web search safety,
+        # DO NOT fake it. Create the policy/interface and clearly mark the capability as not yet executable.
+        return json.dumps({
+            "error": "NOT_YET_EXECUTABLE",
+            "message": "Web search for manufacturer support is currently disabled pending trustworthy search policy implementation."
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 # ──────────────────────────────────────────────
 #  Customer Listing
 # ──────────────────────────────────────────────

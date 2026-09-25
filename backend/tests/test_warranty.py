@@ -263,3 +263,25 @@ class TestWarrantyAmbiguity:
         
         res = check_warranty_status(customer_id=10, product_name="SuperPhone X")
         assert res.status == WarrantyStatus.NOT_FOUND
+
+
+# ──────────────────────────────────────────────
+#  Manufacturer Security Tests
+# ──────────────────────────────────────────────
+
+class TestManufacturerSecurity:
+    
+    def test_search_manufacturer_warranty_explicit(self):
+        """Web search policy passes if manufacturer is explicitly in customer query."""
+        from app.tools import search_manufacturer_warranty
+        result = json.loads(search_manufacturer_warranty("Apple", "My Apple phone is broken"))
+        # Should be NOT_YET_EXECUTABLE, not POLICY_VIOLATION
+        assert result.get("error") == "NOT_YET_EXECUTABLE"
+        assert "disabled" in result.get("message", "").lower()
+
+    def test_search_manufacturer_warranty_inferred_fails(self):
+        """Web search policy MUST FAIL if manufacturer is inferred/guessed by LLM."""
+        from app.tools import search_manufacturer_warranty
+        result = json.loads(search_manufacturer_warranty("Apple", "My iPhone is broken"))
+        assert result.get("error") == "POLICY_VIOLATION"
+        assert "not explicitly provided" in result.get("message", "").lower()

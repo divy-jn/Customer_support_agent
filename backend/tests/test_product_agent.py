@@ -78,10 +78,13 @@ def make_mock_executor(return_value="Mock product context about phone features")
     return executor
 
 
-def make_mock_llm(response_text="Based on our product catalog, the phone features include..."):
+def make_mock_llm(response_text="Based on our product catalog, the phone features include...", side_effect=None):
     """Create a mock LLM adapter."""
     mock = AsyncMock()
-    mock.invoke = AsyncMock(return_value=response_text)
+    if side_effect:
+        mock.invoke = AsyncMock(side_effect=side_effect)
+    else:
+        mock.invoke = AsyncMock(return_value=response_text)
     return mock
 
 
@@ -313,7 +316,13 @@ class TestToolBoundary:
             return "Custom result"
 
         runtime = SkillRuntime(tracking_executor)
-        llm = make_mock_llm()
+        
+        # Mock LLM calls a tool in first iteration, then gives final response
+        llm = make_mock_llm(side_effect=[
+            '```json\n{"tool_call": "custom_retriever", "arguments": {"query": "phone"}}\n```',
+            "Final response based on custom retriever."
+        ])
+        
         agent = ProductAgent(resolver, runtime, llm)
 
         ctx = ProductDomainContext(
@@ -326,7 +335,7 @@ class TestToolBoundary:
 
     @pytest.mark.asyncio
     async def test_no_tools_declared_handled(self):
-        """Skill with empty allowed_tools returns graceful error."""
+        """Skill with empty allowed_tools is still handled, LLM just can't call tools."""
         skill = SkillDefinition(
             metadata=SkillMetadata(
                 name="Product Information Skill",
@@ -341,7 +350,11 @@ class TestToolBoundary:
         registry.register(skill)
         resolver = ProductSkillResolver(registry)
         runtime = SkillRuntime(make_mock_executor())
-        llm = make_mock_llm()
+        # LLM attempts to call a tool anyway
+        llm = make_mock_llm(side_effect=[
+            '```json\n{"tool_call": "some_tool", "arguments": {}}\n```',
+            "I couldn't use tools, here is a generic response."
+        ])
         agent = ProductAgent(resolver, runtime, llm)
 
         ctx = ProductDomainContext(
@@ -349,7 +362,11 @@ class TestToolBoundary:
             semantic_intent="product_inquiry",
         )
         result = await agent.handle(ctx)
-        assert result.execution_status == "no_tools_declared"
+        
+        # The tool execution fails inside the loop (TOOL_NOT_ALLOWED) and feeds back to LLM
+        # The LLM eventually finishes successfully (iteration 2)
+        assert result.execution_status == "success"
+        assert "generic response" in result.response
 
 
 # ──────────────────────────────────────────────
@@ -475,7 +492,13 @@ class TestVerticalSlice:
             raise ConnectionError("Pinecone unreachable")
 
         runtime = SkillRuntime(failing_executor)
-        llm = make_mock_llm()
+        
+        # Mock LLM requests tool, it fails, then LLM apologizes
+        llm = make_mock_llm(side_effect=[
+            '```json\n{"tool_call": "retrieve_as_context", "arguments": {"query": "phone"}}\n```',
+            "I am unable to look up information due to a technical error."
+        ])
+        
         agent = ProductAgent(resolver, runtime, llm)
 
         ctx = ProductDomainContext(
@@ -483,9 +506,11 @@ class TestVerticalSlice:
             semantic_intent="product_inquiry",
         )
         result = await agent.handle(ctx)
-        assert result.execution_status == "tool_failure"
+        
+        # Tool fails, but loop continues and finishes successfully.
+        assert result.execution_status == "success"
         assert "unable to look up" in result.response
-        llm.invoke.assert_not_called()
+        assert llm.invoke.call_count == 2
 
 
 # ──────────────────────────────────────────────
