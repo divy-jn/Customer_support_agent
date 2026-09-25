@@ -49,6 +49,7 @@ To enable the WarrantySkill, the ProductAgent must be able to verify warranty st
 - Customer identity
 - Specific order and product
 - Purchase date
-- Warranty period (from product catalog)
+- Warranty period (from product catalog, parsed from unstructured description)
 - Derived warranty status (Active/Expired)
-*Current Gap*: The system lacks a dedicated capability to synthesize purchase date + warranty period. `check_inventory` and `track_order` retrieve separate slices of data. Warranty status must NEVER be inferred from the user's conversation text alone.
+
+*Current Gap*: The system lacks a dedicated capability to synthesize purchase date + warranty period. See [WARRANTY_WORKFLOW.md](WARRANTY_WORKFLOW.md) for full Phase E discovery details, ambiguity policy, and the required capability contract. Warranty status must NEVER be inferred from the user's conversation text alone.
