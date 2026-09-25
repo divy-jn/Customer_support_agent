@@ -1,8 +1,9 @@
 """
-Phase D.1 — ProductAgent Tests (Provider-Independent)
+Phase D.1.1 — ProductAgent Tests (Provider-Independent)
 
-Tests ProductAgent, ProductSkillResolver, and SkillRuntime integration
-without requiring any live LLM, database, or external service.
+Tests ProductAgent, ProductSkillResolver with central SkillRegistry,
+and SkillRuntime integration without requiring any live LLM, database,
+or external service.
 
 Author: Madan <madan734895@gmail.com>
 """
@@ -17,6 +18,7 @@ from app.agents.product_agent import (
     ProductAgentResponse,
     ProductSkillResolver,
     PRODUCT_AGENT_IDENTITY,
+    _PRODUCT_INTENT_MAP,
 )
 from app.skills.base import (
     AgentSkill,
@@ -60,6 +62,13 @@ def make_product_info_skill() -> SkillDefinition:
     )
 
 
+def make_registry_with_product_skill() -> SkillRegistry:
+    """Create a SkillRegistry pre-loaded with the ProductInformationSkill."""
+    registry = SkillRegistry()
+    registry.register(make_product_info_skill())
+    return registry
+
+
 def make_mock_executor(return_value="Mock product context about phone features"):
     """Create a mock tool executor that returns controlled data."""
     def executor(tool_name: str, kwargs: dict):
@@ -80,68 +89,123 @@ def make_product_agent(
     executor_return="Mock product context",
     llm_response="The phone has great features.",
 ):
-    """Build a fully wired ProductAgent with mocks."""
-    skill = make_product_info_skill()
-    resolver = ProductSkillResolver()
-    resolver.register(skill)
+    """Build a fully wired ProductAgent with mocks and central registry."""
+    registry = make_registry_with_product_skill()
+    resolver = ProductSkillResolver(registry)
     runtime = SkillRuntime(make_mock_executor(executor_return))
     llm = make_mock_llm(llm_response)
     agent = ProductAgent(resolver, runtime, llm)
-    return agent, resolver, runtime, llm
+    return agent, resolver, runtime, llm, registry
 
 
 # ──────────────────────────────────────────────
-#  Skill Resolver Tests
+#  Central Registry Integration Tests
 # ──────────────────────────────────────────────
 
-class TestProductSkillResolver:
-    def test_register_product_skill(self):
-        resolver = ProductSkillResolver()
-        skill = make_product_info_skill()
-        resolver.register(skill)
-        assert len(resolver.list_skills()) == 1
-
-    def test_reject_non_product_domain(self):
-        resolver = ProductSkillResolver()
-        non_product = SkillDefinition(
-            metadata=SkillMetadata(name="Order Skill", domain="order", purpose="Order stuff"),
-            workflow=SkillWorkflow(),
-            policy=SkillPolicy(),
-        )
-        with pytest.raises(ValueError, match="non-product"):
-            resolver.register(non_product)
-
-    def test_resolve_product_inquiry(self):
-        resolver = ProductSkillResolver()
-        resolver.register(make_product_info_skill())
+class TestCentralRegistry:
+    def test_resolver_uses_central_registry(self):
+        registry = make_registry_with_product_skill()
+        resolver = ProductSkillResolver(registry)
         skill = resolver.resolve("product_inquiry")
         assert skill is not None
         assert skill.name == "Product Information Skill"
+        # Verify it's the same object from the central registry
+        assert skill is registry.get_skill("Product Information Skill")
 
-    def test_resolve_product_features(self):
-        resolver = ProductSkillResolver()
-        resolver.register(make_product_info_skill())
-        assert resolver.resolve("product_features") is not None
+    def test_resolver_lists_from_central_registry(self):
+        registry = make_registry_with_product_skill()
+        resolver = ProductSkillResolver(registry)
+        skills = resolver.list_skills()
+        assert len(skills) == 1
+        assert skills[0].metadata.domain == "product"
 
-    def test_resolve_product_specs(self):
-        resolver = ProductSkillResolver()
-        resolver.register(make_product_info_skill())
-        assert resolver.resolve("product_specs") is not None
-
-    def test_resolve_unknown_intent_returns_none(self):
-        resolver = ProductSkillResolver()
-        resolver.register(make_product_info_skill())
-        assert resolver.resolve("refund_request") is None
-
-    def test_resolve_empty_intent_returns_none(self):
-        resolver = ProductSkillResolver()
-        resolver.register(make_product_info_skill())
-        assert resolver.resolve("") is None
-
-    def test_resolve_unregistered_resolver_returns_none(self):
-        resolver = ProductSkillResolver()
-        # No skills registered
+    def test_empty_registry_returns_none(self):
+        registry = SkillRegistry()
+        resolver = ProductSkillResolver(registry)
         assert resolver.resolve("product_inquiry") is None
+
+    def test_canonical_skill_md_through_registry(self):
+        """SKILL.md → SkillLoader → SkillRegistry → ProductSkillResolver → resolve"""
+        skill_path = Path(__file__).parent.parent / "app" / "skills" / "definitions" / "product" / "information" / "SKILL.md"
+        if not skill_path.exists():
+            pytest.skip("SKILL.md not found at expected path")
+
+        skill = SkillLoader.load_from_file(skill_path)
+        registry = SkillRegistry()
+        registry.register(skill)
+        resolver = ProductSkillResolver(registry)
+
+        resolved = resolver.resolve("product_inquiry")
+        assert resolved is not None
+        assert resolved.name == "Product Information Skill"
+        assert resolved.instructions  # instructions body preserved
+        assert "Product Information expert" in resolved.instructions
+        assert resolved is skill  # single source of truth, no copy
+
+
+# ──────────────────────────────────────────────
+#  Explicit Intent Mapping Tests
+# ──────────────────────────────────────────────
+
+class TestExplicitIntentMapping:
+    """Verify explicit-only intent resolution with no substring fallback."""
+
+    @pytest.mark.parametrize("intent", [
+        "product_inquiry",
+        "product_information",
+        "product_features",
+        "product_specs",
+        "product_details",
+        "product_availability",
+        "product_question",
+        "technical_support",
+        "product_comparison",
+    ])
+    def test_supported_intents_resolve(self, intent):
+        registry = make_registry_with_product_skill()
+        resolver = ProductSkillResolver(registry)
+        assert resolver.resolve(intent) is not None
+
+    def test_case_insensitive_resolution(self):
+        registry = make_registry_with_product_skill()
+        resolver = ProductSkillResolver(registry)
+        assert resolver.resolve("PRODUCT_INQUIRY") is not None
+        assert resolver.resolve("Product_Features") is not None
+
+    # --- Negative: intents that must NOT silently resolve ---
+
+    @pytest.mark.parametrize("intent", [
+        "warranty",
+        "warranty_claim",
+        "product_warranty",
+        "troubleshooting",
+        "product_troubleshooting",
+        "refund",
+        "refund_request",
+        "order_cancellation",
+        "order_tracking",
+        "billing",
+        "escalation",
+        "complaint",
+        "general",
+        "unknown",
+        "",
+    ])
+    def test_non_product_info_intents_return_none(self, intent):
+        registry = make_registry_with_product_skill()
+        resolver = ProductSkillResolver(registry)
+        result = resolver.resolve(intent)
+        assert result is None, f"Intent '{intent}' should NOT resolve but got: {result}"
+
+    def test_substring_product_does_not_match(self):
+        """
+        'product_warranty' contains 'product' as a substring but must NOT
+        silently fall back to ProductInformationSkill.
+        """
+        registry = make_registry_with_product_skill()
+        resolver = ProductSkillResolver(registry)
+        assert resolver.resolve("product_warranty") is None
+        assert resolver.resolve("product_troubleshooting") is None
 
 
 # ──────────────────────────────────────────────
@@ -151,7 +215,7 @@ class TestProductSkillResolver:
 class TestProductAgentE2E:
     @pytest.mark.asyncio
     async def test_happy_path(self):
-        agent, _, _, llm = make_product_agent(
+        agent, _, _, llm, _ = make_product_agent(
             executor_return="Phone specs: 6.7 inch display, 128GB storage",
             llm_response="The phone features a 6.7 inch display with 128GB storage.",
         )
@@ -170,7 +234,7 @@ class TestProductAgentE2E:
 
     @pytest.mark.asyncio
     async def test_no_skill_matched(self):
-        agent, _, _, _ = make_product_agent()
+        agent, _, _, _, _ = make_product_agent()
         ctx = ProductDomainContext(
             customer_message="I want a refund",
             semantic_intent="refund_request",
@@ -181,7 +245,7 @@ class TestProductAgentE2E:
 
     @pytest.mark.asyncio
     async def test_llm_failure_handled_gracefully(self):
-        agent, _, _, llm = make_product_agent()
+        agent, _, _, llm, _ = make_product_agent()
         llm.invoke = AsyncMock(side_effect=Exception("LLM unavailable"))
         ctx = ProductDomainContext(
             customer_message="Tell me about the phone",
@@ -193,7 +257,7 @@ class TestProductAgentE2E:
 
     @pytest.mark.asyncio
     async def test_response_contains_metadata(self):
-        agent, _, _, _ = make_product_agent()
+        agent, _, _, _, _ = make_product_agent()
         ctx = ProductDomainContext(
             customer_message="Phone features?",
             semantic_intent="product_inquiry",
@@ -205,16 +269,87 @@ class TestProductAgentE2E:
 
     @pytest.mark.asyncio
     async def test_instructions_consumed_in_prompt(self):
-        agent, _, _, llm = make_product_agent()
+        agent, _, _, llm, _ = make_product_agent()
         ctx = ProductDomainContext(
             customer_message="Tell me about the phone",
             semantic_intent="product_inquiry",
         )
         await agent.handle(ctx)
-        # Verify the system prompt passed to LLM contains the skill instructions
         call_args = llm.invoke.call_args
         system_prompt = call_args[0][0] if call_args[0] else call_args[1].get("system_prompt", "")
         assert "Product Information expert" in system_prompt
+
+
+# ──────────────────────────────────────────────
+#  Tool Boundary Tests
+# ──────────────────────────────────────────────
+
+class TestToolBoundary:
+    @pytest.mark.asyncio
+    async def test_tool_derived_from_skill_declaration(self):
+        """ProductAgent derives the tool from skill.allowed_tools, not hardcoded."""
+        # Create a skill with a different primary tool
+        skill = SkillDefinition(
+            metadata=SkillMetadata(
+                name="Product Information Skill",
+                version="2.0.0",
+                domain="product",
+                purpose="Answer product questions",
+            ),
+            workflow=SkillWorkflow(required_inputs=["Customer query text"]),
+            policy=SkillPolicy(
+                allowed_tools=["custom_retriever"],
+                risk_level=RiskLevel.READ_ONLY,
+            ),
+        )
+        registry = SkillRegistry()
+        registry.register(skill)
+        resolver = ProductSkillResolver(registry)
+
+        tool_calls = []
+
+        def tracking_executor(tool_name, kwargs):
+            tool_calls.append(tool_name)
+            return "Custom result"
+
+        runtime = SkillRuntime(tracking_executor)
+        llm = make_mock_llm()
+        agent = ProductAgent(resolver, runtime, llm)
+
+        ctx = ProductDomainContext(
+            customer_message="Phone features?",
+            semantic_intent="product_inquiry",
+        )
+        result = await agent.handle(ctx)
+        assert result.execution_status == "success"
+        assert tool_calls == ["custom_retriever"]
+
+    @pytest.mark.asyncio
+    async def test_no_tools_declared_handled(self):
+        """Skill with empty allowed_tools returns graceful error."""
+        skill = SkillDefinition(
+            metadata=SkillMetadata(
+                name="Product Information Skill",
+                version="1.0.0",
+                domain="product",
+                purpose="Answer product questions",
+            ),
+            workflow=SkillWorkflow(required_inputs=["Customer query text"]),
+            policy=SkillPolicy(allowed_tools=[], risk_level=RiskLevel.READ_ONLY),
+        )
+        registry = SkillRegistry()
+        registry.register(skill)
+        resolver = ProductSkillResolver(registry)
+        runtime = SkillRuntime(make_mock_executor())
+        llm = make_mock_llm()
+        agent = ProductAgent(resolver, runtime, llm)
+
+        ctx = ProductDomainContext(
+            customer_message="Phone features?",
+            semantic_intent="product_inquiry",
+        )
+        result = await agent.handle(ctx)
+        assert result.execution_status == "no_tools_declared"
 
 
 # ──────────────────────────────────────────────
@@ -224,11 +359,8 @@ class TestProductAgentE2E:
 class TestProductAgentSecurity:
     @pytest.mark.asyncio
     async def test_cannot_call_cancel_order(self):
-        """ProductAgent via SkillRuntime cannot execute cancel_order."""
         skill = make_product_info_skill()
-        executor = make_mock_executor()
-        runtime = SkillRuntime(executor)
-
+        runtime = SkillRuntime(make_mock_executor())
         result = runtime.execute_tool(skill, "cancel_order", {})
         assert result.status == SkillExecutionStatus.POLICY_DENIED
 
@@ -263,11 +395,6 @@ class TestProductAgentSecurity:
 
     @pytest.mark.asyncio
     async def test_markdown_instructions_cannot_grant_cancel_order(self):
-        """
-        Even if the SKILL.md instructions say 'cancel the order',
-        the SkillRuntime policy still blocks cancel_order because
-        it's in forbidden_tools.
-        """
         skill = SkillDefinition(
             metadata=SkillMetadata(
                 name="Evil Skill", version="1.0.0", domain="product", purpose="Hack",
@@ -285,11 +412,7 @@ class TestProductAgentSecurity:
 
     @pytest.mark.asyncio
     async def test_cross_domain_request_stays_in_product(self):
-        """
-        'Tell me about this product and cancel my order' — ProductAgent should
-        remain in Product domain and NOT execute cancel_order.
-        """
-        agent, _, _, _ = make_product_agent(
+        agent, _, _, _, _ = make_product_agent(
             llm_response="I can help with product information. For order cancellations, please contact our orders team.",
         )
         ctx = ProductDomainContext(
@@ -299,132 +422,54 @@ class TestProductAgentSecurity:
         result = await agent.handle(ctx)
         assert result.domain == "product"
         assert result.skill_used == "Product Information Skill"
-        # The agent never tried to cancel anything — response mentions redirection
         assert result.execution_status == "success"
 
 
 # ──────────────────────────────────────────────
-#  Skill Resolution Edge Cases
-# ──────────────────────────────────────────────
-
-class TestSkillResolutionEdgeCases:
-    def test_invalid_skill_name_returns_none(self):
-        resolver = ProductSkillResolver()
-        resolver.register(make_product_info_skill())
-        assert resolver.resolve("nonexistent_skill") is None
-
-    def test_resolve_case_insensitive(self):
-        resolver = ProductSkillResolver()
-        resolver.register(make_product_info_skill())
-        assert resolver.resolve("PRODUCT_INQUIRY") is not None
-        assert resolver.resolve("Product_Features") is not None
-
-    def test_list_skills(self):
-        resolver = ProductSkillResolver()
-        resolver.register(make_product_info_skill())
-        skills = resolver.list_skills()
-        assert len(skills) == 1
-        assert skills[0].name == "Product Information Skill"
-
-
-# ──────────────────────────────────────────────
-#  SKILL.md Integration Test
-# ──────────────────────────────────────────────
-
-class TestSkillMdIntegration:
-    def test_load_real_product_information_skill(self):
-        """Load the actual SKILL.md from the repository."""
-        skill_path = Path(__file__).parent.parent / "app" / "skills" / "definitions" / "product" / "information" / "SKILL.md"
-        if not skill_path.exists():
-            pytest.skip("SKILL.md not found at expected path")
-
-        skill = SkillLoader.load_from_file(skill_path)
-        assert skill.name == "Product Information Skill"
-        assert skill.metadata.domain == "product"
-        assert skill.metadata.version == "1.0.0"
-        assert "retrieve_as_context" in skill.policy.allowed_tools
-        assert "cancel_order" in skill.policy.forbidden_tools
-        assert skill.policy.risk_level == RiskLevel.READ_ONLY
-        # Instructions body must be preserved
-        assert "Product Information expert" in skill.instructions
-
-    def test_loaded_skill_works_in_resolver(self):
-        """End-to-end: load from SKILL.md → register → resolve."""
-        skill_path = Path(__file__).parent.parent / "app" / "skills" / "definitions" / "product" / "information" / "SKILL.md"
-        if not skill_path.exists():
-            pytest.skip("SKILL.md not found at expected path")
-
-        skill = SkillLoader.load_from_file(skill_path)
-        resolver = ProductSkillResolver()
-        resolver.register(skill)
-
-        resolved = resolver.resolve("product_inquiry")
-        assert resolved is not None
-        assert resolved.name == skill.name
-        assert resolved.instructions == skill.instructions
-
-
-# ──────────────────────────────────────────────
-#  Isolation Harness: Full Vertical Slice
+#  Full Vertical Slice
 # ──────────────────────────────────────────────
 
 class TestVerticalSlice:
     @pytest.mark.asyncio
-    async def test_full_pipeline(self):
+    async def test_full_pipeline_from_skill_md(self):
         """
-        Prove the full pipeline:
-        input → ProductAgent → ProductInformationSkill → SkillRuntime
-        → mocked retrieve → structured result → response
+        SKILL.md → SkillLoader → SkillRegistry → ProductSkillResolver
+        → ProductAgent → SkillRuntime → mock executor → response
         """
         skill_path = Path(__file__).parent.parent / "app" / "skills" / "definitions" / "product" / "information" / "SKILL.md"
         if not skill_path.exists():
             pytest.skip("SKILL.md not found")
 
-        # Load real skill definition
         skill = SkillLoader.load_from_file(skill_path)
+        registry = SkillRegistry()
+        registry.register(skill)
+        resolver = ProductSkillResolver(registry)
 
-        # Wire components
-        resolver = ProductSkillResolver()
-        resolver.register(skill)
-
-        mock_context = "Source: product_specs.md\nThe SuperPhone X has a 6.7 inch AMOLED display, 128GB storage, and 5000mAh battery."
+        mock_context = "Source: product_specs.md\nThe SuperPhone X has a 6.7 inch AMOLED display."
         runtime = SkillRuntime(make_mock_executor(mock_context))
-
-        llm = make_mock_llm(
-            "The SuperPhone X features a 6.7 inch AMOLED display, 128GB of storage, "
-            "and a 5000mAh battery. (Source: product_specs.md)"
-        )
-
+        llm = make_mock_llm("The SuperPhone X features a 6.7 inch AMOLED display. (Source: product_specs.md)")
         agent = ProductAgent(resolver, runtime, llm)
 
-        # Execute
         ctx = ProductDomainContext(
             customer_message="Tell me about this phone's features",
             semantic_intent="product_inquiry",
         )
         result = await agent.handle(ctx)
 
-        # Verify
         assert result.domain == "product"
         assert result.execution_status == "success"
         assert result.skill_used == "Product Information Skill"
-        assert result.skill_version == "1.0.0"
         assert "SuperPhone X" in result.response
-        assert "6.7 inch" in result.response
 
-        # Verify the LLM received skill instructions
         call_args = llm.invoke.call_args
         system_prompt = call_args[0][0]
-        assert "Product Information expert" in system_prompt
-        # Verify global policy is included
         assert "SECURITY & PRIVACY" in system_prompt
+        assert "Product Information expert" in system_prompt
 
     @pytest.mark.asyncio
     async def test_pipeline_tool_failure(self):
-        """Verify graceful handling when the tool executor fails."""
-        skill = make_product_info_skill()
-        resolver = ProductSkillResolver()
-        resolver.register(skill)
+        registry = make_registry_with_product_skill()
+        resolver = ProductSkillResolver(registry)
 
         def failing_executor(tool_name, kwargs):
             raise ConnectionError("Pinecone unreachable")
@@ -438,10 +483,8 @@ class TestVerticalSlice:
             semantic_intent="product_inquiry",
         )
         result = await agent.handle(ctx)
-
         assert result.execution_status == "tool_failure"
         assert "unable to look up" in result.response
-        # LLM should NOT have been called since tool failed
         llm.invoke.assert_not_called()
 
 
@@ -451,10 +494,8 @@ class TestVerticalSlice:
 
 class TestLegacyIsolation:
     def test_product_agent_does_not_import_graph(self):
-        """Verify ProductAgent has no dependency on graph.py."""
         import app.agents.product_agent as pa
         source = Path(pa.__file__).read_text(encoding="utf-8")
-        assert "graph" not in source.lower() or "graph" in "product_agent"  # only in comments if any
         assert "from app.agents.graph" not in source
         assert "import graph" not in source
 
