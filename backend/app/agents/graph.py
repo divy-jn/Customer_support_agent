@@ -16,12 +16,54 @@ load_dotenv()
 # Import the agents
 from app.agents import intent_router, rag_agent, db_agent, web_agent, escalation_agent
 
-# Import tools directly for fast, in-process execution within the graph
 from app.tools import (
     lookup_customer, get_customer_history, get_ticket, create_ticket,
     update_ticket, track_order, cancel_order, process_refund, check_inventory,
     web_search, list_all_products, get_chat_history, send_ticket_email_to_customer,
+    search_manufacturer_warranty, check_warranty_status
 )
+
+from app.skills.registry import SkillRegistry
+from app.skills.loader import SkillLoader
+from app.skills.runtime import SkillRuntime
+from app.agents.product_agent import ProductAgent, ProductSkillResolver, ProductDomainContext
+from app.models import WorkflowState
+import os
+from pathlib import Path
+
+# Setup ProductAgent singletons
+product_registry = SkillRegistry()
+try:
+    _skill_path = Path(__file__).parent.parent / "skills" / "definitions" / "product" / "information" / "SKILL.md"
+    if _skill_path.exists():
+        product_registry.register(SkillLoader.load_from_file(_skill_path))
+    _warranty_path = Path(__file__).parent.parent / "skills" / "definitions" / "product" / "warranty" / "SKILL.md"
+    if _warranty_path.exists():
+        product_registry.register(SkillLoader.load_from_file(_warranty_path))
+except Exception as e:
+    import logging
+    logging.getLogger(__name__).error(f"Failed to load product skills: {e}")
+
+product_resolver = ProductSkillResolver(product_registry)
+
+class GraphLLMAdapter:
+    def __init__(self):
+        self._llm = None
+        
+    @property
+    def llm(self):
+        if self._llm is None:
+            from langchain_openai import ChatOpenAI
+            self._llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        return self._llm
+        
+    async def invoke(self, system: str, user: str) -> str:
+        from langchain_core.messages import SystemMessage, HumanMessage
+        messages = [SystemMessage(content=system), HumanMessage(content=user)]
+        res = await self.llm.ainvoke(messages)
+        return res.content
+
+product_llm_adapter = GraphLLMAdapter()
 
 
 # ──────────────────────────────────────────────
@@ -164,6 +206,34 @@ async def rag_node(state: AgentState) -> dict:
         "escalated": False
     }
 
+async def product_node(state: AgentState) -> dict:
+    """Node: Product Domain Agent."""
+    def bound_executor(tool_name: str, kwargs: dict):
+        return _execute_tool(tool_name, kwargs, state.get("customer_id"))
+        
+    runtime = SkillRuntime(bound_executor)
+    agent = ProductAgent(product_resolver, runtime, product_llm_adapter)
+    
+    ws = state.get("workflow_state")
+    if not ws:
+        ws = {"session_id": state.get("session_id", "unknown")}
+        
+    ctx = ProductDomainContext(
+        customer_message=state["message"],
+        semantic_intent=state.get("intent", ""),
+        session_id=state.get("session_id", ""),
+        customer_id=state.get("customer_id"),
+        workflow_state=WorkflowState(**ws),
+        conversation_history=state["conversation_history"]
+    )
+    
+    response = await agent.handle(ctx)
+    return {
+        "response": response.response,
+        "workflow_state": response.workflow_state.model_dump(),
+        "escalated": False
+    }
+
 
 async def db_plan_node(state: AgentState) -> dict:
     """Node: Determines DB action. If high-risk, pauses for approval."""
@@ -287,6 +357,12 @@ def _execute_tool(action: str, params: dict, authenticated_customer_id: int | No
             return get_chat_history(**params)
         elif action == "send_ticket_email_to_customer":
             return send_ticket_email_to_customer(**params)
+        elif action == "search_manufacturer_warranty":
+            return search_manufacturer_warranty(**params)
+        elif action == "check_warranty_status":
+            return check_warranty_status(**params)
+        elif action == "retrieve_as_context":
+            return rag_agent.query_pinecone(params.get("query", ""))
         else:
             return f"Error: Unknown DB action '{action}'"
     except Exception as e:
@@ -332,6 +408,10 @@ async def escalation_node(state: AgentState) -> dict:
 def route_after_classification(state: AgentState) -> str:
     """Conditional edge function to determine the next node."""
     route = state.get("route_to", "rag_agent")
+    intent = state.get("intent", "general")
+    
+    if intent in ["product_inquiry", "product_information", "product_features", "product_specs", "product_details", "product_availability", "product_question", "technical_support", "product_comparison", "warranty_claim", "product_warranty"]:
+        return "product_node"
     
     # Map the router's decision to graph nodes
     if route == "db_agent":
@@ -355,6 +435,7 @@ def create_customer_support_graph():
     # Add Nodes
     workflow.add_node("intent_router", route_intent_node)
     workflow.add_node("rag_node", rag_node)
+    workflow.add_node("product_node", product_node)
     workflow.add_node("db_plan_node", db_plan_node)
     workflow.add_node("db_execute_node", db_execute_node)
     workflow.add_node("web_node", web_node)
@@ -369,6 +450,7 @@ def create_customer_support_graph():
         route_after_classification,
         {
             "rag_node": "rag_node",
+            "product_node": "product_node",
             "db_plan_node": "db_plan_node",
             "web_node": "web_node",
             "escalation_node": "escalation_node"
@@ -382,6 +464,7 @@ def create_customer_support_graph():
     
     # Add Edges to END
     workflow.add_edge("rag_node", END)
+    workflow.add_edge("product_node", END)
     workflow.add_edge("web_node", END)
     workflow.add_edge("escalation_node", END)
     

@@ -3,8 +3,10 @@ Pydantic schemas for API request/response validation.
 """
 
 from pydantic import BaseModel
+from pydantic import BaseModel
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 
 # ──────────────────────────────────────────────
@@ -226,6 +228,20 @@ class SemanticRouteResult(BaseModel):
     entities: dict = {}
     diagnostics: RouterDiagnostics
 
+class ExtractionSource(str, Enum):
+    USER_EXPLICIT = "user_explicit"
+    MODEL_INFERENCE = "model_inference"
+
+class ExtractedEntity(BaseModel):
+    value: Any | None
+    source: ExtractionSource
+
+class ToolResultEnvelope(BaseModel):
+    tool_name: str
+    entity_reference: str | int | None = None
+    result: dict | str | None = None
+
+
 
 # ──────────────────────────────────────────────
 #  Workflow State Contract (Phase B)
@@ -289,7 +305,7 @@ class WorkflowState(BaseModel):
     
     # Execution Tracking
     last_tool: str | None = None
-    last_tool_result: dict | None = None
+    last_tool_result: ToolResultEnvelope | None = None
     
     # Lifecycle
     workflow_status: WorkflowStatus = WorkflowStatus.IDLE

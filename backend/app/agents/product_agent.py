@@ -21,7 +21,7 @@ from app.skills.base import SkillDefinition, render_skill_prompt
 from app.skills.policy import GLOBAL_SYSTEM_POLICY
 from app.skills.registry import SkillRegistry
 from app.skills.runtime import SkillRuntime
-from app.models import SkillExecutionStatus, SkillExecutionResult, WorkflowState, WorkflowStatus
+from app.models import SkillExecutionStatus, SkillExecutionResult, WorkflowState, WorkflowStatus, ToolResultEnvelope
 
 
 logger = logging.getLogger(__name__)
@@ -300,8 +300,14 @@ class ProductAgent:
                         tool_result_str = f"TOOL EXECUTOR ERROR ({exec_result.status.value}): {exec_result.message}"
                         
                     # Save to workflow state
+                    entity_ref = str(merged_state.order_id) if merged_state.order_id else (merged_state.product_name or None)
+                    result_data = json.loads(tool_result_str) if tool_result_str.startswith("{") or tool_result_str.startswith("[") else {"result": tool_result_str}
                     merged_state.last_tool = tool_name
-                    merged_state.last_tool_result = json.loads(tool_result_str) if tool_result_str.startswith("{") or tool_result_str.startswith("[") else {"result": tool_result_str}
+                    merged_state.last_tool_result = ToolResultEnvelope(
+                        tool_name=tool_name,
+                        entity_reference=entity_ref,
+                        result=result_data
+                    )
                         
                     # Append assistant's request and the tool's result to history
                     conversation_history += f"\n\nAssistant requested tool: {tool_name}\nTool Result:\n{tool_result_str}\n\nPlease continue."
@@ -378,7 +384,7 @@ class ProductAgent:
         if state.product_name: state_parts.append(f"Target Product: {state.product_name}")
         if state.manufacturer: state_parts.append(f"Target Manufacturer: {state.manufacturer}")
         if state.last_tool_result:
-            state_parts.append(f"Previous Workflow Result: {json.dumps(state.last_tool_result)}")
+            state_parts.append(f"Previous Workflow Result: {state.last_tool_result.model_dump_json()}")
             
         if state_parts:
             parts.append("VERIFIED WORKFLOW STATE:\n" + "\n".join(state_parts))
@@ -399,10 +405,12 @@ class ProductAgent:
         prompt = f"""Extract the following entities from the customer's message if explicitly mentioned.
 Return a JSON object exactly like this (use null if not found):
 {{
-    "product_name": "...",
-    "order_id": 1234,
-    "manufacturer": "..."
+    "product_name": {{"value": "...", "source": "USER_EXPLICIT"}},
+    "order_id": {{"value": 1234, "source": "USER_EXPLICIT"}},
+    "manufacturer": {{"value": "...", "source": "USER_EXPLICIT"}}
 }}
+Only use source="USER_EXPLICIT" if the customer explicitly stated the fact. If inferred, use source="MODEL_INFERENCE".
+IMPORTANT: Never extract or modify customer_id or session_id.
 
 Message: "{context.customer_message}"
 """
@@ -411,35 +419,50 @@ Message: "{context.customer_message}"
                 "You are a strict data extraction AI. Output only valid JSON.",
                 prompt
             )
-            import re
-            match = re.search(r"\{.*?\}", extraction_response, re.DOTALL)
-            if match:
-                extracted = json.loads(match.group(0))
-                
-                # Update logic with dependency invalidation
-                new_order_id = extracted.get("order_id")
-                if new_order_id is not None:
-                    try:
-                        new_order_id = int(new_order_id)
-                        if state.order_id != new_order_id:
-                            state.order_id = new_order_id
-                            # Stale result invalidation
-                            state.last_tool = None
-                            state.last_tool_result = None
-                    except (ValueError, TypeError):
-                        pass
-                
-                new_product = extracted.get("product_name")
-                if new_product is not None and str(new_product).strip():
-                    if state.product_name != new_product:
-                        state.product_name = new_product
-                        # If product changes, previous results might be stale too
+            # If the response is wrapped in markdown code blocks, extract it
+            if "```json" in extraction_response:
+                match = re.search(r"```json\s*(\{.*\})\s*```", extraction_response, re.DOTALL)
+                if match:
+                    extraction_response = match.group(1)
+            else:
+                # Try to just find the outermost braces
+                start = extraction_response.find('{')
+                end = extraction_response.rfind('}')
+                if start != -1 and end != -1:
+                    extraction_response = extraction_response[start:end+1]
+                    
+            extracted = json.loads(extraction_response)
+            
+            # Update logic with dependency invalidation and provenance check
+            def get_explicit(field: str) -> Any | None:
+                val = extracted.get(field)
+                if isinstance(val, dict) and val.get("source") in ["USER_EXPLICIT", "user_explicit"]:
+                    return val.get("value")
+                return None
+
+            new_order_id = get_explicit("order_id")
+            if new_order_id is not None:
+                try:
+                    new_order_id = int(new_order_id)
+                    if state.order_id != new_order_id:
+                        state.order_id = new_order_id
+                        # Stale result invalidation
                         state.last_tool = None
                         state.last_tool_result = None
-                        
-                new_manufacturer = extracted.get("manufacturer")
-                if new_manufacturer is not None and str(new_manufacturer).strip():
-                    state.manufacturer = new_manufacturer
+                except (ValueError, TypeError):
+                    pass
+            
+            new_product = get_explicit("product_name")
+            if new_product is not None and str(new_product).strip():
+                if state.product_name != new_product:
+                    state.product_name = new_product
+                    # If product changes, previous results might be stale too
+                    state.last_tool = None
+                    state.last_tool_result = None
+                    
+            new_manufacturer = get_explicit("manufacturer")
+            if new_manufacturer is not None and str(new_manufacturer).strip():
+                state.manufacturer = new_manufacturer
                     
         except Exception as e:
             logger.error("State extraction failed: %s", e)
