@@ -21,7 +21,7 @@ from app.skills.base import SkillDefinition, render_skill_prompt
 from app.skills.policy import GLOBAL_SYSTEM_POLICY
 from app.skills.registry import SkillRegistry
 from app.skills.runtime import SkillRuntime
-from app.models import SkillExecutionStatus, SkillExecutionResult
+from app.models import SkillExecutionStatus, SkillExecutionResult, WorkflowState, WorkflowStatus
 
 
 logger = logging.getLogger(__name__)
@@ -35,10 +35,12 @@ class ProductDomainContext(BaseModel):
     """Bounded context that ProductAgent receives for each turn."""
     customer_message: str
     semantic_intent: str = ""
-    entities: Dict[str, Any] = {}
     session_id: str = ""
     customer_id: Optional[int] = None
-    prior_result: Optional[str] = None
+    workflow_state: WorkflowState
+    
+    # Optional transcript up to this point
+    conversation_history: List[Dict[str, Any]] = []
 
 
 # ──────────────────────────────────────────────
@@ -48,6 +50,7 @@ class ProductDomainContext(BaseModel):
 class ProductAgentResponse(BaseModel):
     """Structured response produced by ProductAgent."""
     response: str
+    workflow_state: WorkflowState
     domain: str = "product"
     skill_used: str = ""
     skill_version: str = ""
@@ -183,6 +186,10 @@ class ProductAgent:
         """
         start_time = time.time()
 
+        # ── Step 0: Extract and merge state ──
+        merged_state = await self._extract_and_merge_state(context)
+        merged_state.turn_count += 1
+        
         # ── Step 1: Resolve skill ──
         skill = self.skill_resolver.resolve(context.semantic_intent)
         if skill is None:
@@ -190,12 +197,14 @@ class ProductAgent:
                 "ProductAgent: no skill matched for intent=%s",
                 context.semantic_intent,
             )
+            merged_state.workflow_status = WorkflowStatus.FAILED
             return ProductAgentResponse(
                 response=(
                     "I'm sorry, I don't have the specific expertise to handle "
                     "that product request right now. Let me connect you with "
                     "someone who can help."
                 ),
+                workflow_state=merged_state,
                 execution_status="no_skill_matched",
                 metadata={
                     "intent": context.semantic_intent,
@@ -208,20 +217,26 @@ class ProductAgent:
             skill, {"Customer query text": context.customer_message}
         )
         if input_result.status != SkillExecutionStatus.SUCCESS:
+            merged_state.workflow_status = WorkflowStatus.AWAITING_INPUT
             return ProductAgentResponse(
                 response="I need more information to help you with that product question.",
+                workflow_state=merged_state,
                 skill_used=skill.name,
                 skill_version=skill.metadata.version,
                 execution_status=input_result.status.value,
                 metadata={"message": input_result.message},
             )
 
+        merged_state.workflow_status = WorkflowStatus.IN_PROGRESS
+        merged_state.skill_name = skill.name
+        merged_state.skill_version = skill.metadata.version
+
         # ── Step 3: ReAct Tool Calling Loop ──
         MAX_ITERATIONS = 5
         iteration = 0
         
         system_prompt = self._build_system_prompt(skill)
-        user_prompt = self._build_user_prompt(context, "")
+        user_prompt = self._build_user_prompt(context, merged_state)
         
         # We maintain a conversation transcript for the LLM
         conversation_history = user_prompt
@@ -238,6 +253,7 @@ class ProductAgent:
                         "I apologize, but I'm experiencing a technical issue. "
                         "Let me connect you with a human agent."
                     ),
+                    workflow_state=merged_state,
                     skill_used=skill.name,
                     skill_version=skill.metadata.version,
                     execution_status="llm_failure",
@@ -283,6 +299,10 @@ class ProductAgent:
                     if exec_result.status != SkillExecutionStatus.SUCCESS:
                         tool_result_str = f"TOOL EXECUTOR ERROR ({exec_result.status.value}): {exec_result.message}"
                         
+                    # Save to workflow state
+                    merged_state.last_tool = tool_name
+                    merged_state.last_tool_result = json.loads(tool_result_str) if tool_result_str.startswith("{") or tool_result_str.startswith("[") else {"result": tool_result_str}
+                        
                     # Append assistant's request and the tool's result to history
                     conversation_history += f"\n\nAssistant requested tool: {tool_name}\nTool Result:\n{tool_result_str}\n\nPlease continue."
                     
@@ -293,8 +313,10 @@ class ProductAgent:
             else:
                 # No tool call detected, this is the final response.
                 latency_ms = int((time.time() - start_time) * 1000)
+                merged_state.workflow_status = WorkflowStatus.COMPLETED
                 return ProductAgentResponse(
                     response=llm_response,
+                    workflow_state=merged_state,
                     skill_used=skill.name,
                     skill_version=skill.metadata.version,
                     execution_status=SkillExecutionStatus.SUCCESS.value,
@@ -309,8 +331,10 @@ class ProductAgent:
 
         # ── Step 4: Max iterations exceeded ──
         logger.warning("ProductAgent: Max tool iterations exceeded for skill=%s", skill.name)
+        merged_state.workflow_status = WorkflowStatus.FAILED
         return ProductAgentResponse(
             response="I apologize, but I'm having trouble retrieving the requested information right now. Please try again later.",
+            workflow_state=merged_state,
             skill_used=skill.name,
             skill_version=skill.metadata.version,
             execution_status="max_iterations_exceeded",
@@ -338,13 +362,87 @@ class ProductAgent:
     def _build_user_prompt(
         self,
         context: ProductDomainContext,
-        retrieved_context: str,
+        state: WorkflowState,
     ) -> str:
-        """Build the user prompt with bounded context."""
+        """Build the user prompt with bounded context and workflow state."""
         parts = []
-        if retrieved_context:
-            parts.append(f"CONTEXT:\n{retrieved_context}")
-        if context.prior_result:
-            parts.append(f"Prior result:\n{context.prior_result}")
-        parts.append(f"Customer's question: {context.customer_message}")
+        
+        # Inject context from history
+        if context.conversation_history:
+            history_text = "\n".join([f"{m['role'].capitalize()}: {m['content']}" for m in context.conversation_history[-4:]])
+            parts.append(f"RECENT CONVERSATION:\n{history_text}")
+            
+        # Inject extracted state so the LLM doesn't have to guess or reread the whole transcript
+        state_parts = []
+        if state.order_id: state_parts.append(f"Verified Order ID: {state.order_id}")
+        if state.product_name: state_parts.append(f"Target Product: {state.product_name}")
+        if state.manufacturer: state_parts.append(f"Target Manufacturer: {state.manufacturer}")
+        if state.last_tool_result:
+            state_parts.append(f"Previous Workflow Result: {json.dumps(state.last_tool_result)}")
+            
+        if state_parts:
+            parts.append("VERIFIED WORKFLOW STATE:\n" + "\n".join(state_parts))
+            
+        parts.append(f"Customer's latest message: {context.customer_message}")
         return "\n\n".join(parts)
+        
+    async def _extract_and_merge_state(self, context: ProductDomainContext) -> WorkflowState:
+        """
+        Merge semantically, not blindly.
+        Updates state fields that are present/verified in the new message.
+        Clears dependent fields if their parent changes (e.g., order_id changes -> clear tool_result).
+        """
+        state = context.workflow_state.model_copy(deep=True)
+        import json
+        
+        # Fast extraction prompt
+        prompt = f"""Extract the following entities from the customer's message if explicitly mentioned.
+Return a JSON object exactly like this (use null if not found):
+{{
+    "product_name": "...",
+    "order_id": 1234,
+    "manufacturer": "..."
+}}
+
+Message: "{context.customer_message}"
+"""
+        try:
+            extraction_response = await self.llm_adapter.invoke(
+                "You are a strict data extraction AI. Output only valid JSON.",
+                prompt
+            )
+            import re
+            match = re.search(r"\{.*?\}", extraction_response, re.DOTALL)
+            if match:
+                extracted = json.loads(match.group(0))
+                
+                # Update logic with dependency invalidation
+                new_order_id = extracted.get("order_id")
+                if new_order_id is not None:
+                    try:
+                        new_order_id = int(new_order_id)
+                        if state.order_id != new_order_id:
+                            state.order_id = new_order_id
+                            # Stale result invalidation
+                            state.last_tool = None
+                            state.last_tool_result = None
+                    except (ValueError, TypeError):
+                        pass
+                
+                new_product = extracted.get("product_name")
+                if new_product is not None and str(new_product).strip():
+                    if state.product_name != new_product:
+                        state.product_name = new_product
+                        # If product changes, previous results might be stale too
+                        state.last_tool = None
+                        state.last_tool_result = None
+                        
+                new_manufacturer = extracted.get("manufacturer")
+                if new_manufacturer is not None and str(new_manufacturer).strip():
+                    state.manufacturer = new_manufacturer
+                    
+        except Exception as e:
+            logger.error("State extraction failed: %s", e)
+            
+        state.updated_at = __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
+        return state

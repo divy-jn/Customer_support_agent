@@ -31,7 +31,7 @@ from app.skills.base import (
 from app.skills.loader import SkillLoader
 from app.skills.runtime import SkillRuntime
 from app.skills.registry import SkillRegistry
-from app.models import SkillExecutionStatus, RiskLevel
+from app.models import SkillExecutionStatus, RiskLevel, WorkflowState
 
 
 # ──────────────────────────────────────────────
@@ -81,10 +81,26 @@ def make_mock_executor(return_value="Mock product context about phone features")
 def make_mock_llm(response_text="Based on our product catalog, the phone features include...", side_effect=None):
     """Create a mock LLM adapter."""
     mock = AsyncMock()
-    if side_effect:
-        mock.invoke = AsyncMock(side_effect=side_effect)
-    else:
-        mock.invoke = AsyncMock(return_value=response_text)
+    
+    # Store state for side effects
+    state = {"effects": list(side_effect) if isinstance(side_effect, list) else side_effect}
+
+    async def side_effect_fn(system, user):
+        if "strict data extraction" in system:
+            return '{"product_name": null, "order_id": null, "manufacturer": null}'
+            
+        if state["effects"]:
+            if isinstance(state["effects"], list):
+                val = state["effects"].pop(0)
+            else:
+                val = state["effects"]
+            if isinstance(val, Exception):
+                raise val
+            return val
+            
+        return response_text
+
+    mock.invoke = AsyncMock(side_effect=side_effect_fn)
     return mock
 
 
@@ -225,6 +241,7 @@ class TestProductAgentE2E:
         ctx = ProductDomainContext(
             customer_message="Tell me about this phone's features",
             semantic_intent="product_inquiry",
+            workflow_state=WorkflowState(session_id="test"),
         )
         result = await agent.handle(ctx)
 
@@ -233,7 +250,7 @@ class TestProductAgentE2E:
         assert result.skill_version == "1.0.0"
         assert result.execution_status == "success"
         assert "6.7 inch display" in result.response
-        llm.invoke.assert_called_once()
+        assert llm.invoke.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_no_skill_matched(self):
@@ -241,6 +258,7 @@ class TestProductAgentE2E:
         ctx = ProductDomainContext(
             customer_message="I want a refund",
             semantic_intent="refund_request",
+            workflow_state=WorkflowState(session_id="test"),
         )
         result = await agent.handle(ctx)
         assert result.execution_status == "no_skill_matched"
@@ -253,6 +271,7 @@ class TestProductAgentE2E:
         ctx = ProductDomainContext(
             customer_message="Tell me about the phone",
             semantic_intent="product_inquiry",
+            workflow_state=WorkflowState(session_id="test"),
         )
         result = await agent.handle(ctx)
         assert result.execution_status == "llm_failure"
@@ -264,6 +283,7 @@ class TestProductAgentE2E:
         ctx = ProductDomainContext(
             customer_message="Phone features?",
             semantic_intent="product_inquiry",
+            workflow_state=WorkflowState(session_id="test"),
         )
         result = await agent.handle(ctx)
         assert result.metadata.get("domain") == "product"
@@ -276,9 +296,11 @@ class TestProductAgentE2E:
         ctx = ProductDomainContext(
             customer_message="Tell me about the phone",
             semantic_intent="product_inquiry",
+            workflow_state=WorkflowState(session_id="test"),
         )
         await agent.handle(ctx)
-        call_args = llm.invoke.call_args
+        # Extraction call is first, so look at the second call
+        call_args = llm.invoke.call_args_list[1]
         system_prompt = call_args[0][0] if call_args[0] else call_args[1].get("system_prompt", "")
         assert "Product Information expert" in system_prompt
 
@@ -328,6 +350,7 @@ class TestToolBoundary:
         ctx = ProductDomainContext(
             customer_message="Phone features?",
             semantic_intent="product_inquiry",
+            workflow_state=WorkflowState(session_id="test"),
         )
         result = await agent.handle(ctx)
         assert result.execution_status == "success"
@@ -360,6 +383,7 @@ class TestToolBoundary:
         ctx = ProductDomainContext(
             customer_message="Phone features?",
             semantic_intent="product_inquiry",
+            workflow_state=WorkflowState(session_id="test"),
         )
         result = await agent.handle(ctx)
         
@@ -435,6 +459,7 @@ class TestProductAgentSecurity:
         ctx = ProductDomainContext(
             customer_message="Tell me about this phone and cancel my order",
             semantic_intent="product_inquiry",
+            workflow_state=WorkflowState(session_id="test"),
         )
         result = await agent.handle(ctx)
         assert result.domain == "product"
@@ -470,6 +495,7 @@ class TestVerticalSlice:
         ctx = ProductDomainContext(
             customer_message="Tell me about this phone's features",
             semantic_intent="product_inquiry",
+            workflow_state=WorkflowState(session_id="test"),
         )
         result = await agent.handle(ctx)
 
@@ -478,8 +504,9 @@ class TestVerticalSlice:
         assert result.skill_used == "Product Information Skill"
         assert "SuperPhone X" in result.response
 
-        call_args = llm.invoke.call_args
-        system_prompt = call_args[0][0]
+        # the second call is the main generation step
+        call_args = llm.invoke.call_args_list[1]
+        system_prompt = call_args[0][0] if call_args[0] else call_args.kwargs.get("system_prompt", "")
         assert "SECURITY & PRIVACY" in system_prompt
         assert "Product Information expert" in system_prompt
 
@@ -504,13 +531,14 @@ class TestVerticalSlice:
         ctx = ProductDomainContext(
             customer_message="Tell me about the phone",
             semantic_intent="product_inquiry",
+            workflow_state=WorkflowState(session_id="test"),
         )
         result = await agent.handle(ctx)
         
         # Tool fails, but loop continues and finishes successfully.
         assert result.execution_status == "success"
         assert "unable to look up" in result.response
-        assert llm.invoke.call_count == 2
+        assert llm.invoke.call_count >= 2
 
 
 # ──────────────────────────────────────────────

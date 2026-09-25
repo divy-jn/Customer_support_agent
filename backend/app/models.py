@@ -266,6 +266,39 @@ class TargetAgentState(TypedDict):
     router_diagnostics: dict | None
 
 
+class WorkflowState(BaseModel):
+    """
+    Explicit, strongly typed multi-turn workflow orchestration state.
+    Serves as the memory of the conversation bounded to essential fields.
+    """
+    session_id: str
+    customer_id: int | None = None
+    
+    # Semantic Context
+    active_domain: str | None = None
+    semantic_intent: str | None = None
+    skill_name: str | None = None
+    skill_version: str | None = None
+    
+    # Extracted Entities (Immutable unless directly verified/changed by user)
+    product_id: int | None = None
+    product_name: str | None = None
+    order_id: int | None = None
+    manufacturer: str | None = None
+    entities: dict = {}
+    
+    # Execution Tracking
+    last_tool: str | None = None
+    last_tool_result: dict | None = None
+    
+    # Lifecycle
+    workflow_status: WorkflowStatus = WorkflowStatus.IDLE
+    pending_input: str | None = None
+    turn_count: int = 0
+    updated_at: datetime | None = None
+
+
+
 # ──────────────────────────────────────────────
 #  Skill Runtime Contracts (Phase C)
 # ──────────────────────────────────────────────

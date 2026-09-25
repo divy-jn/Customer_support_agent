@@ -9,7 +9,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect, status
 
 from app.config import settings
 from app.websocket.connection import manager
@@ -78,6 +78,13 @@ async def _get_session(session_id: str, authenticated_customer_id: int | None = 
         "created_at": datetime.now(timezone.utc).isoformat(),
         "escalated": False,
         "pending_approval": None,
+        "workflow_state": {
+            "session_id": session_id,
+            "customer_id": authenticated_customer_id,
+            "workflow_status": "idle",
+            "turn_count": 0,
+            "entities": {}
+        }
     }
     await session_store.save_session(session_id, new_session)
     return new_session
@@ -89,22 +96,25 @@ async def _save_session(session_id: str, session: dict):
 
 async def get_all_active_sessions() -> list:
     """Retrieve all active sessions from Redis or memory."""
+    active_ids = set(manager.active_connections.keys())
+    if not active_ids:
+        return []
+
     if redis_client:
         try:
-            keys = await redis_client.keys("session:*")
+            keys = [f"session:{sid}" for sid in active_ids]
             sessions = []
-            if keys:
-                values = await redis_client.mget(*keys)
-                for val in values:
-                    if val:
-                        session = json.loads(val) if isinstance(val, str) else val
-                        sessions.append(session)
+            values = await redis_client.mget(*keys)
+            for val in values:
+                if val:
+                    session = json.loads(val) if isinstance(val, str) else val
+                    sessions.append(session)
             return sessions
         except Exception as e:
             logger.error(f"Failed to fetch sessions from Redis: {e}")
             return []
     else:
-        return list(session_store.values())
+        return [session for sid, session in session_store.items() if sid in active_ids]
 
 
 async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None, authenticated_customer_id: int | None = None):
@@ -114,6 +124,21 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
     """
     if not session_id:
         session_id = str(uuid.uuid4())
+
+    # Prevent dual-active sessions for the same user
+    if authenticated_customer_id:
+        active_sessions = await get_all_active_sessions()
+        for s in active_sessions:
+            if s.get("customer_id") == authenticated_customer_id and s.get("session_id") != session_id:
+                old_sid = s.get("session_id")
+                old_ws = manager.active_connections.get(old_sid)
+                if old_ws:
+                    logger.info(f"Closing old session {old_sid} for customer {authenticated_customer_id}")
+                    try:
+                        await old_ws.close(code=status.WS_1008_POLICY_VIOLATION, reason="Logged in from another location.")
+                    except Exception:
+                        pass
+                    manager.disconnect_customer(old_sid, old_ws)
 
     await manager.connect_customer(websocket, session_id)
 
@@ -325,6 +350,13 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     "escalated": False,
                     "pending_approval": None,
                     "approval_granted": None,
+                    "workflow_state": session.get("workflow_state", {
+                        "session_id": session_id,
+                        "customer_id": customer_id,
+                        "workflow_status": "idle",
+                        "turn_count": 0,
+                        "entities": {}
+                    }),
                 }
 
                 # Invoke LangGraph with timeout
@@ -360,14 +392,25 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     session["pending_approval"]["original_message"] = message
                     session["pending_approval"]["intent"] = result.get("intent", "")
 
+                # Save updated workflow state
+                if result.get("workflow_state"):
+                    session["workflow_state"] = result["workflow_state"]
+
                 # ── Output Guardrails ──
                 output_guard = validate_output(raw_response)
-                response_text = output_guard.sanitized_text
-                if output_guard.violations:
+                if not output_guard.passed:
                     logger.warning(
-                        f"Output guardrails triggered for session {session_id}",
+                        f"Output guardrails blocked response for session {session_id}",
                         extra={"violations": output_guard.violations, "risk_score": output_guard.risk_score},
                     )
+                    response_text = "I'm sorry, I cannot provide that information. Let me know if you need help with anything else."
+                else:
+                    response_text = output_guard.sanitized_text
+                    if output_guard.violations:
+                        logger.warning(
+                            f"Output guardrails flagged response for session {session_id}",
+                            extra={"violations": output_guard.violations, "risk_score": output_guard.risk_score},
+                        )
 
                 # Append agent response to history
                 session["conversation_history"].append({

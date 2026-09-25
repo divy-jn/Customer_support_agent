@@ -56,6 +56,9 @@ class AgentState(TypedDict):
     pending_approval: dict | None      # {"action": str, "params": dict, "message": str}
     approval_granted: bool | None      # Set by the WebSocket handler after user responds
 
+    # Workflow State
+    workflow_state: dict | None
+
 
 # High-risk tools that require customer confirmation
 HIGH_RISK_ACTIONS = {"cancel_order", "process_refund"}
