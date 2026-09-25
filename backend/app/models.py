@@ -55,6 +55,17 @@ class Urgency(str, Enum):
     CRITICAL = "critical"
 
 
+class WarrantyStatus(str, Enum):
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    AMBIGUOUS = "ambiguous"
+    NOT_FOUND = "not_found"
+    MISSING_DATA = "missing_data"
+    INVALID_CUSTOMER = "invalid_customer"
+    INVALID_REQUEST = "invalid_request"
+    DB_ERROR = "db_error"
+
+
 # ──────────────────────────────────────────────
 #  Chat Schemas
 # ──────────────────────────────────────────────
@@ -98,6 +109,23 @@ class CustomerProfile(BaseModel):
     total_orders: int = 0
     open_tickets: int = 0
     avg_satisfaction: float | None = None
+
+
+# ──────────────────────────────────────────────
+#  Warranty Schemas
+# ──────────────────────────────────────────────
+
+class WarrantyStatusResult(BaseModel):
+    status: WarrantyStatus
+    eligible_purchase: bool | None = None
+    customer_id: int | None = None
+    order_id: int | None = None
+    product_id: int | None = None
+    product_name: str | None = None
+    purchase_date: datetime | None = None
+    warranty_period: str | None = None
+    warranty_expiry: datetime | None = None
+    reason: str | None = None
 
 
 # ──────────────────────────────────────────────

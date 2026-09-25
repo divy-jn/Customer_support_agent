@@ -10,7 +10,9 @@ import json
 import os
 import sys
 import platform
+import re
 from datetime import datetime, timezone
+from dateutil.relativedelta import relativedelta
 
 from supabase import create_client, Client
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -18,6 +20,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from app.config import settings
 from app.middleware.tracking import track_tool_call
+from app.models import TicketStatus, TicketPriority, TicketType
 
 # ──────────────────────────────────────────────
 #  Supabase Client
@@ -158,13 +161,23 @@ def create_ticket(
         _validate_positive_int(customer_id, "customer_id")
         subject = _validate_non_empty_str(subject, "subject")
         description = _validate_non_empty_str(description, "description")
+        try:
+            type_enum = TicketType(ticket_type)
+        except ValueError:
+            return json.dumps({"error": f"Invalid ticket_type, must be one of: {[e.value for e in TicketType]}"})
+
+        try:
+            priority_enum = TicketPriority(priority)
+        except ValueError:
+            return json.dumps({"error": f"Invalid priority, must be one of: {[e.value for e in TicketPriority]}"})
+
         data = {
             "customer_id": customer_id,
             "subject": subject,
             "description": description,
-            "type": ticket_type,
-            "status": "open",
-            "priority": priority,
+            "type": type_enum.value,
+            "status": TicketStatus.OPEN.value,
+            "priority": priority_enum.value,
             "channel": channel,
         }
         response = supabase.table("tickets").insert(data).execute()
@@ -203,15 +216,19 @@ def update_ticket(
 
         updates = {}
         if status:
-            if status not in ["open", "in_progress", "waiting_on_customer", "closed"]:
-                return json.dumps({"error": "Invalid status"})
-            updates["status"] = status
-            if status == "closed":
-                updates["closed_at"] = "now()"
+            try:
+                status_enum = TicketStatus(status)
+            except ValueError:
+                return json.dumps({"error": f"Invalid status, must be one of: {[e.value for e in TicketStatus]}"})
+            updates["status"] = status_enum.value
+            if status_enum == TicketStatus.CLOSED:
+                updates["closed_at"] = datetime.now(timezone.utc).isoformat()
         if priority:
-            if priority not in ["low", "medium", "high", "urgent"]:
-                return json.dumps({"error": "Invalid priority"})
-            updates["priority"] = priority
+            try:
+                priority_enum = TicketPriority(priority)
+            except ValueError:
+                return json.dumps({"error": f"Invalid priority, must be one of: {[e.value for e in TicketPriority]}"})
+            updates["priority"] = priority_enum.value
         if resolution:
             updates["resolution"] = resolution
         if assigned_agent:
@@ -220,6 +237,8 @@ def update_ticket(
             updates["satisfaction_rating"] = satisfaction_rating
         if not updates:
             return json.dumps({"error": "No fields to update"})
+        
+        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         response = supabase.table("tickets").update(updates).eq("id", ticket_id).execute()
         if not response.data:
             return json.dumps({"error": f"Ticket #{ticket_id} not found or update failed"})
@@ -355,6 +374,132 @@ def list_all_products() -> str:
         return json.dumps(response.data, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+
+# ──────────────────────────────────────────────
+#  Warranty Operations
+# ──────────────────────────────────────────────
+
+# Injectable clock for deterministic tests
+_CLOCK = lambda: datetime.now(timezone.utc)
+
+def _parse_warranty_duration(description: str) -> relativedelta | None:
+    """Deterministically parse warranty duration from product description."""
+    if not description:
+        return None
+    # Match patterns like "1-year", "6-month", "2 year"
+    match = re.search(r"(\d+)[-\s](year|month)s?\b", description, re.IGNORECASE)
+    if not match:
+        return None
+    val = int(match.group(1))
+    unit = match.group(2).lower()
+    if unit == "year":
+        return relativedelta(years=val)
+    elif unit == "month":
+        return relativedelta(months=val)
+    return None
+
+@track_tool_call("check_warranty_status")
+@_supabase_retry
+def check_warranty_status(customer_id: int, product_name: str = None, order_id: int = None) -> str:
+    """Deterministically check warranty status for a customer's purchase."""
+    from app.models import WarrantyStatusResult, WarrantyStatus
+    try:
+        if not isinstance(customer_id, int) or customer_id <= 0:
+            return WarrantyStatusResult(status=WarrantyStatus.INVALID_CUSTOMER, reason="Invalid customer ID").model_dump_json()
+
+        if order_id is None and not product_name:
+            return WarrantyStatusResult(
+                status=WarrantyStatus.INVALID_REQUEST,
+                reason="Must provide either order_id or product_name"
+            ).model_dump_json()
+
+        # Query orders for this customer
+        query = supabase.table("orders").select("id, customer_id, order_date, products(id, name, description)").eq("customer_id", customer_id)
+        if order_id is not None:
+            query = query.eq("id", order_id)
+
+        resp = query.execute()
+        if not resp.data:
+            return WarrantyStatusResult(
+                status=WarrantyStatus.NOT_FOUND,
+                reason="Order not found or does not belong to customer"
+            ).model_dump_json()
+
+        matches = resp.data
+
+        # Filter by product_name if order_id was not provided
+        if product_name and order_id is None:
+            pname_lower = product_name.lower()
+            matches = [
+                o for o in matches 
+                if o.get("products") and pname_lower in o["products"].get("name", "").lower()
+            ]
+
+        if not matches:
+            return WarrantyStatusResult(
+                status=WarrantyStatus.NOT_FOUND,
+                reason="No matching product purchase found"
+            ).model_dump_json()
+        
+        if len(matches) > 1:
+            return WarrantyStatusResult(
+                status=WarrantyStatus.AMBIGUOUS,
+                reason="Multiple purchases match the product name. Please provide an order_id."
+            ).model_dump_json()
+
+        order = matches[0]
+        prod = order.get("products") or {}
+        
+        desc = prod.get("description", "")
+        duration = _parse_warranty_duration(desc)
+        
+        order_date_str = order.get("order_date")
+        if not order_date_str:
+            return WarrantyStatusResult(status=WarrantyStatus.MISSING_DATA, reason="Order is missing order_date").model_dump_json()
+            
+        purchase_date = datetime.fromisoformat(order_date_str)
+        if purchase_date.tzinfo is None:
+            purchase_date = purchase_date.replace(tzinfo=timezone.utc)
+
+        if not duration:
+            return WarrantyStatusResult(
+                status=WarrantyStatus.MISSING_DATA,
+                eligible_purchase=True,
+                customer_id=customer_id,
+                order_id=order["id"],
+                product_id=prod.get("id"),
+                product_name=prod.get("name"),
+                purchase_date=purchase_date,
+                reason="Warranty duration could not be parsed from product description"
+            ).model_dump_json()
+
+        expiry = purchase_date + duration
+        now = _CLOCK()
+        # Ensure 'now' is timezone aware
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+
+        status = WarrantyStatus.ACTIVE if now < expiry else WarrantyStatus.EXPIRED
+
+        return WarrantyStatusResult(
+            status=status,
+            eligible_purchase=True,
+            customer_id=customer_id,
+            order_id=order["id"],
+            product_id=prod.get("id"),
+            product_name=prod.get("name"),
+            purchase_date=purchase_date,
+            warranty_period=re.search(r"(\d+)[-\s](year|month)s?\b", desc, re.IGNORECASE).group(0),
+            warranty_expiry=expiry,
+            reason=f"Warranty expires on {expiry.strftime('%Y-%m-%d')}"
+        ).model_dump_json()
+
+    except Exception as e:
+        return WarrantyStatusResult(
+            status=WarrantyStatus.DB_ERROR,
+            reason=f"Sanitized database error: {type(e).__name__}"
+        ).model_dump_json()
 
 
 # ──────────────────────────────────────────────
