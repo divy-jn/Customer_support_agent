@@ -11,13 +11,15 @@ Product domain classification
     ↓
 ProductAgent
     ↓
-ProductSkillResolver (deterministic)
+ProductSkillResolver (deterministic, explicit mapping)
     ↓
-ProductInformationSkill
+SkillRegistry (central Phase C registry, single source of truth)
+    ↓
+ProductInformationSkill (loaded from SKILL.md)
     ↓
 SkillRuntime (policy enforcement)
     ↓
-ToolExecutor (retrieve_as_context)
+ToolExecutor (primary tool derived from skill.allowed_tools)
     ↓
 Structured SkillExecutionResult
     ↓
@@ -56,14 +58,22 @@ ProductAgent does not own tools. Tools are shared capabilities accessed only thr
 
 ## Skill Resolution
 
-`ProductSkillResolver` maps semantic intent strings to registered Product-domain skills:
+`ProductSkillResolver` delegates skill storage to the central `SkillRegistry` (Phase C). It owns only the domain-specific intent → skill-name mapping via `_PRODUCT_INTENT_MAP`.
+
+**Explicit mappings only — no substring fallback.** Unknown intents return `None`.
 
 ```text
 product_inquiry → ProductInformationSkill
+product_information → ProductInformationSkill
 product_features → ProductInformationSkill
 product_specs → ProductInformationSkill
-(future) warranty_claim → WarrantySkill
-(future) troubleshooting → ProductTroubleshootingSkill
+product_details → ProductInformationSkill
+product_availability → ProductInformationSkill
+product_question → ProductInformationSkill
+technical_support → ProductInformationSkill
+product_comparison → ProductInformationSkill
+warranty_claim → None (future WarrantySkill)
+product_troubleshooting → None (future)
 ```
 
 **Python chooses the skill deterministically.** The LLM extracts semantic intent, but does not select the skill identifier.

@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from app.skills.base import SkillDefinition, render_skill_prompt
 from app.skills.policy import GLOBAL_SYSTEM_POLICY
+from app.skills.registry import SkillRegistry
 from app.skills.runtime import SkillRuntime
 from app.models import SkillExecutionStatus, SkillExecutionResult
 
@@ -69,47 +70,49 @@ class LLMAdapter(Protocol):
 #  Product Skill Resolver
 # ──────────────────────────────────────────────
 
+# Explicit intent → skill name mapping.
+# Python selects the skill deterministically — the LLM only provides the intent.
+# Unknown or out-of-domain intents return None.
+_PRODUCT_INTENT_MAP: Dict[str, str] = {
+    "product_inquiry": "Product Information Skill",
+    "product_information": "Product Information Skill",
+    "product_features": "Product Information Skill",
+    "product_specs": "Product Information Skill",
+    "product_details": "Product Information Skill",
+    "product_availability": "Product Information Skill",
+    "product_question": "Product Information Skill",
+    "technical_support": "Product Information Skill",
+    "product_comparison": "Product Information Skill",
+    # Future: "warranty_claim": "Warranty Skill",
+    # Future: "product_troubleshooting": "Product Troubleshooting Skill",
+}
+
+
 class ProductSkillResolver:
     """
     Deterministic skill resolution for the Product domain.
-    Python selects the skill — not the LLM.
-    """
-    def __init__(self):
-        self._skills: Dict[str, SkillDefinition] = {}
 
-    def register(self, skill: SkillDefinition) -> None:
-        if skill.metadata.domain != "product":
-            raise ValueError(
-                f"Cannot register non-product skill '{skill.name}' "
-                f"(domain='{skill.metadata.domain}') in ProductSkillResolver."
-            )
-        self._skills[skill.name] = skill
+    Delegates actual skill storage to the central SkillRegistry (Phase C).
+    Owns only the domain-specific intent → skill-name mapping.
+    """
+
+    def __init__(self, registry: SkillRegistry):
+        self._registry = registry
 
     def resolve(self, intent: str) -> Optional[SkillDefinition]:
         """
-        Deterministic mapping from semantic intent to Product skill.
-        Returns None if no skill matches.
+        Map a semantic intent to a Product-domain skill using explicit mappings only.
+        Returns None if no mapping exists or the skill is not registered.
         """
-        # Phase D.1: simple deterministic mapping
-        # Future phases will expand this as WarrantySkill, TroubleshootingSkill are added.
         intent_lower = intent.lower() if intent else ""
-
-        PRODUCT_INFO_INTENTS = {
-            "product_inquiry", "product_information", "product_features",
-            "product_specs", "product_details", "product_availability",
-            "product_question", "technical_support", "product_comparison",
-        }
-
-        if intent_lower in PRODUCT_INFO_INTENTS or "product" in intent_lower:
-            return self._skills.get("Product Information Skill")
-
-        # Future: warranty_claim → WarrantySkill
-        # Future: troubleshooting → ProductTroubleshootingSkill
-
-        return None
+        skill_name = _PRODUCT_INTENT_MAP.get(intent_lower)
+        if skill_name is None:
+            return None
+        return self._registry.get_skill(skill_name)
 
     def list_skills(self) -> List[SkillDefinition]:
-        return list(self._skills.values())
+        """List all product-domain skills from the central registry."""
+        return self._registry.list_skills(domain="product")
 
 
 # ──────────────────────────────────────────────
@@ -199,9 +202,26 @@ class ProductAgent:
             )
 
         # ── Step 3: Execute capability through SkillRuntime ──
+        # Derive the primary tool from the skill's declared allowed_tools.
+        # The agent does not maintain a second independent source of truth.
+        # NOTE: This single-primary-tool pattern is temporary for the D.1 vertical slice.
+        # Future multi-tool skills will need a richer execution plan from the skill definition.
+        if not skill.policy.allowed_tools:
+            logger.warning(
+                "ProductAgent: skill=%s has no allowed_tools declared",
+                skill.name,
+            )
+            return ProductAgentResponse(
+                response="I apologize, but I'm unable to look up product information right now.",
+                skill_used=skill.name,
+                skill_version=skill.metadata.version,
+                execution_status="no_tools_declared",
+            )
+
+        primary_tool = skill.policy.allowed_tools[0]
         exec_result = self.skill_runtime.execute_tool(
             skill,
-            "retrieve_as_context",
+            primary_tool,
             {"query": context.customer_message},
         )
 
