@@ -51,7 +51,10 @@ def send_email(to: str, subject: str, body: str, is_html: bool = True) -> str:
         else:
             message.set_content(body)
             
-        message["To"] = to
+        if settings.email_test_recipient:
+            message["To"] = settings.email_test_recipient
+        else:
+            message["To"] = to
         message["From"] = settings.from_email or settings.gmail_address
         message["Subject"] = subject
 

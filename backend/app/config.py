@@ -59,11 +59,12 @@ class Settings(BaseSettings):
     knowledge_base_dir: str = "./knowledge_base"
 
     # --- Email ---
-    gmail_address: str = Field(default="", alias="GMAIL_ADDRESS")
+    gmail_address: str = Field(default="jdivy7151@gmail.com", alias="GMAIL_ADDRESS")
     gmail_app_password: str = Field(default="", alias="GMAIL_APP_PASSWORD")
     support_team_email: str = Field(default="support@supportteam.com", alias="SUPPORT_TEAM_EMAIL")
     tech_team_email: str = Field(default="tech@supportteam.com", alias="TECH_TEAM_EMAIL")
-    from_email: str = Field(default="noreply@supportteam.com", alias="FROM_EMAIL")
+    from_email: str = Field(default="jdivy7151@gmail.com", alias="FROM_EMAIL")
+    email_test_recipient: str | None = Field(default="pdfallen0@gmail.com", alias="EMAIL_TEST_RECIPIENT")
 
     # --- Logging & Debug ---
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
