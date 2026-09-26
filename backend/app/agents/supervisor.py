@@ -3,6 +3,13 @@ from enum import Enum
 from typing import Optional
 from app.models import WorkflowState, WorkflowStatus
 
+class OrchestrationDomain(str, Enum):
+    PRODUCT = "product"
+    ORDER = "order"
+    PAYMENT = "payment"
+    GENERAL = "general"
+    ESCALATION = "escalation"
+
 class SupervisorAction(str, Enum):
     CONTINUE = "continue"
     SUSPEND_AND_SWITCH = "suspend_and_switch"
@@ -10,47 +17,63 @@ class SupervisorAction(str, Enum):
     RESUME = "resume"
     ESCALATE = "escalate"
     REQUEST_CLARIFICATION = "request_clarification"
-    PROCEED_APPROVAL = "proceed_approval"
+    # Note: PROCEED_APPROVAL is intentionally deferred to Phase F.8
+    # F.1 does not autonomously authorize or execute approvals.
+
+class TransitionMetadata(BaseModel):
+    """Bounded typed representation of transition context."""
+    suspended_domain: Optional[str] = None
+    resumed_domain: Optional[str] = None
 
 class SupervisorDecision(BaseModel):
     action: SupervisorAction
-    target_domain: str
+    target_domain: OrchestrationDomain
     resulting_workflow_status: WorkflowStatus
     transition_reason: str
-    transition_metadata: dict = Field(default_factory=dict)
+    transition_metadata: Optional[TransitionMetadata] = None
 
 class Supervisor:
     """
     Deterministic Python Workflow Orchestrator.
     Evaluates semantic facts against existing WorkflowState to determine next action.
-    Does not use LLMs, network calls, or tool execution.
+    F.1 Boundary: Does not use LLMs, network calls, tool execution, or F.2 multi-domain structures.
     """
 
     @staticmethod
+    def _is_valid_domain(domain_str: str) -> bool:
+        try:
+            OrchestrationDomain(domain_str)
+            return True
+        except ValueError:
+            return False
+
+    @staticmethod
     def decide(semantic_domain: str, semantic_intent: str, state: WorkflowState, message: str) -> SupervisorDecision:
-        # 1. Invalid or missing semantic domain -> Clarification
-        if not semantic_domain:
+        # 1. Invalid, missing, or unknown semantic domain -> Clarification
+        if not semantic_domain or not Supervisor._is_valid_domain(semantic_domain):
             return SupervisorDecision(
                 action=SupervisorAction.REQUEST_CLARIFICATION,
-                target_domain=state.active_domain or "general",
+                target_domain=OrchestrationDomain(state.active_domain) if state.active_domain and Supervisor._is_valid_domain(state.active_domain) else OrchestrationDomain.GENERAL,
                 resulting_workflow_status=state.workflow_status if state.active_domain else WorkflowStatus.IDLE,
-                transition_reason="Ambiguous or missing semantic domain."
+                transition_reason=f"Ambiguous, missing, or unknown semantic domain: '{semantic_domain}'"
             )
             
+        target_domain = OrchestrationDomain(semantic_domain)
+
         # 2. Terminal State: ESCALATED
         if state.workflow_status == WorkflowStatus.ESCALATED:
             return SupervisorDecision(
                 action=SupervisorAction.ESCALATE,
-                target_domain=state.active_domain or semantic_domain,
+                target_domain=OrchestrationDomain(state.active_domain) if state.active_domain and Supervisor._is_valid_domain(state.active_domain) else target_domain,
                 resulting_workflow_status=WorkflowStatus.ESCALATED,
                 transition_reason="Workflow is escalated, terminal state."
             )
             
         # 3. Explicit Escalation Intent
-        if semantic_domain == "escalation" or semantic_intent == "escalation":
+        if target_domain == OrchestrationDomain.ESCALATION or semantic_intent == "escalation":
             return SupervisorDecision(
                 action=SupervisorAction.ESCALATE,
-                target_domain=state.active_domain or "general",
+                target_domain=OrchestrationDomain(state.active_domain) if state.active_domain and Supervisor._is_valid_domain(state.active_domain) else OrchestrationDomain.GENERAL,
                 resulting_workflow_status=WorkflowStatus.ESCALATED,
                 transition_reason="Semantic escalation requested."
             )
@@ -60,102 +83,83 @@ class Supervisor:
             # Does not automatically resume. Treat as a new event.
             return SupervisorDecision(
                 action=SupervisorAction.START_NEW,
-                target_domain=semantic_domain,
+                target_domain=target_domain,
                 resulting_workflow_status=WorkflowStatus.IN_PROGRESS,
                 transition_reason="Completed workflow followed by new message."
             )
 
-        # 5. IDLE, FAILED, or no active domain
+        # 5. IDLE or FAILED or No active domain
         if state.workflow_status in (WorkflowStatus.IDLE, WorkflowStatus.FAILED) or not state.active_domain:
             return SupervisorDecision(
                 action=SupervisorAction.START_NEW,
-                target_domain=semantic_domain,
+                target_domain=target_domain,
                 resulting_workflow_status=WorkflowStatus.IN_PROGRESS,
                 transition_reason="Starting new workflow from idle/failed state."
             )
 
         # 6. Active Workflow (IN_PROGRESS or AWAITING_INPUT)
         if state.workflow_status in (WorkflowStatus.IN_PROGRESS, WorkflowStatus.AWAITING_INPUT):
-            if semantic_domain == state.active_domain or semantic_domain == "general":
-                # Check pending approval pseudo-resume
-                if state.workflow_status == WorkflowStatus.AWAITING_INPUT and state.pending_approval:
-                    # In F.1, transport intercept is decoupled, so supervisor might PROCEED_APPROVAL
-                    # if semantic_intent indicates confirmation, but for now we just CONTINUE.
-                    pass
-                    
+            if target_domain == state.active_domain or target_domain == OrchestrationDomain.GENERAL:
                 return SupervisorDecision(
                     action=SupervisorAction.CONTINUE,
-                    target_domain=state.active_domain,
+                    target_domain=OrchestrationDomain(state.active_domain),
                     resulting_workflow_status=state.workflow_status,
                     transition_reason="Domain matches active workflow."
                 )
             else:
                 # Domain Switch!
-                if semantic_domain in state.suspended_domains:
-                    return SupervisorDecision(
-                        action=SupervisorAction.RESUME,
-                        target_domain=semantic_domain,
-                        resulting_workflow_status=WorkflowStatus.RESUMED,
-                        transition_reason="Resuming previously suspended domain.",
-                        transition_metadata={"suspended_domain": state.active_domain}
-                    )
-                else:
-                    return SupervisorDecision(
-                        action=SupervisorAction.SUSPEND_AND_SWITCH,
-                        target_domain=semantic_domain,
-                        resulting_workflow_status=WorkflowStatus.IN_PROGRESS,
-                        transition_reason="Switching to new domain.",
-                        transition_metadata={"suspended_domain": state.active_domain}
-                    )
-
-        # 7. Suspended workflow logic (If somehow the active domain itself is in SUSPENDED state)
-        if state.workflow_status == WorkflowStatus.SUSPENDED:
-            if semantic_domain == state.active_domain:
+                # Since F.1 WorkflowState does not persist `suspended_domains`, a switch always looks like
+                # a SUSPEND_AND_SWITCH. F.2 will introduce proper multi-domain resume tracking.
                 return SupervisorDecision(
-                    action=SupervisorAction.RESUME,
-                    target_domain=state.active_domain,
-                    resulting_workflow_status=WorkflowStatus.RESUMED,
-                    transition_reason="Resuming current suspended domain."
+                    action=SupervisorAction.SUSPEND_AND_SWITCH,
+                    target_domain=target_domain,
+                    resulting_workflow_status=WorkflowStatus.IN_PROGRESS,
+                    transition_reason="Switching to new domain.",
+                    transition_metadata=TransitionMetadata(suspended_domain=state.active_domain)
                 )
-            elif semantic_domain in state.suspended_domains:
+
+        # 7. Suspended workflow logic
+        # In F.1, if the current active domain is marked SUSPENDED, and a message arrives for it:
+        if state.workflow_status == WorkflowStatus.SUSPENDED:
+            if target_domain == state.active_domain or target_domain == OrchestrationDomain.GENERAL:
                 return SupervisorDecision(
                     action=SupervisorAction.RESUME,
-                    target_domain=semantic_domain,
+                    target_domain=OrchestrationDomain(state.active_domain),
                     resulting_workflow_status=WorkflowStatus.RESUMED,
-                    transition_reason="Resuming another suspended domain.",
-                    transition_metadata={"suspended_domain": state.active_domain}
+                    transition_reason="Resuming current suspended domain.",
+                    transition_metadata=TransitionMetadata(resumed_domain=state.active_domain)
                 )
             else:
+                # Already suspended, but switching to something else -> START_NEW for F.1 semantics
                 return SupervisorDecision(
                     action=SupervisorAction.START_NEW,
-                    target_domain=semantic_domain,
+                    target_domain=target_domain,
                     resulting_workflow_status=WorkflowStatus.IN_PROGRESS,
-                    transition_reason="Starting new domain from suspended state.",
-                    transition_metadata={"suspended_domain": state.active_domain}
+                    transition_reason="Starting new domain from an already suspended state."
                 )
                 
         # 8. RESUMED -> IN_PROGRESS happens transparently if continue is requested
         if state.workflow_status == WorkflowStatus.RESUMED:
-             if semantic_domain == state.active_domain or semantic_domain == "general":
+             if target_domain == state.active_domain or target_domain == OrchestrationDomain.GENERAL:
                  return SupervisorDecision(
                      action=SupervisorAction.CONTINUE,
-                     target_domain=state.active_domain,
+                     target_domain=OrchestrationDomain(state.active_domain),
                      resulting_workflow_status=WorkflowStatus.IN_PROGRESS, # progresses to IN_PROGRESS
                      transition_reason="Advancing resumed workflow."
                  )
              else:
                  return SupervisorDecision(
                      action=SupervisorAction.SUSPEND_AND_SWITCH,
-                     target_domain=semantic_domain,
+                     target_domain=target_domain,
                      resulting_workflow_status=WorkflowStatus.IN_PROGRESS,
                      transition_reason="Switching immediately after resuming.",
-                     transition_metadata={"suspended_domain": state.active_domain}
+                     transition_metadata=TransitionMetadata(suspended_domain=state.active_domain)
                  )
 
         # Fallback for unknown states
         return SupervisorDecision(
             action=SupervisorAction.REQUEST_CLARIFICATION,
-            target_domain=state.active_domain or "general",
+            target_domain=OrchestrationDomain(state.active_domain) if state.active_domain and Supervisor._is_valid_domain(state.active_domain) else OrchestrationDomain.GENERAL,
             resulting_workflow_status=WorkflowStatus.IDLE,
             transition_reason="Unknown workflow state."
         )
@@ -165,35 +169,17 @@ class Supervisor:
         """
         Pure function to apply a SupervisorDecision to a WorkflowState.
         Returns a new WorkflowState instance.
-        Mutation Boundary: Only metadata is modified.
+        Mutation Boundary: Only workflow metadata (active_domain, workflow_status) is modified.
+        F.2 will handle multi-domain state updates.
         """
         new_state = state.model_copy(deep=True)
         
-        if decision.action == SupervisorAction.SUSPEND_AND_SWITCH:
-            if new_state.active_domain and new_state.active_domain not in new_state.suspended_domains:
-                new_state.suspended_domains.append(new_state.active_domain)
-            new_state.active_domain = decision.target_domain
-            new_state.workflow_status = decision.resulting_workflow_status
-            
-        elif decision.action == SupervisorAction.RESUME:
-            if new_state.active_domain and new_state.active_domain != decision.target_domain:
-                 if new_state.active_domain not in new_state.suspended_domains:
-                     new_state.suspended_domains.append(new_state.active_domain)
-            if decision.target_domain in new_state.suspended_domains:
-                new_state.suspended_domains.remove(decision.target_domain)
-            new_state.active_domain = decision.target_domain
-            new_state.workflow_status = decision.resulting_workflow_status
-            
-        elif decision.action == SupervisorAction.START_NEW:
-            # Overwrite active domain completely
-            new_state.active_domain = decision.target_domain
+        # F.1 state contract only permits changing active_domain and workflow_status
+        if decision.action in (SupervisorAction.SUSPEND_AND_SWITCH, SupervisorAction.START_NEW, SupervisorAction.RESUME, SupervisorAction.CONTINUE):
+            new_state.active_domain = decision.target_domain.value
             new_state.workflow_status = decision.resulting_workflow_status
             
         elif decision.action == SupervisorAction.ESCALATE:
             new_state.workflow_status = WorkflowStatus.ESCALATED
             
-        elif decision.action == SupervisorAction.CONTINUE:
-            new_state.workflow_status = decision.resulting_workflow_status
-            
-        new_state.transition_metadata = decision.transition_metadata
         return new_state

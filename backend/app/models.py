@@ -317,11 +317,7 @@ class WorkflowState(BaseModel):
     pending_input: str | None = None
     turn_count: int = 0
     updated_at: datetime | None = None
-    
-    # Orchestration Metadata (F.1)
-    suspended_domains: list[str] = []
-    pending_approval: dict | None = None
-    transition_metadata: dict | None = None
+
 
 # ──────────────────────────────────────────────
 #  Skill Runtime Contracts (Phase C)
