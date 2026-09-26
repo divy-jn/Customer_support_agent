@@ -20,12 +20,50 @@ def test_product_workflow_product_message():
     assert decision.target_domain == OrchestrationDomain.PRODUCT
     assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
     
-def test_product_workflow_general_message():
+def test_product_workflow_general_conversational():
     state = create_base_state(domain="product", status=WorkflowStatus.AWAITING_INPUT)
-    decision = Supervisor.decide("general", "hello", state, "hi")
+    decision = Supervisor.decide("general", "greeting", state, "hi")
     assert decision.action == SupervisorAction.CONTINUE
     assert decision.target_domain == OrchestrationDomain.PRODUCT
     assert decision.resulting_workflow_status == WorkflowStatus.AWAITING_INPUT
+
+def test_product_workflow_general_unrelated():
+    state = create_base_state(domain="product", status=WorkflowStatus.IN_PROGRESS)
+    decision = Supervisor.decide("general", "policy_inquiry", state, "return policy")
+    assert decision.action == SupervisorAction.SUSPEND_AND_SWITCH
+    assert decision.target_domain == OrchestrationDomain.GENERAL
+    assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
+    
+def test_order_workflow_general_conversational():
+    state = create_base_state(domain="order", status=WorkflowStatus.IN_PROGRESS)
+    decision = Supervisor.decide("general", "small_talk", state, "how are you")
+    assert decision.action == SupervisorAction.CONTINUE
+    assert decision.target_domain == OrchestrationDomain.ORDER
+
+def test_order_workflow_general_unrelated():
+    state = create_base_state(domain="order", status=WorkflowStatus.IN_PROGRESS)
+    decision = Supervisor.decide("general", "complaint", state, "i hate this company")
+    assert decision.action == SupervisorAction.SUSPEND_AND_SWITCH
+    assert decision.target_domain == OrchestrationDomain.GENERAL
+
+def test_payment_workflow_general_unrelated():
+    state = create_base_state(domain="payment", status=WorkflowStatus.AWAITING_INPUT)
+    decision = Supervisor.decide("general", "shipping_info", state, "how long to ship")
+    assert decision.action == SupervisorAction.SUSPEND_AND_SWITCH
+    assert decision.target_domain == OrchestrationDomain.GENERAL
+
+def test_completed_product_general_request():
+    state = create_base_state(domain="product", status=WorkflowStatus.COMPLETED)
+    decision = Supervisor.decide("general", "policy_inquiry", state, "return policy")
+    assert decision.action == SupervisorAction.START_NEW
+    assert decision.target_domain == OrchestrationDomain.GENERAL
+    assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
+    
+def test_general_active_workflow_product_switch():
+    state = create_base_state(domain="general", status=WorkflowStatus.IN_PROGRESS)
+    decision = Supervisor.decide("product", "support", state, "phone broken")
+    assert decision.action == SupervisorAction.SUSPEND_AND_SWITCH
+    assert decision.target_domain == OrchestrationDomain.PRODUCT
 
 def test_product_workflow_order_message():
     state = create_base_state(domain="product", status=WorkflowStatus.IN_PROGRESS)
@@ -106,6 +144,20 @@ def test_invalid_semantic_and_invalid_workflow_domain():
     assert decision.action == SupervisorAction.REQUEST_CLARIFICATION
     assert decision.target_domain == OrchestrationDomain.GENERAL
     assert decision.resulting_workflow_status == WorkflowStatus.IDLE
+    
+def test_apply_decision_clarification():
+    # Prove that apply_decision respects the output of a REQUEST_CLARIFICATION for invalid state
+    state = create_base_state(domain="banana", status=WorkflowStatus.IN_PROGRESS)
+    decision = Supervisor.decide("apple", "support", state, "hello")
+    new_state = Supervisor.apply_decision(state, decision)
+    
+    # Check new state applied correctly
+    assert new_state.active_domain == "general"
+    assert new_state.workflow_status == WorkflowStatus.IDLE
+    
+    # Original untouched
+    assert state.active_domain == "banana"
+    assert state.workflow_status == WorkflowStatus.IN_PROGRESS
 
 # --- BOUNDARIES ---
 def test_ticket_id_does_not_override_switch():
