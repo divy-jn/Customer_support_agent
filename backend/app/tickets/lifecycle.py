@@ -126,6 +126,9 @@ class TicketLifecycleService:
         if ticket_intent:
             if not cls._is_compatible_intent(identity.intent, ticket_intent):
                 return False
+        else:
+            if not is_active:
+                return False
                 
         ticket_order = ticket.get("order_id")
         

@@ -66,7 +66,7 @@ def test_same_order_unknown_product_new_product_explicit_creates(mock_supabase, 
 # 3. same order + same explicit product -> UPDATE
 def test_same_order_same_explicit_product_updates(mock_supabase, mock_update_ticket):
     mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
-        {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": 123, "subject": "Issue - ProductB"}
+        {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": 123, "subject": "Issue: Technical Support - ProductB"}
     ])
     mock_update_ticket.return_value = json.dumps({"status": "success"})
     
@@ -134,7 +134,7 @@ def test_lookup_failure_returns_failed(mock_supabase):
 
 def test_update_failure_returns_failed(mock_supabase, mock_update_ticket):
     mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
-        {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": 123, "subject": "Issue - ProductB"}
+        {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": 123, "subject": "Issue: Technical Support - ProductB"}
     ])
     mock_update_ticket.return_value = json.dumps({"error": "Failed to update"})
     ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=123, product_name="ProductB")
@@ -207,3 +207,14 @@ def test_intentional_alias_intent_same_order_updates(mock_supabase, mock_update_
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "UPDATED"
 
+
+# 5. legacy unknown intent + same order -> CREATE
+def test_unknown_legacy_intent_same_order_creates(mock_supabase, mock_create_ticket):
+    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
+        {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": 123, "subject": "Customer complaint"}
+    ])
+    mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=123)
+    res = TicketLifecycleService.process_issue(ctx, active_ticket_id=None)
+    assert res.action == "CREATED"
