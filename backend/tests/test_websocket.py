@@ -329,3 +329,31 @@ class TestHumanHandover:
                 
                 assert cust_release_msg["type"] == "system"
                 assert cust_release_msg["mode"] == "ai"
+
+class TestDualActiveSessions:
+    """Test preventing dual active sessions for the same user."""
+
+    def test_dual_active_sessions_prevented(self, auth_token):
+        client = TestClient(app)
+        from app.websocket.connection import manager
+        
+        # Connect first session for user 123
+        session1_id = "test-session-dual-1"
+        with client.websocket_connect(f"/ws/chat?session_id={session1_id}&customer_id=123&token={auth_token}") as ws1:
+            welcome1 = ws1.receive_json()
+            assert welcome1["type"] == "system"
+            
+            # Now user 123 logs in from another tab (session 2)
+            session2_id = "test-session-dual-2"
+            with client.websocket_connect(f"/ws/chat?session_id={session2_id}&customer_id=123&token={auth_token}") as ws2:
+                welcome2 = ws2.receive_json()
+                assert welcome2["type"] == "system"
+                
+                # ws1 should receive a close frame
+                from starlette.websockets import WebSocketDisconnect
+                with pytest.raises(WebSocketDisconnect) as e:
+                    ws1.receive_json()
+                
+                assert e.value.code == 1008
+                assert session1_id not in manager.active_connections
+                assert session2_id in manager.active_connections

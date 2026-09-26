@@ -7,20 +7,12 @@ from app.config import settings
 from app.llm_factory import get_llm
 from app.middleware.tracking import track_llm_call
 
-WEB_AGENT_SYSTEM_PROMPT = """You are a helpful customer support assistant. 
+from app.skills.base import render_skill_prompt
+from app.skills.policy import GLOBAL_SYSTEM_POLICY
+from app.skills.registry import WebSearchSkill
 
-The customer asked a question that is outside our internal knowledge base.
-You have performed a web search to find the answer.
-
-TOOL RESULTS from web search:
-{tool_results}
-
-Rules:
-1. Provide a helpful answer based ONLY on the web search results.
-2. Do not invent information. If the search results don't contain the answer, apologize and say you couldn't find the information.
-3. Maintain a polite and professional tone.
-4. Keep the answer concise.
-"""
+WEB_AGENT_SYSTEM_PROMPT = GLOBAL_SYSTEM_POLICY + "\n\n" + render_skill_prompt(WebSearchSkill)
+WEB_AGENT_SYSTEM_PROMPT += "\n\nTOOL RESULTS from web search:\n{tool_results}"
 
 def get_web_llm():
     """Get the large LLM for generating web search-based responses."""

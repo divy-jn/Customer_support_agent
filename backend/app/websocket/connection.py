@@ -133,7 +133,7 @@ class ConnectionManager:
                     f"Error sending message to {session_id}: {e}",
                     extra={"session_id": session_id, "error": str(e)},
                 )
-                self.disconnect_customer(session_id)
+                self.disconnect_customer(session_id, websocket)
 
     async def broadcast_to_agents(self, message: dict, session_id: str):
         """Broadcast a message to all agents monitoring this session."""
@@ -204,7 +204,7 @@ class ConnectionManager:
                             f"Heartbeat failed, removing stale connection: {session_id}",
                             extra={"session_id": session_id},
                         )
-                        self.disconnect_customer(session_id)
+                        self.disconnect_customer(session_id, ws)
                         break
         except asyncio.CancelledError:
             pass

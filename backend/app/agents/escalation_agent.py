@@ -7,15 +7,11 @@ from app.llm_factory import get_llm
 from app.config import settings
 from app.middleware.tracking import track_llm_call
 
-ESCALATION_PROMPT = """You are a highly empathetic customer support AI.
+from app.skills.base import render_skill_prompt
+from app.skills.policy import GLOBAL_SYSTEM_POLICY
+from app.skills.registry import EscalationSkill
 
-The customer is frustrated, angry, or has explicitly asked to speak to a human.
-Your job is to:
-1. De-escalate the situation by acknowledging their frustration empathetically.
-2. Assure them that a human agent is being notified immediately.
-3. Keep the message relatively short. Do not try to solve their problem yourself.
-
-Draft a polite and empathetic response."""
+ESCALATION_PROMPT = GLOBAL_SYSTEM_POLICY + "\n\n" + render_skill_prompt(EscalationSkill)
 
 def get_escalation_llm():
     """Get the small LLM for fast escalation processing."""

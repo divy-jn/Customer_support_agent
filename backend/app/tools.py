@@ -206,6 +206,7 @@ def update_ticket(
     assigned_agent: str = None,
     satisfaction_rating: int = None,
     customer_id: int | None = None,
+    description_append: str | None = None,
 ) -> str:
     """Update a ticket's status, priority, resolution, or assigned agent."""
     try:
@@ -238,6 +239,19 @@ def update_ticket(
             updates["assigned_agent"] = assigned_agent
         if satisfaction_rating is not None:
             updates["satisfaction_rating"] = satisfaction_rating
+            
+        if description_append:
+            existing_desc = ""
+            if customer_id is not None:
+                existing_desc = existing.data[0].get("description", "")
+            else:
+                existing_record = supabase.table("tickets").select("description").eq("id", ticket_id).execute()
+                if existing_record.data:
+                    existing_desc = existing_record.data[0].get("description", "")
+                    
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            updates["description"] = f"{existing_desc}\n\n--- Update ({timestamp}) ---\n{description_append}"
+
         if not updates:
             return json.dumps({"error": "No fields to update"})
         

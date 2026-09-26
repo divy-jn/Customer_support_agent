@@ -11,17 +11,33 @@ logger = logging.getLogger("llm_factory")
 SETTINGS_FILE = Path(__file__).parent.parent / "settings.json"
 
 def get_dynamic_settings():
-    if SETTINGS_FILE.exists():
-        try:
-            with open(SETTINGS_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {
+    # Start with pydantic settings (which fallback to defaults)
+    config = {
         "llm_base_url": settings.llm_base_url,
         "small_model": settings.llm_small_model,
         "large_model": settings.llm_large_model
     }
+    
+    # Override with settings.json if exists
+    if SETTINGS_FILE.exists():
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                dyn = json.load(f)
+                config.update(dyn)
+        except Exception:
+            pass
+
+    # Make precedence deterministic (Env > Config)
+    # Check raw os.environ because Pydantic settings are populated from env during startup anyway,
+    # but we want to ensure any explicitly set env var beats the settings.json file at runtime.
+    if "LLM_BASE_URL" in os.environ:
+        config["llm_base_url"] = os.environ["LLM_BASE_URL"]
+    if "LLM_SMALL_MODEL" in os.environ:
+        config["small_model"] = os.environ["LLM_SMALL_MODEL"]
+    if "LLM_LARGE_MODEL" in os.environ:
+        config["large_model"] = os.environ["LLM_LARGE_MODEL"]
+
+    return config
 
 def get_llm(model: str = None, provider: str = None, **kwargs):
     """

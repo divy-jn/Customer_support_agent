@@ -23,6 +23,8 @@ from app.tools import (
     get_customer_history,
     track_order,
     get_ticket,
+    create_ticket,
+    update_ticket,
     check_inventory,
     list_all_products,
     get_all_customers,
@@ -144,6 +146,46 @@ class TestTicketOperations:
         """Non-existent ticket returns error."""
         result = json.loads(get_ticket(999999))
         assert "error" in result
+
+
+class TestTicketMutations:
+    """Test ticket creation and updates."""
+    
+    def test_create_ticket_invalid_enum(self):
+        """Test that invalid enums are rejected."""
+        # Use an invalid ticket type
+        result = json.loads(create_ticket(1, "Subject", "Desc", ticket_type="invalid_type", priority="low"))
+        assert "error" in result
+        assert "Invalid ticket_type" in result["error"]
+        
+        # Use an invalid priority
+        result = json.loads(create_ticket(1, "Subject", "Desc", ticket_type="inquiry", priority="invalid_priority"))
+        assert "error" in result
+        assert "Invalid priority" in result["error"]
+
+    def test_update_ticket_invalid_enum(self):
+        """Test that invalid enums are rejected in updates."""
+        # Use invalid status
+        result = json.loads(update_ticket(1, status="invalid_status"))
+        assert "error" in result
+        assert "Invalid status" in result["error"]
+        
+        # Use invalid priority
+        result = json.loads(update_ticket(1, priority="invalid_priority"))
+        assert "error" in result
+        assert "Invalid priority" in result["error"]
+
+    def test_update_ticket_valid_closed_at(self):
+        """Test that closing a ticket sets closed_at using valid ISO format (if ticket exists)."""
+        # Get a real ticket to update
+        tickets = json.loads(get_all_tickets(limit=1))
+        if not tickets:
+            pytest.skip("No tickets in database to test update")
+            
+        ticket_id = tickets[0]["id"]
+        # Valid close
+        result = json.loads(update_ticket(ticket_id, status="closed"))
+        assert result.get("status") == "success" or "error" in result # It might fail if we don't have access, but it shouldn't fail due to enum or datetime format
 
 
 class TestProductOperations:

@@ -162,7 +162,7 @@ def validate_input(message: str) -> GuardrailResult:
     for pattern, label in OFF_TOPIC_PATTERNS:
         if re.search(pattern, message, re.IGNORECASE):
             violations.append(f"off_topic:{label}")
-            risk_score += 0.3
+            risk_score += 0.5
 
     # Determine pass/fail
     # Block if risk_score >= 0.5 (i.e., prompt injection or multiple off-topic signals)
@@ -220,7 +220,7 @@ def validate_output(
         match = re.search(pattern, response, re.IGNORECASE)
         if match:
             violations.append(f"forbidden_content:{label}")
-            risk_score += 0.3
+            risk_score += 0.5
             # Redact the forbidden content from the response
             sanitized = re.sub(pattern, "[redacted]", sanitized, flags=re.IGNORECASE)
             logger.warning(

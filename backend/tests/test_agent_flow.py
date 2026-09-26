@@ -59,6 +59,7 @@ def make_state(message: str, customer_id: int = None) -> AgentState:
 # ──────────────────────────────────────────────
 #  Intent Classification Tests
 # ──────────────────────────────────────────────
+@pytest.mark.llm_eval
 class TestIntentClassification:
     """Test that the intent router classifies messages correctly."""
 
@@ -110,6 +111,7 @@ class TestIntentClassification:
 # ──────────────────────────────────────────────
 #  End-to-End Graph Tests
 # ──────────────────────────────────────────────
+@pytest.mark.llm_eval
 class TestGraphExecution:
     """Test end-to-end LangGraph execution."""
 
@@ -153,6 +155,7 @@ class TestGraphExecution:
 # ──────────────────────────────────────────────
 #  RAG-specific Tests
 # ──────────────────────────────────────────────
+@pytest.mark.llm_eval
 class TestRAGResponses:
     """Test that RAG-grounded responses work correctly."""
 

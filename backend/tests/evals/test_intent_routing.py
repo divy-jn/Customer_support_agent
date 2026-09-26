@@ -66,8 +66,8 @@ class TestIntentSchemaValidation:
             assert result["route_to"] == "rag_agent"
 
     @pytest.mark.asyncio
-    async def test_missing_fields_get_defaults(self):
-        """If the LLM returns partial JSON, missing fields get defaults."""
+    async def test_missing_fields_get_fallback(self):
+        """If the LLM returns partial JSON, missing fields trigger a fallback error."""
         with patch("app.agents.intent_router.get_router_llm") as mock_llm:
             mock_response = MagicMock()
             mock_response.content = json.dumps({"intent": "faq"})  # Missing other fields
@@ -75,14 +75,13 @@ class TestIntentSchemaValidation:
 
             result = await classify_intent("test message")
 
-            assert result["intent"] == "faq"
-            assert result["sentiment"] == "neutral"  # default
-            assert result["urgency"] == "medium"  # default
-            assert result["route_to"] == "rag_agent"  # default
+            assert result["intent"] == "general"
+            assert result["route_to"] == "rag_agent"
+            assert result.get("router_parse_failure") is True
 
     @pytest.mark.asyncio
-    async def test_invalid_intent_gets_corrected(self):
-        """If the LLM returns an invalid intent value, it gets corrected."""
+    async def test_invalid_intent_gets_fallback(self):
+        """If the LLM returns an invalid intent value, it triggers a fallback error."""
         with patch("app.agents.intent_router.get_router_llm") as mock_llm:
             mock_response = MagicMock()
             mock_response.content = json.dumps({
@@ -95,10 +94,9 @@ class TestIntentSchemaValidation:
 
             result = await classify_intent("test message")
 
-            assert result["intent"] == "general"  # corrected
-            assert result["sentiment"] == "neutral"  # corrected
-            assert result["urgency"] == "medium"  # corrected
-            assert result["route_to"] == "rag_agent"  # corrected
+            assert result["intent"] == "general"
+            assert result["route_to"] == "rag_agent"
+            assert result.get("router_parse_failure") is True
 
     @pytest.mark.asyncio
     async def test_escalation_forced_for_angry_critical(self):
@@ -120,7 +118,7 @@ class TestIntentSchemaValidation:
 
     @pytest.mark.asyncio
     async def test_required_fields_always_present(self):
-        """Every result must contain the 4 required fields."""
+        """Every result must contain the 4 required fields, even on fallback."""
         with patch("app.agents.intent_router.get_router_llm") as mock_llm:
             mock_response = MagicMock()
             mock_response.content = json.dumps({})  # Empty JSON
@@ -131,6 +129,7 @@ class TestIntentSchemaValidation:
             required_fields = ["intent", "sentiment", "urgency", "route_to"]
             for field in required_fields:
                 assert field in result, f"Missing required field: {field}"
+            assert result.get("router_parse_failure") is True
 
     @pytest.mark.asyncio
     async def test_llm_exception_returns_fallback(self):

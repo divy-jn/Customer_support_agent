@@ -7,38 +7,18 @@ and inventory checks.
 """
 
 import json
+from typing import Literal
+from pydantic import BaseModel, Field
 from app.config import settings
 from app.llm_factory import get_llm
 from app.middleware.tracking import track_llm_call
 
 
-DB_AGENT_SYSTEM_PROMPT = """You are a customer support agent with access to the company's database.
+from app.skills.base import render_skill_prompt
+from app.skills.policy import GLOBAL_SYSTEM_POLICY
+from app.skills.registry import DatabaseSkill
 
-You have access to the following database tools (provided as function results):
-- lookup_customer: Find a customer by name or email
-- get_customer_history: Get a customer's orders and tickets
-- get_ticket: Get details of a specific ticket
-- create_ticket: Create a new support ticket
-- update_ticket: Update a ticket's status/priority/resolution
-- track_order: Check order status and tracking info
-- cancel_order: Cancel an active order
-- process_refund: Initiate a refund for a cancelled/delivered order
-- check_inventory: Check product stock availability
-- list_all_products: List all available products in the catalog
-- get_chat_history: Get past chat conversations for a customer
-- send_ticket_email_to_customer: Send an email update to a customer regarding their ticket
-
-Based on the TOOL RESULTS provided, formulate a helpful, professional response to the customer.
-
-Rules:
-1. Always reference specific data from the tool results (order numbers, ticket IDs, status, etc.).
-2. If a tool returned an error, explain the situation clearly to the customer.
-3. Be empathetic and professional.
-4. Suggest next steps when appropriate.
-5. Never expose internal database IDs or technical details to the customer — use friendly references instead.
-6. Always address the customer by their actual name if provided. Never use placeholders like [Customer Name].
-7. If the customer asks you to place an order, create an order, or buy an item for them, politely refuse. Explain that you cannot process purchases directly, and suggest they browse the catalog and add items to their cart to checkout.
-8. Do not invent or present order tracking numbers as bank transaction IDs or refund reference IDs. If a separate transaction/reference ID is not explicitly provided in the tool results, clearly state that one is not available."""
+DB_AGENT_SYSTEM_PROMPT = GLOBAL_SYSTEM_POLICY + "\n\n" + render_skill_prompt(DatabaseSkill)
 
 
 def get_db_llm():
@@ -46,68 +26,97 @@ def get_db_llm():
     return get_llm(model=settings.llm_large_model, temperature=0.3)
 
 
+class DBPlannerOutput(BaseModel):
+    action: Literal[
+        "track_order", "cancel_order", "process_refund", 
+        "create_ticket", "get_ticket", "list_all_products", 
+        "check_inventory", "get_chat_history", "lookup_customer", 
+        "get_customer_history", "missing_argument", "unsupported_action"
+    ] = Field(description="The database action to perform.")
+    
+    order_id: int | None = Field(None, description="The order ID, if required.")
+    ticket_id: int | None = Field(None, description="The ticket ID, if required.")
+    customer_id: int | None = Field(None, description="The customer ID, if required.")
+    product_name: str | None = Field(None, description="The product name, if required.")
+    identifier: str | None = Field(None, description="The customer identifier, if required.")
+    subject: str | None = Field(None, description="The ticket subject, if required.")
+    description: str | None = Field(None, description="The ticket description, if required.")
+
 def determine_db_action(message: str, intent: str, customer_id: int = None) -> dict:
     """
     Determine which database action(s) to take based on the customer message and intent.
-
-    Returns a dict with:
-        - action: the MCP tool to call
-        - params: parameters for the tool
+    Uses a structured LLM planner.
     """
-    message_lower = message.lower()
-
-    # Order-related actions
-    if intent == "order_tracking" or ("track" in message_lower and "order" in message_lower):
-        # Try to extract order ID from message
-        order_id = _extract_number(message, "order")
-        if order_id:
-            return {"action": "track_order", "params": {"order_id": order_id}}
-        elif customer_id:
-            return {"action": "get_customer_history", "params": {"customer_id": customer_id}}
-
-    if intent == "order_cancellation" or ("cancel" in message_lower and "order" in message_lower):
-        order_id = _extract_number(message, "order")
-        if order_id:
-            return {"action": "cancel_order", "params": {"order_id": order_id}}
-
-    if intent == "refund" or "refund" in message_lower:
-        order_id = _extract_number(message, "order")
-        if order_id:
-            return {"action": "process_refund", "params": {"order_id": order_id}}
-
-    # Ticket-related actions
-    if "create" in message_lower and "ticket" in message_lower:
-        return {"action": "create_ticket", "params": {"customer_id": customer_id or 1, "subject": "New Inquiry", "description": message}}
+    llm = get_db_llm()
+    structured_llm = llm.with_structured_output(DBPlannerOutput, include_raw=False)
     
-    if "ticket" in message_lower:
-        ticket_id = _extract_number(message, "ticket")
-        if ticket_id:
-            return {"action": "get_ticket", "params": {"ticket_id": ticket_id}}
+    prompt = f"""Customer's message: "{message}"
+Intent classified as: {intent}
+Customer ID available in context: {customer_id}
 
-    # Product/inventory checks
-    if "all products" in message_lower or "list products" in message_lower:
-        return {"action": "list_all_products", "params": {}}
+Determine the correct database action and extract any required arguments based on the message.
+If a required argument for the action is missing from the message, select 'missing_argument'.
+Do NOT invent IDs.
+"""
+
+    try:
+        with track_llm_call(settings.llm_large_model, "db_plan", prompt) as tracker:
+            result = structured_llm.invoke([
+                {"role": "system", "content": DB_AGENT_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ])
+            
+        if not result:
+            return {"action": "missing_argument", "params": {}}
+            
+        action = result.action
+        params = {}
         
-    if intent == "product_inquiry" or "stock" in message_lower or "available" in message_lower:
-        # Extract product name (rough heuristic)
-        return {"action": "check_inventory", "params": {"product_name": message}}
-        
-    # Chat history
-    if "chat history" in message_lower or "last chat" in message_lower:
-        if customer_id:
-            return {"action": "get_chat_history", "params": {"customer_id": customer_id}}
-
-    # Account/customer lookup
-    if intent == "account_management" or intent == "billing":
-        if customer_id:
-            return {"action": "get_customer_history", "params": {"customer_id": customer_id}}
-        return {"action": "lookup_customer", "params": {"identifier": message}}
-
-    # Default: try customer history if we have a customer ID
-    if customer_id:
-        return {"action": "get_customer_history", "params": {"customer_id": customer_id}}
-
-    return {"action": "lookup_customer", "params": {"identifier": message}}
+        # Post-parse validation
+        if action in ["track_order", "cancel_order", "process_refund"]:
+            if not result.order_id:
+                action = "missing_argument"
+            else:
+                params["order_id"] = result.order_id
+        elif action == "create_ticket":
+            if not result.subject or not result.description:
+                action = "missing_argument"
+            else:
+                params["customer_id"] = result.customer_id or customer_id or 1
+                params["subject"] = result.subject
+                params["description"] = result.description
+        elif action == "get_ticket":
+            if not result.ticket_id:
+                action = "missing_argument"
+            else:
+                params["ticket_id"] = result.ticket_id
+        elif action == "check_inventory":
+            if not result.product_name:
+                action = "missing_argument"
+            else:
+                params["product_name"] = result.product_name
+        elif action == "get_chat_history":
+            if not (result.customer_id or customer_id):
+                action = "missing_argument"
+            else:
+                params["customer_id"] = result.customer_id or customer_id
+        elif action == "lookup_customer":
+            if not result.identifier:
+                action = "missing_argument"
+            else:
+                params["identifier"] = result.identifier
+        elif action == "get_customer_history":
+            if not (result.customer_id or customer_id):
+                action = "missing_argument"
+            else:
+                params["customer_id"] = result.customer_id or customer_id
+        elif action == "list_all_products":
+            pass
+            
+        return {"action": action, "params": params}
+            
+    except Exception as e:
+        return {"action": "missing_argument", "params": {}}
 
 
 async def generate_response(
@@ -164,17 +173,4 @@ Based on the tool results above, provide a helpful response to the customer."""
         }
 
 
-def _extract_number(text: str, prefix: str) -> int | None:
-    """Extract a number following a prefix word (e.g., 'order 1234' -> 1234)."""
-    import re
-    # Match patterns like "order #1234", "order 1234", "order number 1234"
-    patterns = [
-        rf'{prefix}\s*#?\s*(\d+)',
-        rf'{prefix}\s+number\s*#?\s*(\d+)',
-        rf'#(\d+)',
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return int(match.group(1))
-    return None
+
