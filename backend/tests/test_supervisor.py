@@ -34,17 +34,15 @@ def test_product_workflow_order_message():
     assert decision.target_domain == OrchestrationDomain.ORDER
     assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
     assert decision.transition_metadata is not None
-    assert decision.transition_metadata.suspended_domain == "product"
+    assert decision.transition_metadata.suspended_domain == OrchestrationDomain.PRODUCT
     
 def test_resume_suspended_workflow():
-    # In F.1, if a workflow is in SUSPENDED status (meaning active_domain is suspended),
-    # a message in the same domain resumes it.
     state = create_base_state(domain="product", status=WorkflowStatus.SUSPENDED)
     decision = Supervisor.decide("product", "support", state, "back to my broken screen")
     assert decision.action == SupervisorAction.RESUME
     assert decision.target_domain == OrchestrationDomain.PRODUCT
     assert decision.resulting_workflow_status == WorkflowStatus.RESUMED
-    assert decision.transition_metadata.resumed_domain == "product"
+    assert decision.transition_metadata.resumed_domain == OrchestrationDomain.PRODUCT
     
     new_state = Supervisor.apply_decision(state, decision)
     assert new_state.active_domain == "product"
@@ -84,7 +82,32 @@ def test_invalid_semantic_domain():
         assert decision.action == SupervisorAction.REQUEST_CLARIFICATION
         assert decision.target_domain == OrchestrationDomain.PRODUCT
         assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
-        
+
+# --- INVALID active_domain TESTS ---
+@pytest.mark.parametrize("status", [
+    WorkflowStatus.IN_PROGRESS,
+    WorkflowStatus.AWAITING_INPUT,
+    WorkflowStatus.SUSPENDED,
+    WorkflowStatus.RESUMED,
+    WorkflowStatus.ESCALATED,
+    WorkflowStatus.COMPLETED,
+    WorkflowStatus.IDLE
+])
+def test_invalid_active_domain_all_statuses(status):
+    state = create_base_state(domain="banana", status=status)
+    decision = Supervisor.decide("product", "support", state, "hello")
+    assert decision.action == SupervisorAction.REQUEST_CLARIFICATION
+    assert decision.target_domain == OrchestrationDomain.GENERAL
+    assert decision.resulting_workflow_status == WorkflowStatus.IDLE
+
+def test_invalid_semantic_and_invalid_workflow_domain():
+    state = create_base_state(domain="banana", status=WorkflowStatus.IN_PROGRESS)
+    decision = Supervisor.decide("apple", "support", state, "hello")
+    assert decision.action == SupervisorAction.REQUEST_CLARIFICATION
+    assert decision.target_domain == OrchestrationDomain.GENERAL
+    assert decision.resulting_workflow_status == WorkflowStatus.IDLE
+
+# --- BOUNDARIES ---
 def test_ticket_id_does_not_override_switch():
     state = create_base_state(domain="product", status=WorkflowStatus.IN_PROGRESS, ticket_id=999)
     decision = Supervisor.decide("order", "track", state, "where is it")
@@ -124,8 +147,6 @@ def test_mutation_boundaries():
     assert new_state.customer_id == 999
 
 def test_approval_not_silently_authorized():
-    # Prove F.1 Supervisor does not autonomously authorize approvals (Choice B)
-    # Even if awaiting_input and user says "yes", F.1 Supervisor just CONTINUEs.
     state = create_base_state(domain="product", status=WorkflowStatus.AWAITING_INPUT)
     decision = Supervisor.decide("product", "confirm", state, "yes do it")
     assert decision.action == SupervisorAction.CONTINUE
