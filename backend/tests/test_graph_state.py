@@ -99,13 +99,68 @@ async def test_workflow_state_roundtrip(mock_intent_router, mock_product_llm):
     assert ws_2["order_id"] == 123
     assert ws_2["turn_count"] == 2
 
-def test_graph_llm_adapter_factory():
+    # TURN 3 - Continuation with manufacturer
+    state_3: AgentState = {
+        "customer_id": 999,
+        "customer_name": "Test User",
+        "session_id": "session_abc",
+        "message": "It is Dell",
+        "conversation_history": state_2["conversation_history"] + [{"role": "customer", "content": "It is order 123"}, {"role": "agent", "content": "I can help with that."}],
+        "intent": "general", # Should continue anyway due to active workflow
+        "sentiment": "",
+        "urgency": "",
+        "route_to": "",
+        "tool_results": None,
+        "response": None,
+        "escalated": False,
+        "pending_approval": None,
+        "approval_granted": None,
+        "workflow_state": ws_2
+    }
+    
+    async def mock_invoke_3(system, user):
+        if "strict data extraction" in system:
+            return '{"product_name": null, "order_id": null, "manufacturer": {"value": "Dell", "source": "USER_EXPLICIT"}}'
+        return "Manufacturer recorded."
+    mock_product_llm.side_effect = mock_invoke_3
+    
+    result_3 = await customer_support_graph.ainvoke(state_3)
+    ws_3 = result_3["workflow_state"]
+    assert ws_3["manufacturer"] == "Dell"
+
+from app.agents.graph import route_after_classification
+
+def test_workflow_continuation_routing():
+    # Active product workflow waiting for input
+    state = {
+        "intent": "general_question",
+        "route_to": "rag_agent",
+        "workflow_state": {
+            "workflow_status": "awaiting_input",
+            "active_domain": "product"
+        }
+    }
+    # It should break out because general_question is a hard switch
+    assert route_after_classification(state) == "rag_node"
+    
+    # Active product workflow getting order ID (might be misclassified as general by intent router)
+    state["intent"] = "order_tracking"
+    state["route_to"] = "db_agent"
+    assert route_after_classification(state) == "product_node"
+    
+    # Hard switch to escalation
+    state["intent"] = "escalation"
+    state["route_to"] = "escalation"
+    assert route_after_classification(state) == "escalation_node"
+
+@patch("app.llm_factory.get_llm")
+def test_graph_llm_adapter_factory(mock_get_llm):
     """Prove the adapter is constructed through the factory."""
-    adapter = GraphLLMAdapter()
-    llm = adapter.llm
-    # The factory returns an LLM with specific configuration
-    assert llm.model_name is not None
-    assert getattr(llm, "temperature", None) == 0.0
+    with patch("app.config.settings.llm_small_model", "test-model-42"):
+        adapter = GraphLLMAdapter()
+        llm = adapter.llm
+        mock_get_llm.assert_called_once_with(model="test-model-42", temperature=0.0)
+        assert llm == mock_get_llm.return_value
 
 @pytest.mark.asyncio
 async def test_product_agent_extraction():
@@ -113,31 +168,39 @@ async def test_product_agent_extraction():
     mock_llm_adapter = AsyncMock()
     agent = ProductAgent(ProductSkillResolver(None), SkillRuntime(None), mock_llm_adapter)
     
-    # 1. Raw JSON
-    mock_llm_adapter.invoke.return_value = '{"product_name": {"value": "SuperPhone", "source": "USER_EXPLICIT"}, "order_id": null, "manufacturer": null}'
-    ctx = ProductDomainContext(customer_message="I have a SuperPhone", workflow_state=WorkflowState(session_id="test1"))
-    state = await agent._extract_and_merge_state(ctx)
-    assert state.product_name == "SuperPhone"
+    # Base context
+    ctx = ProductDomainContext(customer_message="I have a SuperPhone from HP, order 1234", workflow_state=WorkflowState(session_id="test1"))
 
-    # 2. Fenced JSON
-    mock_llm_adapter.invoke.return_value = '```json\n{"product_name": {"value": "SuperPhone 2", "source": "USER_EXPLICIT"}, "order_id": null, "manufacturer": null}\n```'
-    state = await agent._extract_and_merge_state(ctx)
-    assert state.product_name == "SuperPhone 2"
-
-    # 3. Malformed JSON
-    mock_llm_adapter.invoke.return_value = '{"product_name": "missing brace'
-    state = await agent._extract_and_merge_state(ctx)
-    assert state.product_name is None # Original state unaffected
-
-    # 4. Inferred Manufacturer (negative test)
-    mock_llm_adapter.invoke.return_value = '{"product_name": null, "order_id": null, "manufacturer": {"value": "Dell", "source": "MODEL_INFERENCE"}}'
-    state = await agent._extract_and_merge_state(ctx)
-    assert state.manufacturer is None
-
-    # 5. Explicit Manufacturer
+    # A. explicit manufacturer in message -> accepted
     mock_llm_adapter.invoke.return_value = '{"product_name": null, "order_id": null, "manufacturer": {"value": "HP", "source": "USER_EXPLICIT"}}'
     state = await agent._extract_and_merge_state(ctx)
     assert state.manufacturer == "HP"
+
+    # B. manufacturer absent from message but LLM says USER_EXPLICIT -> rejected
+    ctx_no_mfg = ProductDomainContext(customer_message="I have a SuperPhone", workflow_state=WorkflowState(session_id="test1"))
+    mock_llm_adapter.invoke.return_value = '{"product_name": null, "order_id": null, "manufacturer": {"value": "Dell", "source": "USER_EXPLICIT"}}'
+    state = await agent._extract_and_merge_state(ctx_no_mfg)
+    assert state.manufacturer is None
+
+    # C. manufacturer marked MODEL_INFERENCE -> rejected
+    mock_llm_adapter.invoke.return_value = '{"product_name": null, "order_id": null, "manufacturer": {"value": "HP", "source": "MODEL_INFERENCE"}}'
+    state = await agent._extract_and_merge_state(ctx)
+    assert state.manufacturer is None
+
+    # D. explicit order ID -> accepted
+    mock_llm_adapter.invoke.return_value = '{"product_name": null, "order_id": {"value": 1234, "source": "USER_EXPLICIT"}, "manufacturer": null}'
+    state = await agent._extract_and_merge_state(ctx)
+    assert state.order_id == 1234
+
+    # E. hallucinated order ID not present in message -> rejected
+    mock_llm_adapter.invoke.return_value = '{"product_name": null, "order_id": {"value": 9999, "source": "USER_EXPLICIT"}, "manufacturer": null}'
+    state = await agent._extract_and_merge_state(ctx)
+    assert state.order_id is None
+
+    # F. explicit product -> accepted
+    mock_llm_adapter.invoke.return_value = '{"product_name": {"value": "SuperPhone", "source": "USER_EXPLICIT"}, "order_id": null, "manufacturer": null}'
+    state = await agent._extract_and_merge_state(ctx)
+    assert state.product_name == "SuperPhone"
 
 @pytest.mark.asyncio
 async def test_chat_handler_session_persistence():

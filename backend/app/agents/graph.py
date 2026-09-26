@@ -411,6 +411,18 @@ def route_after_classification(state: AgentState) -> str:
     route = state.get("route_to", "rag_agent")
     intent = state.get("intent", "general")
     
+    # Active workflow continuation
+    ws_dict = state.get("workflow_state")
+    if ws_dict:
+        status = ws_dict.get("workflow_status")
+        domain = ws_dict.get("active_domain")
+        
+        # If we are waiting for input in an active Product workflow, continue it
+        if status in ["awaiting_input", "in_progress"] and domain == "product":
+            # Unless there's a hard semantic switch to a completely unrelated domain
+            if intent not in ["escalation", "return_policy", "billing_issue", "general_question"]:
+                return "product_node"
+                
     if intent in ["product_inquiry", "product_information", "product_features", "product_specs", "product_details", "product_availability", "product_question", "technical_support", "product_comparison", "warranty_claim", "product_warranty"]:
         return "product_node"
     

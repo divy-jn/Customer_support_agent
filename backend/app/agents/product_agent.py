@@ -188,6 +188,7 @@ class ProductAgent:
 
         # ── Step 0: Extract and merge state ──
         merged_state = await self._extract_and_merge_state(context)
+        merged_state.active_domain = "product"
         merged_state.turn_count += 1
         
         # ── Step 1: Resolve skill ──
@@ -438,7 +439,14 @@ Message: "{context.customer_message}"
             def get_explicit(field: str) -> Any | None:
                 val = extracted.get(field)
                 if isinstance(val, dict) and val.get("source") in ["USER_EXPLICIT", "user_explicit"]:
-                    return val.get("value")
+                    value = val.get("value")
+                    if value is None:
+                        return None
+                    # Verify textual presence (normalized)
+                    msg_norm = context.customer_message.lower()
+                    val_norm = str(value).lower()
+                    if val_norm in msg_norm:
+                        return value
                 return None
 
             new_order_id = get_explicit("order_id")
