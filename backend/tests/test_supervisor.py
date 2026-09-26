@@ -1,6 +1,6 @@
 import pytest
 from app.models import WorkflowState, WorkflowStatus
-from app.agents.supervisor import Supervisor, SupervisorAction, SupervisorDecision, OrchestrationDomain
+from app.agents.supervisor import Supervisor, SupervisorAction, SupervisorDecision, OrchestrationDomain, InvalidSupervisorDecisionError
 
 def create_base_state(domain=None, status=WorkflowStatus.IDLE, ticket_id=None) -> WorkflowState:
     return WorkflowState(
@@ -204,3 +204,50 @@ def test_approval_not_silently_authorized():
     assert decision.action == SupervisorAction.CONTINUE
     assert decision.resulting_workflow_status == WorkflowStatus.AWAITING_INPUT
     assert not hasattr(decision, 'proceed_approval')
+
+# --- APPLY_DECISION VALIDATION TESTS ---
+def test_apply_decision_invalid_combinations_rejected():
+    state = create_base_state(domain="product", status=WorkflowStatus.IN_PROGRESS)
+    
+    invalid_combinations = [
+        (SupervisorAction.ESCALATE, WorkflowStatus.IN_PROGRESS),
+        (SupervisorAction.START_NEW, WorkflowStatus.COMPLETED),
+        (SupervisorAction.RESUME, WorkflowStatus.IN_PROGRESS),
+        (SupervisorAction.SUSPEND_AND_SWITCH, WorkflowStatus.COMPLETED),
+        (SupervisorAction.REQUEST_CLARIFICATION, WorkflowStatus.COMPLETED),
+        (SupervisorAction.REQUEST_CLARIFICATION, WorkflowStatus.ESCALATED),
+        (SupervisorAction.CONTINUE, WorkflowStatus.COMPLETED),
+        (SupervisorAction.CONTINUE, WorkflowStatus.IDLE)
+    ]
+    
+    for action, status in invalid_combinations:
+        decision = SupervisorDecision(
+            action=action,
+            target_domain=OrchestrationDomain.PRODUCT,
+            resulting_workflow_status=status,
+            transition_reason="Test"
+        )
+        with pytest.raises(InvalidSupervisorDecisionError):
+            Supervisor.apply_decision(state, decision)
+            
+        # Ensure input state was not mutated by the failed attempt (though deepcopy prevents this anyway, we verify)
+        assert state.active_domain == "product"
+        assert state.workflow_status == WorkflowStatus.IN_PROGRESS
+
+def test_apply_decision_valid_invariant():
+    # Prove that for any valid decision produced by decide(), apply_decision preserves invariants
+    state = create_base_state(domain="product", status=WorkflowStatus.IN_PROGRESS, ticket_id=999)
+    decision = Supervisor.decide("order", "track", state, "where is it")
+    
+    new_state = Supervisor.apply_decision(state, decision)
+    
+    # Must produce exact metadata
+    assert new_state.active_domain == decision.target_domain.value
+    assert new_state.workflow_status == decision.resulting_workflow_status
+    
+    # Preserves non-workflow fields
+    assert new_state.customer_id == 999
+    assert new_state.product_id == 123
+    assert new_state.product_name == "Test Product"
+    assert new_state.active_ticket_id == 999
+    assert new_state.session_id == "test_session"

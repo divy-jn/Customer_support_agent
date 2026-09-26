@@ -1,16 +1,16 @@
 # Graph Report - major_proj  (2026-09-26)
 
 ## Corpus Check
-- 226 files · ~4,054,405 words
+- 226 files · ~4,054,644 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 5006 nodes · 13709 edges · 339 communities (250 shown, 89 thin omitted)
-- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 852 edges (avg confidence: 0.7)
+- 5013 nodes · 13747 edges · 348 communities (258 shown, 90 thin omitted)
+- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 879 edges (avg confidence: 0.7)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `7f22cdbc`
+- Built from commit: `4bce1910`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -224,34 +224,34 @@
 - [[_COMMUNITY_Community 206|Community 206]]
 - [[_COMMUNITY_Community 207|Community 207]]
 - [[_COMMUNITY_Community 208|Community 208]]
+- [[_COMMUNITY_Community 209|Community 209]]
 - [[_COMMUNITY_Community 210|Community 210]]
 - [[_COMMUNITY_Community 211|Community 211]]
 - [[_COMMUNITY_Community 212|Community 212]]
-- [[_COMMUNITY_Community 225|Community 225]]
-- [[_COMMUNITY_Community 226|Community 226]]
-- [[_COMMUNITY_Community 227|Community 227]]
-- [[_COMMUNITY_Community 228|Community 228]]
-- [[_COMMUNITY_Community 229|Community 229]]
-- [[_COMMUNITY_Community 230|Community 230]]
-- [[_COMMUNITY_Community 231|Community 231]]
-- [[_COMMUNITY_Community 240|Community 240]]
-- [[_COMMUNITY_Community 241|Community 241]]
-- [[_COMMUNITY_Community 242|Community 242]]
-- [[_COMMUNITY_Community 243|Community 243]]
-- [[_COMMUNITY_Community 244|Community 244]]
-- [[_COMMUNITY_Community 246|Community 246]]
+- [[_COMMUNITY_Community 213|Community 213]]
+- [[_COMMUNITY_Community 214|Community 214]]
+- [[_COMMUNITY_Community 215|Community 215]]
+- [[_COMMUNITY_Community 216|Community 216]]
+- [[_COMMUNITY_Community 218|Community 218]]
+- [[_COMMUNITY_Community 219|Community 219]]
+- [[_COMMUNITY_Community 220|Community 220]]
+- [[_COMMUNITY_Community 233|Community 233]]
+- [[_COMMUNITY_Community 234|Community 234]]
+- [[_COMMUNITY_Community 235|Community 235]]
+- [[_COMMUNITY_Community 236|Community 236]]
+- [[_COMMUNITY_Community 237|Community 237]]
+- [[_COMMUNITY_Community 238|Community 238]]
+- [[_COMMUNITY_Community 239|Community 239]]
+- [[_COMMUNITY_Community 248|Community 248]]
+- [[_COMMUNITY_Community 249|Community 249]]
+- [[_COMMUNITY_Community 250|Community 250]]
 - [[_COMMUNITY_Community 251|Community 251]]
-- [[_COMMUNITY_Community 253|Community 253]]
+- [[_COMMUNITY_Community 252|Community 252]]
 - [[_COMMUNITY_Community 254|Community 254]]
-- [[_COMMUNITY_Community 255|Community 255]]
 - [[_COMMUNITY_Community 259|Community 259]]
-- [[_COMMUNITY_Community 260|Community 260]]
 - [[_COMMUNITY_Community 261|Community 261]]
 - [[_COMMUNITY_Community 262|Community 262]]
 - [[_COMMUNITY_Community 263|Community 263]]
-- [[_COMMUNITY_Community 264|Community 264]]
-- [[_COMMUNITY_Community 265|Community 265]]
-- [[_COMMUNITY_Community 266|Community 266]]
 - [[_COMMUNITY_Community 267|Community 267]]
 - [[_COMMUNITY_Community 268|Community 268]]
 - [[_COMMUNITY_Community 269|Community 269]]
@@ -259,6 +259,7 @@
 - [[_COMMUNITY_Community 271|Community 271]]
 - [[_COMMUNITY_Community 272|Community 272]]
 - [[_COMMUNITY_Community 273|Community 273]]
+- [[_COMMUNITY_Community 274|Community 274]]
 - [[_COMMUNITY_Community 275|Community 275]]
 - [[_COMMUNITY_Community 276|Community 276]]
 - [[_COMMUNITY_Community 277|Community 277]]
@@ -266,15 +267,14 @@
 - [[_COMMUNITY_Community 279|Community 279]]
 - [[_COMMUNITY_Community 280|Community 280]]
 - [[_COMMUNITY_Community 281|Community 281]]
-- [[_COMMUNITY_Community 282|Community 282]]
-- [[_COMMUNITY_Community 296|Community 296]]
-- [[_COMMUNITY_Community 297|Community 297]]
-- [[_COMMUNITY_Community 298|Community 298]]
-- [[_COMMUNITY_Community 299|Community 299]]
-- [[_COMMUNITY_Community 300|Community 300]]
-- [[_COMMUNITY_Community 301|Community 301]]
-- [[_COMMUNITY_Community 302|Community 302]]
-- [[_COMMUNITY_Community 303|Community 303]]
+- [[_COMMUNITY_Community 283|Community 283]]
+- [[_COMMUNITY_Community 284|Community 284]]
+- [[_COMMUNITY_Community 285|Community 285]]
+- [[_COMMUNITY_Community 286|Community 286]]
+- [[_COMMUNITY_Community 287|Community 287]]
+- [[_COMMUNITY_Community 288|Community 288]]
+- [[_COMMUNITY_Community 289|Community 289]]
+- [[_COMMUNITY_Community 290|Community 290]]
 - [[_COMMUNITY_Community 304|Community 304]]
 - [[_COMMUNITY_Community 305|Community 305]]
 - [[_COMMUNITY_Community 306|Community 306]]
@@ -310,6 +310,15 @@
 - [[_COMMUNITY_Community 336|Community 336]]
 - [[_COMMUNITY_Community 337|Community 337]]
 - [[_COMMUNITY_Community 338|Community 338]]
+- [[_COMMUNITY_Community 339|Community 339]]
+- [[_COMMUNITY_Community 340|Community 340]]
+- [[_COMMUNITY_Community 341|Community 341]]
+- [[_COMMUNITY_Community 342|Community 342]]
+- [[_COMMUNITY_Community 343|Community 343]]
+- [[_COMMUNITY_Community 344|Community 344]]
+- [[_COMMUNITY_Community 345|Community 345]]
+- [[_COMMUNITY_Community 346|Community 346]]
+- [[_COMMUNITY_Community 347|Community 347]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `get()` - 166 edges
@@ -335,15 +344,15 @@
 - `test_order_tracking_intent()` --calls--> `classify_intent()`  [INFERRED]
   backend/tests/test_agent_flow.py → backend/app/agents/intent_router.py
 
-## Communities (339 total, 89 thin omitted)
+## Communities (348 total, 90 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.01
-Nodes (28): assertClientRequestTaskCapability(), assertTaskCapability(), assertTaskHandlerCapability(), assertToolsCallTaskCapability(), base64ToUint8Array(), base64urlToUint8Array(), _catch(), _catch2() (+20 more)
+Nodes (31): assertClientRequestTaskCapability(), assertTaskCapability(), assertTaskHandlerCapability(), assertToolsCallTaskCapability(), base64ToUint8Array(), base64urlToUint8Array(), _catch(), _catch2() (+23 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.02
-Nodes (193): _$(), $4(), _5(), $8(), A4(), a5(), a7(), a8() (+185 more)
+Nodes (212): _$(), $4(), _5(), $8(), A4(), a5(), a7(), a8() (+204 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.02
@@ -351,255 +360,255 @@ Nodes (172): abort(), assert(), Au(), bd(), Bl(), bp(), Bu(), catchall() (+164 m
 
 ### Community 3 - "Community 3"
 Cohesion: 0.02
-Nodes (113): _array(), _base64(), base642(), _base64url(), base64url2(), _bigint(), bigint2(), bigint3() (+105 more)
+Nodes (113): _array(), _base64(), base642(), _base64url(), base64url2(), bigint3(), boolean3(), _cidrv4() (+105 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.04
-Nodes (88): a(), accept(), all(), allTextContents(), and(), args(), array(), back() (+80 more)
+Cohesion: 0.05
+Nodes (88): bg(), browserAuthSelector(), _capture(), captureCandidate(), commitCapture(), currentState(), CW(), Dg() (+80 more)
 
 ### Community 5 - "Community 5"
+Cohesion: 0.05
+Nodes (80): a(), accept(), allTextContents(), and(), args(), array(), back(), browserAuthSelector() (+72 more)
+
+### Community 6 - "Community 6"
 Cohesion: 0.07
 Nodes (72): chooseLatestUsableChromeProfile(), chromeProfileDirectorySortKey(), compareChromeProfileDirectories(), findLatestChromeProfile(), getChromeExtensionInstallStatus(), getChromeExtensionInstallStatusForProfile(), getChromeExtensionPreferences(), getChromePreferencesPathOverride() (+64 more)
 
-### Community 6 - "Community 6"
-Cohesion: 0.04
-Nodes (65): SupervisorAction, ChatMessage, ChatRequest, EscalationAlert, ExtractionSource, OrderStatus, Pydantic schemas for API request/response validation., Sent to the Agent Dashboard when a customer is escalated. (+57 more)
-
 ### Community 7 - "Community 7"
-Cohesion: 0.05
-Nodes (76): _0(), a(), Bn(), c(), clone(), d0(), En(), Eo() (+68 more)
-
-### Community 8 - "Community 8"
 Cohesion: 0.06
 Nodes (60): main(), parseArgs(), requireArg(), main(), parseArgs(), requireArg(), saveBlobToFile(), slidesFromPresentation() (+52 more)
 
+### Community 8 - "Community 8"
+Cohesion: 0.05
+Nodes (63): addEventListener(), addListener(), addTabCleanupHandler(), AL(), c0(), C3(), cee(), clearPlaywrightFrameWorldsForTarget() (+55 more)
+
 ### Community 9 - "Community 9"
-Cohesion: 0.04
-Nodes (49): LLMAdapter, ProductAgent, ProductAgentResponse, Product Agent (Phase D.1)  Owns product-domain reasoning. Receives semantic cont, Map a semantic intent to a Product-domain skill using explicit mappings only., Map a semantic intent to a Product-domain skill using explicit mappings only., Map a semantic intent to a Product-domain skill using explicit mappings only., Map a semantic intent to a Product-domain skill using explicit mappings only. (+41 more)
+Cohesion: 0.07
+Nodes (26): buildSlide01(), buildSlide02(), buildSlide03(), buildSlide04(), buildSlide05(), buildSlide06(), buildSlide07(), buildSlide08() (+18 more)
 
 ### Community 10 - "Community 10"
-Cohesion: 0.05
-Nodes (46): counter(), admin_get_metrics(), Get aggregate LLM, tool, and guardrail metrics for the admin dashboard., dict, RAGAS RAG Evaluation Tests — measures faithfulness, relevancy, context precisio, Live tests that validate RAG response quality with the actual LLM., For questions outside the KB, the RAG should gracefully refuse., Full RAGAS evaluation. Run with RUN_RAGAS_EVAL=1. (+38 more)
-
-### Community 11 - "Community 11"
-Cohesion: 0.09
-Nodes (56): Be(), browserName(), bt(), ca(), da(), dE(), dj(), Eg() (+48 more)
-
-### Community 12 - "Community 12"
-Cohesion: 0.08
-Nodes (54): attachErrorIfNoneExists(), _checkInitializationStatus(), _checkUserHasIdForEvaluation(), _createErrorUpdateDetails(), $emt(), _enqueueDiagnosticsEvent(), _enqueueExposure(), _extractBootstrapMetadata() (+46 more)
-
-### Community 13 - "Community 13"
 Cohesion: 0.08
 Nodes (51): and(), _build_lo_env(), calc_dpi_via_ooxml_docx(), calc_dpi_via_pdf(), convert_to_pdf(), _default_macos_tmpdir_for_soffice(), main(), _prepend_bundled_runtime_bin() (+43 more)
 
-### Community 14 - "Community 14"
-Cohesion: 0.05
-Nodes (52): cancel_order(), create_ticket(), get_chat_history(), get_customer_history(), get_ticket(), process_refund(), Database Tools — Supabase operations that power both the MCP server and the Fast, Get past chat conversations for a customer. (+44 more)
-
-### Community 15 - "Community 15"
+### Community 11 - "Community 11"
 Cohesion: 0.07
-Nodes (53): actionError(), allTextContents(), and(), args(), cachedRead(), check(), clear(), click() (+45 more)
+Nodes (39): OrchestrationDomain, SupervisorAction, ExtractionSource, OrderStatus, Pydantic schemas for API request/response validation., RouterFailureType, Sentiment, TargetAgentState (+31 more)
 
-### Community 16 - "Community 16"
-Cohesion: 0.12
-Nodes (32): RiskLevel, SkillExecutionStatus, SkillDefinition, SkillMetadata, SkillPolicy, SkillWorkflow, load_from_file(), SkillLoader (+24 more)
-
-### Community 17 - "Community 17"
-Cohesion: 0.07
-Nodes (48): adjustForFailure(), adjustForSuccess(), _attemptScheduledFlush(), batchSize(), _clearAllTimers(), debug(), _executeFlush(), finally() (+40 more)
-
-### Community 18 - "Community 18"
-Cohesion: 0.06
-Nodes (48): AL(), aX(), beacon(), C3(), clearPlaywrightFrameWorldsForTarget(), clearPlaywrightStateForTarget(), cm(), cx() (+40 more)
-
-### Community 19 - "Community 19"
+### Community 12 - "Community 12"
 Cohesion: 0.09
-Nodes (22): buildSlide01(), buildSlide02(), buildSlide04(), buildSlide05(), buildSlide06(), buildSlide07(), buildSlide08(), buildSlide09() (+14 more)
+Nodes (47): An(), callCdpTarget(), callRuntimeEvaluateInExecutionTarget(), callRuntimeEvaluateWithPlaywrightInjectedInTarget(), clearPlaywrightStateForTarget(), deletePlaywrightFrameWorld(), ds(), Dy() (+39 more)
 
-### Community 20 - "Community 20"
-Cohesion: 0.05
-Nodes (44): admin_get_kb_doc(), admin_list_kb(), admin_reingest_kb(), admin_update_llm_settings(), cancel_order_endpoint(), customer_history(), dashboard_stats(), dev_login() (+36 more)
+### Community 13 - "Community 13"
+Cohesion: 0.12
+Nodes (34): ProductAgentResponse, Structured response produced by ProductAgent., Structured response produced by ProductAgent., Structured response produced by ProductAgent., Structured response produced by ProductAgent., RiskLevel, SkillExecutionStatus, SkillDefinition (+26 more)
 
-### Community 21 - "Community 21"
+### Community 14 - "Community 14"
 Cohesion: 0.04
 Nodes (27): WebSocket connection and message tests.  Uses FastAPI TestClient for WebSocket, GET /api/v1/dashboard/stats should return statistics., Test WebSocket chat connections., WebSocket should connect and receive welcome message., WebSocket should connect with a specific session ID., Empty messages should be silently ignored (no response)., WebSocket should handle plain text (not JSON) gracefully., Reconnecting with the same session ID should append to transcript consistently. (+19 more)
 
-### Community 22 - "Community 22"
-Cohesion: 0.12
-Nodes (42): An(), callCdpTarget(), callRuntimeEvaluateInExecutionTarget(), callRuntimeEvaluateWithPlaywrightInjectedInTarget(), deletePlaywrightFrameWorld(), ds(), Dy(), ensurePlaywrightInjectedInTarget() (+34 more)
+### Community 15 - "Community 15"
+Cohesion: 0.11
+Nodes (42): product_node(), Node: Product Domain Agent., Node: Product Domain Agent., ProductDomainContext, Bounded context that ProductAgent receives for each turn., Bounded context that ProductAgent receives for each turn., Explicit, strongly typed multi-turn workflow orchestration state.     Serves as, Explicit, strongly typed multi-turn workflow orchestration state.     Serves as (+34 more)
 
-### Community 23 - "Community 23"
+### Community 16 - "Community 16"
+Cohesion: 0.1
+Nodes (44): actionError(), allTextContents(), and(), cachedRead(), check(), clear(), click(), count() (+36 more)
+
+### Community 17 - "Community 17"
+Cohesion: 0.05
+Nodes (35): ProductAgent, Map a semantic intent to a Product-domain skill using explicit mappings only., Map a semantic intent to a Product-domain skill using explicit mappings only., Map a semantic intent to a Product-domain skill using explicit mappings only., Map a semantic intent to a Product-domain skill using explicit mappings only., Domain agent for the Product vertical.      Responsibilities:     - Receive prod, Domain agent for the Product vertical.      Responsibilities:     - Receive prod, Domain agent for the Product vertical.      Responsibilities:     - Receive prod (+27 more)
+
+### Community 18 - "Community 18"
+Cohesion: 0.06
+Nodes (40): cancel_order(), _check_warranty_status_impl(), get_customer_history(), get_ticket(), process_refund(), Database Tools — Supabase operations that power both the MCP server and the Fast, Get details of a specific ticket, including updates., Get details of a specific ticket, including updates. (+32 more)
+
+### Community 19 - "Community 19"
 Cohesion: 0.07
-Nodes (42): add(), assertCanSetRequestHandler(), catchall(), _cleanupTaskProgressHandler(), _cleanupTimeout(), _clearTaskQueue(), convertBaseSchema(), convertSchema() (+34 more)
+Nodes (23): ProductSkillResolver, List all product-domain skills from the central registry., List all product-domain skills from the central registry., List all product-domain skills from the central registry., List all product-domain skills from the central registry., Deterministic skill resolution for the Product domain.     Python selects the sk, Deterministic skill resolution for the Product domain.      Delegates actual ski, Deterministic skill resolution for the Product domain.      Delegates actual ski (+15 more)
 
-### Community 24 - "Community 24"
+### Community 20 - "Community 20"
 Cohesion: 0.05
 Nodes (38): AgentState, create_customer_support_graph(), db_plan_node(), escalation_node(), GraphLLMAdapter, rag_node(), LangGraph Orchestration — wires all agent nodes together into a state graph. Al, Node: Answers questions using Pinecone knowledge base. (+30 more)
 
-### Community 25 - "Community 25"
-Cohesion: 0.11
-Nodes (39): product_node(), Node: Product Domain Agent., Node: Product Domain Agent., ProductDomainContext, Bounded context that ProductAgent receives for each turn., Bounded context that ProductAgent receives for each turn., Explicit, strongly typed multi-turn workflow orchestration state.     Serves as, Explicit, strongly typed multi-turn workflow orchestration state.     Serves as (+31 more)
+### Community 21 - "Community 21"
+Cohesion: 0.06
+Nodes (41): _c(), Ci(), dc(), dirty(), ea(), elementScreenshot(), endsWith(), f() (+33 more)
 
-### Community 26 - "Community 26"
-Cohesion: 0.1
-Nodes (33): WarrantyStatusResult, check_warranty_status(), _check_warranty_status_impl(), _parse_warranty_duration(), Deterministically parse warranty duration from product description., Deterministically parse warranty duration from product description., Deterministically check warranty status for a customer's purchase., Deterministically parse warranty duration from product description. (+25 more)
+### Community 22 - "Community 22"
+Cohesion: 0.05
+Nodes (41): aj(), assertFullCdpEnabled(), b3(), bte(), CJ(), cn(), #e(), EJ() (+33 more)
 
-### Community 27 - "Community 27"
+### Community 23 - "Community 23"
 Cohesion: 0.09
 Nodes (36): test_active_ticket_changed_order_creates(), test_active_ticket_compatible_intent_updates(), test_active_ticket_compatible_issue_no_identifiers_updates(), test_active_ticket_incompatible_intent_creates(), test_active_ticket_new_order_updates(), test_active_ticket_new_order_updates_and_returns_new_order(), test_active_ticket_unknown_product_new_product_updates(), test_ambiguous_candidates_safe_behavior() (+28 more)
 
-### Community 28 - "Community 28"
-Cohesion: 0.07
-Nodes (40): add(), addCloseListener(), addTabAttachHandler(), Aq(), eD(), F3(), _fetchAndPrepFromNetwork(), _fetchFromNetwork() (+32 more)
-
-### Community 29 - "Community 29"
+### Community 24 - "Community 24"
 Cohesion: 0.08
-Nodes (22): ProductSkillResolver, List all product-domain skills from the central registry., List all product-domain skills from the central registry., List all product-domain skills from the central registry., List all product-domain skills from the central registry., Deterministic skill resolution for the Product domain.     Python selects the sk, Deterministic skill resolution for the Product domain.      Delegates actual ski, Deterministic skill resolution for the Product domain.      Delegates actual ski (+14 more)
+Nodes (40): adjustForFailure(), adjustForSuccess(), _attemptScheduledFlush(), batchSize(), _clearAllTimers(), convertPendingEventsToBatches(), createBatches(), _enqueueBatch() (+32 more)
 
-### Community 30 - "Community 30"
+### Community 25 - "Community 25"
 Cohesion: 0.07
 Nodes (39): _addCheck(), base64(), base64url(), cidr(), cuid(), cuid2(), date(), datetime() (+31 more)
 
-### Community 31 - "Community 31"
-Cohesion: 0.06
-Nodes (31): create_new_ticket(), list_customers(), Create a new support ticket., Get all customers with pagination., get_all_customers(), get_customer_by_id(), Get all customers with pagination., Get all customers with pagination. (+23 more)
+### Community 26 - "Community 26"
+Cohesion: 0.08
+Nodes (39): cachedBlocked(), deleteFrameSession(), detachAttachedFrameTargets(), documentation(), ensureRuntimeEnabled(), eV(), fetchBlocked(), focusLocator() (+31 more)
 
-### Community 32 - "Community 32"
+### Community 27 - "Community 27"
 Cohesion: 0.09
-Nodes (37): aj(), allowBeforeUnload(), attachedTabIdForCdpEvent(), Av(), callInputDispatch(), deleteJsDialogForTarget(), dispatchKeyPress(), Dl() (+29 more)
+Nodes (35): classify_intent(), get_router_llm(), parse_and_validate_router_output(), Intent Router Agent — classifies customer intent and sentiment, then routes to, Get the small LLM for fast routing decisions., Deterministic parsing boundary to handle markdown-wrapped JSON from the provider, Get the small LLM for fast routing decisions., Classify the intent, sentiment, and urgency of a customer message.      Args: (+27 more)
 
-### Community 33 - "Community 33"
-Cohesion: 0.07
-Nodes (36): _c(), dc(), dirty(), ea(), endsWith(), f(), Fc(), _getInvalidInput() (+28 more)
+### Community 28 - "Community 28"
+Cohesion: 0.09
+Nodes (37): allowBeforeUnload(), AP(), attachedTabIdForCdpEvent(), Av(), bM(), By(), callInputDispatch(), deleteJsDialogForTarget() (+29 more)
 
-### Community 34 - "Community 34"
+### Community 29 - "Community 29"
+Cohesion: 0.08
+Nodes (36): add(), catchall(), _check(), clone(), cloneDef(), convertBaseSchema(), convertSchema(), datetime() (+28 more)
+
+### Community 30 - "Community 30"
 Cohesion: 0.09
 Nodes (15): Validate a customer's input message.     Returns a GuardrailResult with sanitiz, validate_input(), Guardrail Evaluation Tests — validates prompt injection detection, PII redactio, Order IDs like #1005 should NOT trigger PII detection., Tests that off-topic requests are properly handled., Customer support messages should pass topic boundary checks., Tests that prompt injection attempts are blocked., Ensure normal messages are NOT blocked. (+7 more)
 
-### Community 35 - "Community 35"
+### Community 31 - "Community 31"
+Cohesion: 0.07
+Nodes (35): attach(), attachTarget(), claimTab(), claimUserTab(), closeTab(), createTab(), deleteFileChoosersForTab(), deleteFrameSessionsForTab() (+27 more)
+
+### Community 32 - "Community 32"
 Cohesion: 0.11
 Nodes (32): add_captions(), _caption_paragraph(), _has_caption_following(), _insert_bookmark_around_number(), _iter_word_parts(), _load_tree(), main(), _materialize_fields_in_tree() (+24 more)
 
-### Community 36 - "Community 36"
-Cohesion: 0.1
-Nodes (31): create_montage(), _load_images_with_placeholders(), main(), _make_placeholder(), _natural_key(), Create a visible placeholder tile with a light gray fill and a red X cross., Key function for natural sorting (e.g., Slide2 before Slide10)., Build a montage with a fixed number of columns.      Each cell has size `cell_ (+23 more)
-
-### Community 37 - "Community 37"
+### Community 33 - "Community 33"
 Cohesion: 0.08
 Nodes (16): AgentSkill, Renders the AgentSkill into a prompt format for LLM context., Legacy compatibility facade for existing agents.     It constructs the new stron, Legacy compatibility facade for existing agents.     It constructs the new stron, Renders the SkillDefinition into a prompt format for LLM context., Renders the SkillDefinition into a prompt format for LLM context., render_skill_prompt(), test_agent_skill_legacy_creation() (+8 more)
 
-### Community 38 - "Community 38"
+### Community 34 - "Community 34"
+Cohesion: 0.12
+Nodes (33): create_base_state(), test_ambiguous_semantic_domain(), test_apply_decision_clarification(), test_apply_decision_valid_invariant(), test_approval_not_silently_authorized(), test_completed_product_general_request(), test_completed_product_new_product_issue(), test_completed_product_order_message() (+25 more)
+
+### Community 35 - "Community 35"
 Cohesion: 0.08
 Nodes (13): SystemHealthPage(), StatCard(), useAnimatedCounter(), CustomerChatPage(), DynamicModelSettings(), SkeletonCard(), SkeletonTable(), useToast() (+5 more)
 
-### Community 39 - "Community 39"
-Cohesion: 0.12
-Nodes (32): create_base_state(), test_ambiguous_semantic_domain(), test_apply_decision_clarification(), test_approval_not_silently_authorized(), test_completed_product_general_request(), test_completed_product_new_product_issue(), test_completed_product_order_message(), test_completed_workflow() (+24 more)
+### Community 36 - "Community 36"
+Cohesion: 0.07
+Nodes (30): TicketCreate, TicketResponse, TicketUpdate, admin_reingest_kb(), admin_update_llm_settings(), cancel_order_endpoint(), customer_history(), dashboard_stats() (+22 more)
 
-### Community 40 - "Community 40"
+### Community 37 - "Community 37"
 Cohesion: 0.13
 Nodes (26): _base_template(), _info_row(), _info_table(), Email Notification Service — sends emails via Gmail OAuth API.  Provides templ, Send escalation alert to the support team (and optionally the customer)., Send ticket resolution notification to the customer., Send system alert to the tech team., Send an update or custom message regarding a ticket to the customer. (+18 more)
 
-### Community 41 - "Community 41"
-Cohesion: 0.1
-Nodes (31): at(), attach(), closeTab(), Dp(), e1(), enableFocusEmulation(), enableOopifAutoAttach(), enableOopifAutoAttachForTarget() (+23 more)
-
-### Community 42 - "Community 42"
+### Community 38 - "Community 38"
 Cohesion: 0.09
-Nodes (31): addAttachment(), addEventProcessor(), addScopeListener(), bH(), BX(), dx(), e0(), enableDownload() (+23 more)
+Nodes (31): beacon(), dH(), EP(), fetchEvaluations(), getActiveFallbackUrl(), getChecksum(), _getInternalRequestArgs(), _getPopulatedURL() (+23 more)
 
-### Community 43 - "Community 43"
+### Community 39 - "Community 39"
+Cohesion: 0.07
+Nodes (24): list_tickets(), Get all tickets with optional status filter., get_all_tickets(), Get all tickets with optional status filter., Get all tickets with optional status filter., Get all tickets with optional status filter., Get all tickets with optional status filter., Get all tickets with optional status filter. (+16 more)
+
+### Community 40 - "Community 40"
+Cohesion: 0.13
+Nodes (30): attachErrorIfNoneExists(), _checkInitializationStatus(), _checkUserHasIdForEvaluation(), $emt(), _enqueueDiagnosticsEvent(), _enqueueExposure(), _extractBootstrapMetadata(), finalize() (+22 more)
+
+### Community 41 - "Community 41"
 Cohesion: 0.08
 Nodes (30): cancelTask(), compile(), connect(), createMessage(), createMessageStream(), elicitInput(), elicitInputStream(), encodeFrame() (+22 more)
 
-### Community 44 - "Community 44"
-Cohesion: 0.07
-Nodes (27): _execute_tool(), Execute a database tool by name, injecting the authenticated customer_id securel, Execute a database tool by name, injecting the authenticated customer_id securel, Execute a database tool by name, injecting the authenticated customer_id securel, Execute a database tool by name, injecting the authenticated customer_id securel, Execute a database tool by name, injecting the authenticated customer_id securel, Execute a database tool by name, injecting the authenticated customer_id securel, get_dashboard_stats() (+19 more)
-
-### Community 45 - "Community 45"
-Cohesion: 0.1
-Nodes (29): deleteFileChoosersForTab(), deleteFrameSession(), deleteFrameSessionsForTab(), detachAttachedFrameTargets(), discardRawCdpEventsForTab(), documentation(), ensureRuntimeEnabled(), forgetAttachedTab() (+21 more)
-
-### Community 46 - "Community 46"
-Cohesion: 0.22
-Nodes (27): addMacosApp(), collectInventory(), commandPath(), findCommandBrowsers(), findDefaultBrowserLinux(), findDefaultBrowserMacos(), findDefaultBrowserWindows(), findMacosApps() (+19 more)
-
-### Community 47 - "Community 47"
+### Community 42 - "Community 42"
 Cohesion: 0.15
 Nodes (27): analyze_check(), ensure_gh_available(), extract_failure_snippet(), extract_job_id(), extract_run_id(), fetch_check_log(), fetch_checks(), fetch_job_log() (+19 more)
 
-### Community 48 - "Community 48"
-Cohesion: 0.12
-Nodes (25): classify_semantic_intent(), get_semantic_router_llm(), parse_and_validate_semantic_output(), Semantic Router Agent (Phase B) Classifies the semantic domain, intent, sentime, Classify the message and output a strongly typed SemanticRouteResult.     Catch, Parses LLM output, enforcing the SemanticRouteResult schema and capturing failur, RouterDiagnostics, SemanticRouteResult (+17 more)
+### Community 43 - "Community 43"
+Cohesion: 0.14
+Nodes (29): _0(), En(), Et(), getIsolationScope(), getSession(), getTransport(), GR(), gU() (+21 more)
 
-### Community 49 - "Community 49"
+### Community 44 - "Community 44"
+Cohesion: 0.13
+Nodes (29): a0(), captureCheckIn(), _clearOutcomes(), close(), CO(), cte(), emit(), flush() (+21 more)
+
+### Community 45 - "Community 45"
+Cohesion: 0.22
+Nodes (27): addMacosApp(), collectInventory(), commandPath(), findCommandBrowsers(), findDefaultBrowserLinux(), findDefaultBrowserMacos(), findDefaultBrowserWindows(), findMacosApps() (+19 more)
+
+### Community 46 - "Community 46"
+Cohesion: 0.16
+Nodes (25): WarrantyStatusResult, check_warranty_status(), Deterministically check warranty status for a customer's purchase., Deterministically check warranty status for a customer's purchase., Deterministically check warranty status for a customer's purchase., Deterministically check warranty status for a customer's purchase., build_mock_order(), create_mock_supabase() (+17 more)
+
+### Community 47 - "Community 47"
+Cohesion: 0.07
+Nodes (23): list_customers(), Get all customers with pagination., get_all_customers(), Get all customers with pagination., Get all customers with pagination., Get all customers with pagination., Get all customers with pagination., Get all customers with pagination. (+15 more)
+
+### Community 48 - "Community 48"
 Cohesion: 0.09
 Nodes (16): admin_get_connection_metrics(), Get WebSocket connection metrics., ConnectionManager, get_connection_metrics(), WebSocket Connection Manager — handles real-time connections for the customer ch, Remove an agent's connection., Send a message directly to a specific customer., Broadcast a message to all agents monitoring this session. (+8 more)
 
-### Community 50 - "Community 50"
+### Community 49 - "Community 49"
 Cohesion: 0.09
 Nodes (7): auth_headers_a(), auth_headers_b(), create_mock_jwt(), expired_headers(), test_wrong_role(), test_ws_customer_a_can_connect_own_session(), test_ws_customer_a_cannot_connect_customer_b_session()
 
+### Community 50 - "Community 50"
+Cohesion: 0.12
+Nodes (25): classify_semantic_intent(), get_semantic_router_llm(), parse_and_validate_semantic_output(), Semantic Router Agent (Phase B) Classifies the semantic domain, intent, sentime, Classify the message and output a strongly typed SemanticRouteResult.     Catch, Parses LLM output, enforcing the SemanticRouteResult schema and capturing failur, RouterDiagnostics, SemanticRouteResult (+17 more)
+
 ### Community 51 - "Community 51"
-Cohesion: 0.09
-Nodes (28): abort(), activeJsDialog(), callRawCdp(), currentTopLevelUrl(), deleteJsDialog(), ensurePlaywrightInjected(), focusLocator(), $i() (+20 more)
+Cohesion: 0.11
+Nodes (28): A6(), aI(), C6(), dirty(), _getCached(), _getInvalidInput(), _getOrReturnCtx(), _getType() (+20 more)
 
 ### Community 52 - "Community 52"
-Cohesion: 0.15
-Nodes (28): _capture(), captureCandidate(), commitCapture(), currentState(), DQ(), dU(), ensureTracked(), getJsDialog() (+20 more)
-
-### Community 53 - "Community 53"
 Cohesion: 0.12
 Nodes (24): DBPlannerOutput, determine_db_action(), _extract_number(), generate_response(), get_db_llm(), Database / Memory Agent — handles customer-specific operations by querying the, Generate a response using database tool results.      Args:         message: The, Generate a response using database tool results.      Args:         message: (+16 more)
 
+### Community 53 - "Community 53"
+Cohesion: 0.11
+Nodes (27): assertCompatibleLocator(), assertRequiredDocumentationRead(), bundle(), cD(), exclude(), Fd(), filter(), getAssets() (+19 more)
+
 ### Community 54 - "Community 54"
-Cohesion: 0.1
-Nodes (27): addToNumericResult(), array(), emitNamedEntityData(), emitNotTerminatedNamedEntity(), emitNumericEntity(), end(), fail(), handleData() (+19 more)
+Cohesion: 0.11
+Nodes (27): addAttachment(), addScopeListener(), Ah(), bH(), BX(), ch(), dx(), ec() (+19 more)
 
 ### Community 55 - "Community 55"
 Cohesion: 0.1
 Nodes (25): get_test_customer_id(), make_state(), Tests for the LangGraph agent flow — verifies intent routing and end-to-end gra, Test end-to-end LangGraph execution., Test end-to-end LangGraph execution., Test that RAG-grounded responses work correctly., Test that RAG-grounded responses work correctly., Get the first customer ID from the database for testing. (+17 more)
 
 ### Community 56 - "Community 56"
-Cohesion: 0.08
-Nodes (26): attachTarget(), Au(), claimTab(), claimUserTab(), createTab(), Cs(), detach(), detachTab() (+18 more)
+Cohesion: 0.11
+Nodes (26): BW(), cY(), dm(), dW(), eb(), evaluateOnPlaywrightSelector(), fW(), getBrowsers() (+18 more)
 
 ### Community 57 - "Community 57"
+Cohesion: 0.12
+Nodes (26): callTarget(), catch(), cleanup(), cleanupPageClipboards(), cleanupTab(), cleanupTarget(), clickDomCuaNode(), clickPoint() (+18 more)
+
+### Community 58 - "Community 58"
+Cohesion: 0.11
+Nodes (26): _cleanupTaskProgressHandler(), _cleanupTimeout(), clear(), _clearTaskQueue(), close(), emit(), extractDefs(), finalize() (+18 more)
+
+### Community 59 - "Community 59"
 Cohesion: 0.14
 Nodes (22): acquireWriteLock(), assertRegularFile(), assertSingleLine(), assertSkillName(), createTemplateSkill(), getCanonicalGoogleWorkspaceUrl(), getCreateIdentity(), getImageTemplateWorkflow() (+14 more)
 
-### Community 58 - "Community 58"
+### Community 60 - "Community 60"
 Cohesion: 0.09
 Nodes (25): admin_health_check(), Aggregated health check for all services., check_llm_health(), check_supabase_health(), check_vectordb_health(), Check if the cloud LLM API is reachable and which models are available., Check if the cloud LLM API is reachable and which models are available., Check if the cloud LLM API is reachable and which models are available. (+17 more)
 
-### Community 59 - "Community 59"
-Cohesion: 0.11
-Nodes (23): classify_intent(), get_router_llm(), Intent Router Agent — classifies customer intent and sentiment, then routes to, Get the small LLM for fast routing decisions., Get the small LLM for fast routing decisions., Classify the intent, sentiment, and urgency of a customer message.      Args:, Classify the intent, sentiment, and urgency of a customer message.      Args:, Classify the intent, sentiment, and urgency of a customer message.      Args: (+15 more)
-
-### Community 60 - "Community 60"
-Cohesion: 0.12
-Nodes (25): A6(), aI(), C6(), dirty(), _getCached(), _getInvalidInput(), _getOrReturnCtx(), _getType() (+17 more)
-
 ### Community 61 - "Community 61"
-Cohesion: 0.11
-Nodes (25): BW(), eq(), evaluateOnPlaywrightSelector(), Fd(), gI(), install(), KW(), Od() (+17 more)
+Cohesion: 0.09
+Nodes (16): Application configuration loaded from environment variables., Settings, validate_log_level(), validate_supabase_key(), validate_supabase_url(), BaseSettings, validate_all_disjoint(), validate_disjoint() (+8 more)
 
 ### Community 62 - "Community 62"
+Cohesion: 0.08
+Nodes (18): Integration tests for Supabase database tools.  Tests customer lookup, order t, Test product/inventory operations., List all products in catalog., Search for a product by name., Search for non-existent product returns error., Test dashboard/analytics operations., Get dashboard statistics., Test product/inventory operations. (+10 more)
+
+### Community 63 - "Community 63"
 Cohesion: 0.13
 Nodes (24): $(), assertCompatibleLocator(), Do(), eo(), exclude(), filter(), first(), Fo() (+16 more)
 
-### Community 63 - "Community 63"
-Cohesion: 0.11
-Nodes (24): ch(), cre(), fv(), fX(), Il(), lre(), lx(), mM() (+16 more)
-
 ### Community 64 - "Community 64"
-Cohesion: 0.13
-Nodes (24): aW(), cI(), CW(), evaluateWithPlaywrightInjected(), fk(), fs(), G$(), hI() (+16 more)
+Cohesion: 0.1
+Nodes (24): addEvent(), addToPendingEventsQueue(), appendAndResetNonExposedChecks(), checkQuickFlush(), containsAtLeastOneFullBatch(), debug(), enqueue(), _getCurrentPageUrl() (+16 more)
 
 ### Community 65 - "Community 65"
-Cohesion: 0.12
-Nodes (24): aborted(), _check(), clone(), cloneDef(), explicitlyAborted(), extend(), handleCanaryResult(), handleIntersectionResults() (+16 more)
+Cohesion: 0.22
+Nodes (24): aA(), Be(), browserName(), bt(), ca(), dE(), dj(), Eg() (+16 more)
 
 ### Community 66 - "Community 66"
 Cohesion: 0.09
@@ -615,271 +624,271 @@ Nodes (23): Ag(), clearPollingTimer(), closeWatcher(), discoverRolloutPath(), di
 
 ### Community 69 - "Community 69"
 Cohesion: 0.11
-Nodes (23): addEventListener(), addListener(), addTabCleanupHandler(), cee(), constructor(), createNamespace(), eb(), fO() (+15 more)
+Nodes (23): bZ(), _createErrorUpdateDetails(), dB(), fetchLiveEvaluations(), getContext(), getLiveCursor(), getValues(), _initFlushCoordinator() (+15 more)
 
 ### Community 70 - "Community 70"
-Cohesion: 0.09
-Nodes (23): assertFullCdpEnabled(), b3(), #e(), fullCdpAccessState(), hf(), identityForElement(), isFullCdpEnabled(), J3() (+15 more)
+Cohesion: 0.12
+Nodes (23): bD(), createInventory(), currentSession(), ensure(), ensurePageClipboard(), Fi(), getActive(), getCurrentTurnId() (+15 more)
 
 ### Community 71 - "Community 71"
-Cohesion: 0.13
-Nodes (22): buildRevision(), callTarget(), captureAX(), captureDocuments(), captureJavaScriptDialog(), captureSessions(), clickDomCuaNode(), clickPoint() (+14 more)
+Cohesion: 0.09
+Nodes (21): cancel_order(), check_inventory(), create_ticket(), get_customer_history(), get_dashboard_stats(), get_ticket(), lookup_customer(), process_refund() (+13 more)
 
 ### Community 72 - "Community 72"
+Cohesion: 0.1
+Nodes (22): fX(), Gx(), kh(), LW(), mM(), mX(), nM(), NW() (+14 more)
+
+### Community 73 - "Community 73"
+Cohesion: 0.12
+Nodes (22): CL(), finite(), fte(), gt(), gte(), int(), length(), lt() (+14 more)
+
+### Community 74 - "Community 74"
 Cohesion: 0.23
 Nodes (20): cmd_fill(), cmd_list(), cmd_wrap(), fill_sdts_in_tree(), iter_parts(), main(), make_run(), make_sdt() (+12 more)
 
-### Community 73 - "Community 73"
-Cohesion: 0.17
-Nodes (21): evaluateJavascript(), Fg(), Gg(), hg(), hK(), includes(), jy(), Ly() (+13 more)
+### Community 75 - "Community 75"
+Cohesion: 0.14
+Nodes (21): actionError(), check(), clear(), click(), dblclick(), downloadMedia(), evaluate(), evaluateAll() (+13 more)
 
-### Community 74 - "Community 74"
+### Community 76 - "Community 76"
+Cohesion: 0.13
+Nodes (21): addIntegration(), _fetchAndPrepFromNetwork(), _fetchFromNetwork(), frameIdentityForResolvedSelectorTarget(), _getCacheKey(), _getDataAsyncImpl(), _getIsCacheValueValid(), _getSdkKey() (+13 more)
+
+### Community 77 - "Community 77"
+Cohesion: 0.1
+Nodes (21): As(), B5(), d5(), first(), getByLabel(), getByPlaceholder(), getByRole(), getByTestId() (+13 more)
+
+### Community 78 - "Community 78"
 Cohesion: 0.25
 Nodes (19): _bookmark_names(), _find_fig_tbl_bookmarks(), _insert_bookmark_in_paragraph(), _load_tree(), main(), _make_internal_hyperlink(), _make_paragraph(), _max_bookmark_id() (+11 more)
 
-### Community 75 - "Community 75"
+### Community 79 - "Community 79"
 Cohesion: 0.14
 Nodes (10): _check_hallucination(), GuardrailResult, Guardrails — validates every user input and AI output before processing.  Inpu, Validate the AI's response before sending it to the customer.      Args:, Simple heuristic hallucination detection.     Flags responses that contain spec, Result of a guardrail check., validate_output(), Tests that AI responses are sanitized before sending to customer. (+2 more)
 
-### Community 76 - "Community 76"
+### Community 80 - "Community 80"
 Cohesion: 0.11
 Nodes (18): Set a trace ID in the current context. Returns the trace ID., set_trace_id(), global_exception_handler(), health_check(), lifespan(), FastAPI Application Entry Point — main.py  Serves: - REST API on /api/v1/* -, Catch unhandled exceptions and return a clean JSON error + log it., Customer chat — auto-generates a session ID. (+10 more)
 
-### Community 77 - "Community 77"
-Cohesion: 0.13
-Nodes (20): bL(), EM(), endsWith(), gL(), i1(), kv(), l1(), logError() (+12 more)
+### Community 81 - "Community 81"
+Cohesion: 0.15
+Nodes (20): AB(), Bo(), captureMessage(), ct(), eventFromException(), eventFromMessage(), fm(), gO() (+12 more)
 
-### Community 78 - "Community 78"
+### Community 82 - "Community 82"
 Cohesion: 0.14
-Nodes (20): a1(), aD(), all(), assertCompatibleLocator(), assertRequiredDocumentationRead(), bundle(), bv(), cD() (+12 more)
+Nodes (20): bL(), bv(), EM(), enableDownload(), gL(), gv(), hv(), i1() (+12 more)
 
-### Community 79 - "Community 79"
-Cohesion: 0.13
-Nodes (20): append(), bte(), finite(), gt(), gte(), i7(), int(), length() (+12 more)
-
-### Community 80 - "Community 80"
+### Community 83 - "Community 83"
 Cohesion: 0.22
 Nodes (19): apply_fixes(), audit_docx(), audit_headings(), audit_hyperlinks(), audit_images_alt(), audit_tables(), Finding, _fix_image_alt_from_filename() (+11 more)
 
-### Community 81 - "Community 81"
+### Community 84 - "Community 84"
 Cohesion: 0.11
-Nodes (18): Node: Classifies intent and decides routing (with Phase B Shadow Mode)., Node: Classifies intent and decides routing (with Phase B Shadow Mode)., Executes the shadow router and logs the result safely., Executes the shadow router and logs the result safely., Node: Classifies intent and decides routing (with Phase B Shadow Mode)., Node: Classifies intent and decides routing (with Phase B Shadow Mode)., Node: Classifies intent and decides routing., Node: Classifies intent and decides routing (with Phase B Shadow Mode). (+10 more)
+Nodes (19): admin_get_kb_doc(), admin_list_kb(), List all knowledge base documents., Read a specific knowledge base document., get_knowledge_base_doc(), list_knowledge_base_docs(), List all knowledge base documents., List all knowledge base documents. (+11 more)
 
-### Community 82 - "Community 82"
+### Community 85 - "Community 85"
+Cohesion: 0.11
+Nodes (17): _execute_tool(), Execute a database tool by name, injecting the authenticated customer_id securel, Execute a database tool by name, injecting the authenticated customer_id securel, Execute a database tool by name, injecting the authenticated customer_id securel, Execute a database tool by name, injecting the authenticated customer_id securel, Execute a database tool by name, injecting the authenticated customer_id securel, Execute a database tool by name, injecting the authenticated customer_id securel, get_chat_history() (+9 more)
+
+### Community 86 - "Community 86"
+Cohesion: 0.11
+Nodes (14): LLMAdapter, Product Agent (Phase D.1)  Owns product-domain reasoning. Receives semantic cont, # NOTE: This single-primary-tool pattern is temporary for the D.1 vertical slice, Protocol for LLM invocation — decouples ProductAgent from any specific provider., Protocol for LLM invocation — decouples ProductAgent from any specific provider., Protocol for LLM invocation — decouples ProductAgent from any specific provider., Protocol for LLM invocation — decouples ProductAgent from any specific provider., SkillExecutionResult (+6 more)
+
+### Community 87 - "Community 87"
 Cohesion: 0.13
 Nodes (15): CompressedTimedRotatingFileHandler, get_recent_logs(), get_trace_id(), JSONFormatter, Human-readable console format that includes trace_id., Setup production-grade logging with rotating files and JSON formatting.      A, Read recent logs from the JSON log file for the Admin Dashboard.      Args:, Get the current trace ID from context, or generate a new one. (+7 more)
 
-### Community 83 - "Community 83"
+### Community 88 - "Community 88"
 Cohesion: 0.19
 Nodes (17): evaluate_example_with_retry(), DummyExample, Test that arbitrary top-level transport exceptions are retried., Test that a transport failure is retried and eventually fails if it exceeds retr, Verify that execution is bounded by the semaphore., Test that a 401 Unauthorized is not retried., Test that a 403 Forbidden is not retried., Test that a 429 RateLimit is retried. (+9 more)
 
-### Community 84 - "Community 84"
+### Community 89 - "Community 89"
 Cohesion: 0.11
-Nodes (19): CJ(), EP(), eW(), fn(), getInfo(), gw(), ip(), isWebMcpEnabled() (+11 more)
+Nodes (18): Node: Classifies intent and decides routing (with Phase B Shadow Mode)., Node: Classifies intent and decides routing (with Phase B Shadow Mode)., Executes the shadow router and logs the result safely., Executes the shadow router and logs the result safely., Node: Classifies intent and decides routing (with Phase B Shadow Mode)., Node: Classifies intent and decides routing (with Phase B Shadow Mode)., Node: Classifies intent and decides routing., Node: Classifies intent and decides routing (with Phase B Shadow Mode). (+10 more)
 
-### Community 85 - "Community 85"
+### Community 90 - "Community 90"
+Cohesion: 0.11
+Nodes (19): addBreadcrumb(), clearBreadcrumbs(), cz(), _notifyScopeListeners(), recordDroppedEvent(), removeAttribute(), Rs(), setAttribute() (+11 more)
+
+### Community 91 - "Community 91"
+Cohesion: 0.13
+Nodes (19): activeRetiredInternalScreencastSessions(), add(), addCloseListener(), addTabAttachHandler(), captureSessions(), enableAccessibility(), Gy(), invalidateFrame() (+11 more)
+
+### Community 92 - "Community 92"
+Cohesion: 0.12
+Nodes (19): aborted(), assertCanSetRequestHandler(), explicitlyAborted(), handleArrayResult(), handleCanaryResult(), handleCatchall(), handleCheckPropertyResult(), handleIntersectionResults() (+11 more)
+
+### Community 93 - "Community 93"
 Cohesion: 0.23
 Nodes (17): _add_result(), check_docx(), _is_heading_style_id(), _is_title_style(), main(), _paragraph_style_id(), _paragraph_text(), _read_xml() (+9 more)
 
-### Community 86 - "Community 86"
+### Community 94 - "Community 94"
 Cohesion: 0.22
 Nodes (15): assert(), decodedBase64Bytes(), exportGoogleWorkspaceFile(), fileReceiverCommand(), findFilePayload(), getGoogleDriveFetchToolName(), getGoogleWorkspaceUrl(), GoogleWorkspaceExportError (+7 more)
 
-### Community 87 - "Community 87"
-Cohesion: 0.16
-Nodes (17): apply_table_geometry(), audit_docx_tables(), column_widths_from_weights(), _ensure_child(), exact_column_widths(), length_to_dxa(), main(), Apply exact, full-table Word geometry to a python-docx table.      Call this a (+9 more)
-
-### Community 88 - "Community 88"
+### Community 95 - "Community 95"
 Cohesion: 0.24
 Nodes (17): add_comment_to_first_indented_paragraph(), add_header_date(), add_page_number_field_to_footer(), _cmd_ooxml(), enable_track_revisions(), hyperlink_first_paragraph(), iso_now(), main() (+9 more)
 
-### Community 89 - "Community 89"
-Cohesion: 0.17
-Nodes (14): CustomerProfile, ExtractedEntity, BaseModel, CustomerContext, Expected, GoldenDataset, GoldenExample, GuardrailExpectations (+6 more)
-
-### Community 90 - "Community 90"
-Cohesion: 0.14
-Nodes (18): $1(), _7(), captureSession(), d3(), ec(), ez(), fU(), gH() (+10 more)
-
-### Community 91 - "Community 91"
+### Community 96 - "Community 96"
 Cohesion: 0.16
-Nodes (18): call(), ck(), clickLocator(), getBackendNodeViewportPoint(), hW(), isDownload(), Kn(), lk() (+10 more)
+Nodes (18): addToNumericResult(), array(), emitNamedEntityData(), emitNotTerminatedNamedEntity(), emitNumericEntity(), end(), fail(), Hx() (+10 more)
 
-### Community 92 - "Community 92"
-Cohesion: 0.17
-Nodes (18): AB(), Bo(), captureCheckIn(), captureMessage(), ct(), eventFromException(), eventFromMessage(), Gz() (+10 more)
+### Community 97 - "Community 97"
+Cohesion: 0.11
+Nodes (18): _addCheck(), base64(), base64url(), cidr(), cuid(), cuid2(), date(), datetime() (+10 more)
 
-### Community 93 - "Community 93"
+### Community 98 - "Community 98"
 Cohesion: 0.12
 Nodes (14): Conditional edge function to determine the next node., Conditional edge function to determine the next node., Conditional edge function to determine the next node., Conditional edge function to determine the next node., Conditional edge function to determine the next node., Conditional edge function to determine the next node., Conditional edge function to determine the next node., route_after_classification() (+6 more)
 
-### Community 94 - "Community 94"
-Cohesion: 0.14
-Nodes (14): generate_escalation_response(), get_escalation_llm(), Escalation Agent — handles angry customers or explicit human handoff requests., Get the small LLM for fast escalation processing., Generate an empathetic handover message., Generate an empathetic handover message., llm(), get_dynamic_settings() (+6 more)
+### Community 99 - "Community 99"
+Cohesion: 0.17
+Nodes (16): apply_decision(), decide(), InvalidSupervisorDecisionError, _is_valid_domain(), Bounded typed representation of transition context.     F.1 LIMITATION: SUSPEND_, Bounded typed representation of transition context., Bounded typed representation of transition context., Deterministic Python Workflow Orchestrator.     Evaluates semantic facts against (+8 more)
 
-### Community 95 - "Community 95"
+### Community 100 - "Community 100"
 Cohesion: 0.14
 Nodes (8): enforce_sandbox_safety(), evaluate_example(), MockSupabaseBuilder, MockSupabaseClient, MockSupabaseExecute, Discover every mutating tool's DB-client resolution path and verify it is mocked, Discover every mutating tool's DB-client resolution path and verify it is mocked, run_baseline()
 
-### Community 96 - "Community 96"
-Cohesion: 0.12
-Nodes (17): configureAndConnect(), connect(), fetchEvaluations(), fetchLiveEvaluations(), getContext(), getLiveCursor(), getLocalVariables(), _getProperties() (+9 more)
+### Community 101 - "Community 101"
+Cohesion: 0.14
+Nodes (14): generate_escalation_response(), get_escalation_llm(), Escalation Agent — handles angry customers or explicit human handoff requests., Get the small LLM for fast escalation processing., Generate an empathetic handover message., Generate an empathetic handover message., llm(), get_dynamic_settings() (+6 more)
 
-### Community 97 - "Community 97"
+### Community 102 - "Community 102"
+Cohesion: 0.15
+Nodes (17): dz(), fB(), Iu(), IZ(), lz(), m0(), nQ(), _onError() (+9 more)
+
+### Community 103 - "Community 103"
+Cohesion: 0.18
+Nodes (17): bq(), Dn(), Do(), ef(), EL(), F$(), fq(), gA() (+9 more)
+
+### Community 104 - "Community 104"
+Cohesion: 0.15
+Nodes (17): aW(), CG(), cI(), format(), J_(), k(), o(), qy() (+9 more)
+
+### Community 105 - "Community 105"
+Cohesion: 0.16
+Nodes (17): all(), aX(), Bk(), captureAX(), captureDocuments(), _D(), dk(), eK() (+9 more)
+
+### Community 106 - "Community 106"
 Cohesion: 0.32
 Nodes (15): describeManifestProblem(), getDefaultWindowsManifestPath(), getNativeHostManifestLocation(), getNativeHostManifestLocationProblem(), getNativeHostManifestStatus(), loadExpectedChromeExtensionConfig(), loadExpectedHostName(), main() (+7 more)
 
-### Community 98 - "Community 98"
-Cohesion: 0.19
-Nodes (15): parse_and_validate_router_output(), Deterministic parsing boundary to handle markdown-wrapped JSON from the provider, test_canonical_escalation(), test_invalid_enum_value(), test_malformed_json(), test_markdown_fenced_json(), test_missing_required_fields(), test_router_internal_failure() (+7 more)
+### Community 107 - "Community 107"
+Cohesion: 0.24
+Nodes (14): calc_dpi_via_ooxml(), calc_dpi_via_pdf(), convert_to_pdf(), main(), rasterize(), Rasterise PPTX/PDF to PNG files placed in out_dir and return the image paths., Calculate DPI from OOXML `ppt/presentation.xml` slide size (cx/cy in EMUs)., Compute DPI from PDF page size.      For OOXML presentation inputs, use the pr (+6 more)
 
-### Community 99 - "Community 99"
+### Community 108 - "Community 108"
+Cohesion: 0.22
+Nodes (16): cm(), dD(), getFileTransferPermission(), getFullCdpPermission(), getOriginPermission(), gs(), handleFileTransferPromptResult(), handleFullCdpPromptResult() (+8 more)
+
+### Community 109 - "Community 109"
 Cohesion: 0.15
-Nodes (16): allowDownload(), catch(), cleanup(), cleanupPageClipboards(), cleanupTab(), cleanupTarget(), ensureInterceptionReady(), handleBindingCall() (+8 more)
+Nodes (16): $1(), _7(), Au(), Cs(), ere(), Ey(), fU(), getTabs() (+8 more)
 
-### Community 100 - "Community 100"
-Cohesion: 0.2
-Nodes (16): attachDebuggerFrameTarget(), CL(), currentSession(), EL(), getCurrentTurnId(), handleAttachedToTarget(), ie(), needsReclaim() (+8 more)
-
-### Community 101 - "Community 101"
-Cohesion: 0.12
-Nodes (16): _addCheck(), base64(), base64url(), cidr(), cuid(), cuid2(), date(), datetime() (+8 more)
-
-### Community 102 - "Community 102"
+### Community 110 - "Community 110"
 Cohesion: 0.19
-Nodes (16): a0(), bB(), CO(), cte(), getDsn(), getOptions(), getSdkMetadata(), Hm() (+8 more)
+Nodes (16): a1(), append(), at(), attachDebuggerFrameTarget(), e1(), executeTargetCdp(), GP(), i7() (+8 more)
 
-### Community 103 - "Community 103"
-Cohesion: 0.13
-Nodes (16): addEvent(), addToPendingEventsQueue(), appendAndResetNonExposedChecks(), checkQuickFlush(), containsAtLeastOneFullBatch(), enqueue(), _getCurrentPageUrl(), hasEventsForFullBatch() (+8 more)
+### Community 111 - "Community 111"
+Cohesion: 0.16
+Nodes (16): abort(), callRawCdp(), deleteJsDialog(), dv(), ensurePlaywrightInjected(), In(), isFinite(), pI() (+8 more)
 
-### Community 104 - "Community 104"
-Cohesion: 0.13
-Nodes (16): B5(), d5(), first(), gd(), getByLabel(), getByPlaceholder(), getByRole(), getByTestId() (+8 more)
+### Community 112 - "Community 112"
+Cohesion: 0.22
+Nodes (14): CustomerProfile, ExtractedEntity, BaseModel, CustomerContext, Expected, GoldenDataset, GoldenExample, GuardrailExpectations (+6 more)
 
-### Community 105 - "Community 105"
+### Community 113 - "Community 113"
 Cohesion: 0.13
 Nodes (15): db_execute_node(), Node: Executes a previously approved high-risk action., Node: Executes a previously approved high-risk action., Node: Searches the web for external answers., Node: Executes a previously approved high-risk action., Node: Executes a previously approved high-risk action., Node: Searches the web for external answers., Node: Executes a previously approved high-risk action. (+7 more)
 
-### Community 106 - "Community 106"
+### Community 114 - "Community 114"
 Cohesion: 0.16
 Nodes (13): generate_customers(), generate_full_dataset(), generate_orders(), generate_tickets(), Indian Synthetic Dataset Generator for Customer Support Agent.  Generates dete, Generate synthetic Indian customers., Generate orders. Returns list of dicts with customer_index and product_index, Generate support tickets referencing valid order indices.     Each ticket maps (+5 more)
 
-### Community 107 - "Community 107"
-Cohesion: 0.18
-Nodes (15): AP(), eV(), fr(), kp(), mj(), Pp(), py(), QP() (+7 more)
-
-### Community 108 - "Community 108"
-Cohesion: 0.19
-Nodes (15): aK(), Bk(), CG(), describeBackendNodeForHitTarget(), eK(), jk(), kk(), pk() (+7 more)
-
-### Community 109 - "Community 109"
-Cohesion: 0.13
-Nodes (15): clearBreadcrumbs(), _notifyScopeListeners(), removeAttribute(), setAttribute(), setAttributes(), setContext(), setConversationId(), setExtra() (+7 more)
-
-### Community 110 - "Community 110"
+### Community 115 - "Community 115"
 Cohesion: 0.26
 Nodes (14): _iter_word_parts(), _load_tree(), main(), _make_ref_field_runs(), _make_run_text(), qn(), Create runs implementing a REF field (begin/instr/separate/result/end)., Replace markers in <w:t> nodes. Marker must be fully inside one node. (+6 more)
 
-### Community 111 - "Community 111"
+### Community 116 - "Community 116"
 Cohesion: 0.14
 Nodes (13): Verify the agent token from headers (for REST routes)., Verify agent secret for WebSocket connections., Verify agent secret for WebSocket connections., Verify customer JWT token from Authorization header and return customer_id., Verify customer JWT token from Authorization header and return customer_id., Verify the admin API key from headers., Verify customer JWT token from WebSocket query parameters., Verify customer JWT token from WebSocket query parameters. (+5 more)
 
-### Community 112 - "Community 112"
+### Community 117 - "Community 117"
+Cohesion: 0.23
+Nodes (13): apply_table_geometry(), audit_docx_tables(), _ensure_child(), length_to_dxa(), main(), Apply exact, full-table Word geometry to a python-docx table.      Call this a, Print table width/indent/grid/cell-width checks. Returns issue count., Return a python-docx Length in DXA/twips. (+5 more)
+
+### Community 118 - "Community 118"
 Cohesion: 0.3
 Nodes (12): _add_comment_to_paragraph(), add_comments(), _append_comment(), _ensure_comments_root(), _ensure_content_types(), _ensure_document_rels(), main(), _next_comment_id() (+4 more)
 
-### Community 113 - "Community 113"
-Cohesion: 0.21
-Nodes (12): decide(), _is_valid_domain(), OrchestrationDomain, Bounded typed representation of transition context.     F.1 LIMITATION: SUSPEND_, Bounded typed representation of transition context., Bounded typed representation of transition context., Deterministic Python Workflow Orchestrator.     Evaluates semantic facts against, Deterministic Python Workflow Orchestrator.     Evaluates semantic facts against (+4 more)
+### Community 119 - "Community 119"
+Cohesion: 0.14
+Nodes (14): get_dashboard_stats(), list_all_products(), List all available products in the catalog. Does not include stock quantity., List all available products in the catalog. Does not include stock quantity., List all available products in the catalog. Does not include stock quantity., List all available products in the catalog. Does not include stock quantity., Get aggregated dashboard statistics., Get aggregated dashboard statistics. (+6 more)
 
-### Community 114 - "Community 114"
+### Community 120 - "Community 120"
 Cohesion: 0.16
 Nodes (13): _estimate_cost(), _estimate_tokens(), Cost & Latency Tracking — wraps LLM calls with timing and token estimation.  Log, Record an input guardrail check., Record an output guardrail check., Context manager that tracks the latency and logs metadata for an LLM call., Decorator that tracks tool execution time and errors.      Usage:         @track, Rough token estimation: ~4 chars per token for English text. (+5 more)
 
-### Community 115 - "Community 115"
-Cohesion: 0.23
-Nodes (14): actionError(), check(), clear(), click(), dblclick(), downloadMedia(), fill(), No() (+6 more)
-
-### Community 116 - "Community 116"
-Cohesion: 0.19
-Nodes (14): Aee(), continueResponse(), Cr(), disableDownload(), _ee(), failPendingDownloadRequest(), failResponse(), Fee() (+6 more)
-
-### Community 117 - "Community 117"
-Cohesion: 0.15
-Nodes (14): Az(), b(), bZ(), dB(), fB(), getEventProcessors(), m0(), nQ() (+6 more)
-
-### Community 118 - "Community 118"
-Cohesion: 0.22
-Nodes (14): bM(), By(), c0(), gB(), gM(), jZ(), Ns(), nZ() (+6 more)
-
-### Community 119 - "Community 119"
-Cohesion: 0.15
-Nodes (3): Application configuration loaded from environment variables., Settings, BaseSettings
-
-### Community 120 - "Community 120"
-Cohesion: 0.26
-Nodes (13): cY(), dW(), fW(), getBrowsers(), getDefault(), getForUrl(), hr(), mW() (+5 more)
-
 ### Community 121 - "Community 121"
-Cohesion: 0.26
-Nodes (13): _clearOutcomes(), close(), emit(), flush(), _flushOutcomes(), h0(), _isClientDoneProcessing(), off() (+5 more)
+Cohesion: 0.24
+Nodes (13): Ao(), captureEvent(), captureException(), I0(), jm(), JP(), _prepareEvent(), _process() (+5 more)
 
 ### Community 122 - "Community 122"
 Cohesion: 0.23
-Nodes (13): Ao(), captureEvent(), captureException(), _configureUser(), I0(), jm(), lm(), _prepareEvent() (+5 more)
+Nodes (13): bB(), d0(), getSdkMetadata(), Gz(), iO(), js(), kz(), MB() (+5 more)
 
 ### Community 123 - "Community 123"
 Cohesion: 0.17
 Nodes (13): A9(), E9(), G9(), instance(), J9(), ji(), K9(), nu() (+5 more)
 
 ### Community 124 - "Community 124"
-Cohesion: 0.17
-Nodes (13): EJ(), gO(), Hee(), hO(), jee(), Jo(), k0(), O0() (+5 more)
+Cohesion: 0.23
+Nodes (13): cre(), Dl(), eD(), fv(), kt(), lre(), mt(), oX() (+5 more)
 
 ### Community 125 - "Community 125"
+Cohesion: 0.22
+Nodes (13): bA(), DI(), ei(), fA(), G3(), HL(), Ig(), k3() (+5 more)
+
+### Community 126 - "Community 126"
 Cohesion: 0.28
 Nodes (12): _collect_ranges(), _comment_text(), extract(), _iter_story_parts(), _load_comments(), main(), _paragraph_plain_text(), Return commentId -> {part-level anchors} with best-effort snippet. (+4 more)
 
-### Community 126 - "Community 126"
+### Community 127 - "Community 127"
 Cohesion: 0.26
 Nodes (11): _copy_zip_with_overrides(), _inject_vml_watermark_into_header(), main(), make_tracked_changes_fixture(), make_watermark_fixture(), Inject a simple VML textpath watermark-like shape into the first header., Create a DOCX with a VML watermark-like shape in the header., Copy all files from src zip to dst zip, overriding specific names. (+3 more)
 
-### Community 127 - "Community 127"
+### Community 128 - "Community 128"
 Cohesion: 0.32
 Nodes (11): _append_note(), _ensure_note_relationship(), _ensure_override(), insert_note(), _insert_reference(), main(), _make_empty_notes_part(), _next_note_id() (+3 more)
 
-### Community 128 - "Community 128"
-Cohesion: 0.17
-Nodes (9): Test product/inventory operations., List all products in catalog., Search for a product by name., Search for non-existent product returns error., Test product/inventory operations., List all products in catalog., Search for a product by name., Search for non-existent product returns error. (+1 more)
-
 ### Community 129 - "Community 129"
-Cohesion: 0.17
-Nodes (9): Test ticket retrieval., Test ticket retrieval., Get paginated tickets., Get paginated tickets., Get details of a specific ticket., Get details of a specific ticket., Non-existent ticket returns error., Non-existent ticket returns error. (+1 more)
+Cohesion: 0.2
+Nodes (12): Az(), b(), c(), captureSession(), dU(), getEventProcessors(), jB(), m() (+4 more)
 
 ### Community 130 - "Community 130"
-Cohesion: 0.18
-Nodes (12): aM(), CU(), ij(), nM(), qL(), rU(), Sj(), toUpperCase() (+4 more)
+Cohesion: 0.23
+Nodes (12): aD(), call(), ck(), ensureInterceptionReady(), getBackendNodeViewportPoint(), _getLayerImpl(), _getParameterStoreImpl(), incrementNonExposureCount() (+4 more)
 
 ### Community 131 - "Community 131"
-Cohesion: 0.21
-Nodes (12): Ah(), dH(), fH(), Gn(), hH(), Jn(), JU(), pH() (+4 more)
+Cohesion: 0.29
+Nodes (12): bU(), handleCdpEvent(), iK(), IM(), ko(), rk(), Rm(), Ss() (+4 more)
 
 ### Community 132 - "Community 132"
 Cohesion: 0.2
-Nodes (12): e6(), iI(), Jq(), kd(), lI(), og(), qq(), size() (+4 more)
+Nodes (12): buildRevision(), captureJavaScriptDialog(), d3(), describeBackendNodeForHitTarget(), ez(), n(), Ok(), pk() (+4 more)
 
 ### Community 133 - "Community 133"
-Cohesion: 0.24
-Nodes (12): bg(), browserAuthSelector(), Dg(), Hn(), mg(), min(), Ng(), nonempty() (+4 more)
+Cohesion: 0.21
+Nodes (12): Aee(), Cr(), disableDownload(), _ee(), failPendingDownloadRequest(), failResponse(), Fee(), handleDownloadResponse() (+4 more)
 
 ### Community 134 - "Community 134"
-Cohesion: 0.2
-Nodes (12): addBreadcrumb(), As(), cz(), dz(), Et(), Is(), Pz(), Qb() (+4 more)
+Cohesion: 0.18
+Nodes (12): e6(), endsWith(), J3(), logError(), N9(), og(), _pickNewFallbackUrl(), Q3() (+4 more)
 
 ### Community 135 - "Community 135"
-Cohesion: 0.17
-Nodes (12): cn(), cv(), Gf(), ite(), kl(), lv(), nte(), ote() (+4 more)
+Cohesion: 0.33
+Nodes (12): getConfig(), _getDetailedStoreResult(), _getDetails(), getGate(), getLayer(), _getLiveDetailedStoreResult(), _getLiveDetails(), getParamStore() (+4 more)
 
 ### Community 136 - "Community 136"
 Cohesion: 0.23
@@ -898,24 +907,24 @@ Cohesion: 0.18
 Nodes (11): admin_system_info(), Get system configuration and version info., get_system_info(), Get system information for the admin dashboard., Get system information for the admin dashboard., Get system information for the admin dashboard., Get system information for the admin dashboard., Get system information for the admin dashboard. (+3 more)
 
 ### Community 140 - "Community 140"
-Cohesion: 0.22
-Nodes (10): _extract_sources(), generate_response(), get_rag_llm(), RAG Agent — answers customer questions using the Pinecone knowledge base.  Imp, Extract source document names from the formatted context string., Get the large LLM for generating RAG responses., Generate a RAG-grounded response to a customer query.      Args:         mess, Get the large LLM for generating RAG responses. (+2 more)
-
-### Community 141 - "Community 141"
 Cohesion: 0.2
 Nodes (10): determine_search_query(), generate_response(), get_web_llm(), Web Search Agent — handles questions that fall outside the knowledge base by se, Get the large LLM for generating web search-based responses., Extract a search query from the customer's message., Get the large LLM for generating web search-based responses., Extract a search query from the customer's message. (+2 more)
 
+### Community 141 - "Community 141"
+Cohesion: 0.22
+Nodes (10): _extract_sources(), generate_response(), get_rag_llm(), RAG Agent — answers customer questions using the Pinecone knowledge base.  Imp, Extract source document names from the formatted context string., Get the large LLM for generating RAG responses., Generate a RAG-grounded response to a customer query.      Args:         mess, Get the large LLM for generating RAG responses. (+2 more)
+
 ### Community 142 - "Community 142"
-Cohesion: 0.18
-Nodes (11): brand(), catch(), createAgent(), default(), Ho(), keyof(), pc(), ta() (+3 more)
+Cohesion: 0.22
+Nodes (11): Bn(), clone(), eX(), getScopeData(), kB(), mD(), rz(), setSDKProcessingMetadata() (+3 more)
 
 ### Community 143 - "Community 143"
-Cohesion: 0.2
-Nodes (11): aA(), dm(), Do(), F$(), fq(), gA(), hA(), JW() (+3 more)
+Cohesion: 0.24
+Nodes (11): ensureCurrentTabOriginAllowed(), ensureFileUploadAllowed(), ensureFullCdpAllowed(), ensurePageAssetDownloadAllowed(), ensureRawCdpUrlAllowed(), ensureRawCdpUrlAllowedForOperation(), ensureTargetUrlOriginAllowed(), ensureUrlOriginAllowed() (+3 more)
 
 ### Community 144 - "Community 144"
-Cohesion: 0.29
-Nodes (11): bq(), Dn(), ef(), gq(), hq(), Mn(), of(), vq() (+3 more)
+Cohesion: 0.24
+Nodes (11): Hn(), kd(), lI(), mg(), qq(), r5(), vA(), Vf() (+3 more)
 
 ### Community 145 - "Community 145"
 Cohesion: 0.2
@@ -938,20 +947,20 @@ Cohesion: 0.4
 Nodes (9): _extract_intent_from_subject(), _find_matching_ticket(), _get_issue_identity(), _is_compatible_identity(), _is_compatible_intent(), IssueIdentity, _map_to_priority(), _map_to_ticket_type() (+1 more)
 
 ### Community 150 - "Community 150"
-Cohesion: 0.2
-Nodes (10): list_tickets(), Get all tickets with optional status filter., get_all_tickets(), Get all tickets with optional status filter., Get all tickets with optional status filter., Get all tickets with optional status filter., Get all tickets with optional status filter., Get all tickets with optional status filter. (+2 more)
+Cohesion: 0.29
+Nodes (5): _parse_warranty_duration(), Deterministically parse warranty duration from product description., Deterministically parse warranty duration from product description., Deterministically parse warranty duration from product description., TestWarrantyParser
 
 ### Community 151 - "Community 151"
-Cohesion: 0.24
-Nodes (10): bA(), cachedBlocked(), DI(), fA(), fetchBlocked(), Ig(), isBlocked(), NA() (+2 more)
+Cohesion: 0.38
+Nodes (9): ensure_raster_image(), main(), _pillow_convert(), _rasterize_pdf_first_page(), _rasterize_svg(), _rasterize_svgz(), Return a raster image path for the given input, converting when needed.      -, _run_node_helper() (+1 more)
 
 ### Community 152 - "Community 152"
-Cohesion: 0.36
-Nodes (10): bU(), dk(), handleCdpEvent(), iK(), ko(), Ok(), pushLog(), rk() (+2 more)
+Cohesion: 0.2
+Nodes (7): RAGAS RAG Evaluation Tests — measures faithfulness, relevancy, context precisio, Live tests that validate RAG response quality with the actual LLM., For questions outside the KB, the RAG should gracefully refuse., Tests that the Pinecone retriever returns relevant chunks., test_retriever_returns_relevant_source(), TestRAGResponseQuality, TestRetrieverQuality
 
 ### Community 153 - "Community 153"
-Cohesion: 0.24
-Nodes (10): fm(), IM(), Iu(), lz(), ps(), Rm(), Ss(), uZ() (+2 more)
+Cohesion: 0.2
+Nodes (10): a(), Gn(), Jn(), JU(), pH(), tc(), toUpperCase(), trackElicitation() (+2 more)
 
 ### Community 154 - "Community 154"
 Cohesion: 0.44
@@ -963,222 +972,254 @@ Nodes (9): _iter_story_parts(), main(), _read_xml(), _remove_custom_ct_override(
 
 ### Community 156 - "Community 156"
 Cohesion: 0.22
-Nodes (5): SkillExecutionResult, Protocol, Validate that all required inputs declared by the skill are present., Execute a tool safely within the constraints of the skill's policy., ToolExecutor
+Nodes (8): create_new_ticket(), Create a new support ticket., get_customer_by_id(), Look up a customer strictly by their ID., Look up a customer strictly by their ID., Look up a customer strictly by their ID., Invalid customer ID returns error., Invalid customer ID returns error.
 
 ### Community 157 - "Community 157"
 Cohesion: 0.22
 Nodes (7): Track an order that exists in the database., Track an order that exists in the database., Tracking a non-existent order returns error., Tracking a non-existent order returns error., Test order tracking and retrieval., Test order tracking and retrieval., TestOrderOperations
 
 ### Community 158 - "Community 158"
-Cohesion: 0.22
-Nodes (4): buildSlide03(), buildSlide14(), buildSlide24(), buildSlide25()
+Cohesion: 0.31
+Nodes (8): create_montage(), _load_images_with_placeholders(), main(), _make_placeholder(), _natural_key(), Create a visible placeholder tile with a light gray fill and a red X cross., Key function for natural sorting (e.g., Slide2 before Slide10)., Build a montage with a fixed number of columns.      Each cell has size `cell_
 
 ### Community 159 - "Community 159"
-Cohesion: 0.42
-Nodes (8): _iter_story_parts(), main(), _read_xml(), _remove_comment_relationships(), _remove_ct_overrides(), _strip_comment_markup(), strip_comments(), _xml_bytes()
+Cohesion: 0.22
+Nodes (8): admin_get_metrics(), Get aggregate LLM, tool, and guardrail metrics for the admin dashboard., dict, Full RAGAS evaluation. Run with RUN_RAGAS_EVAL=1., Run RAGAS evaluation and check metric thresholds., TestRAGASEvaluation, get_aggregate_metrics(), Return a JSON-safe copy of the aggregate metrics for the admin dashboard.
 
 ### Community 160 - "Community 160"
-Cohesion: 0.33
-Nodes (8): calc_tol(), enlarge_deck(), inspect_images(), main(), px_to_emu(), Calculate per-channel colour tolerance appropriate for *dpi* (anti-aliasing tole, Enlarge the input PPTX with a fixed grey padding and return the new page size., Return 1-based indices of slides that contain pixels outside the pad.
+Cohesion: 0.28
+Nodes (8): test_retriever_relevance_scores(), _get_index(), RAG retriever: queries Pinecone to find relevant knowledge base chunks., Lazily initialize and return the Pinecone index., Retrieve the top-k most relevant knowledge base chunks for a query.      Returns, Retrieve relevant chunks and format them as a context string     suitable for in, retrieve(), retrieve_as_context()
 
 ### Community 161 - "Community 161"
 Cohesion: 0.25
-Nodes (7): list_documents(), File System MCP Server — exposes knowledge base document operations as MCP tools, List all available knowledge base documents.     Returns the filename and size o, Read the full contents of a knowledge base document.      Args:         filename, Search across all knowledge base documents for a keyword or phrase.     Returns, read_document(), search_documents()
+Nodes (9): brand(), currentTopLevelUrl(), default(), k7(), keyof(), Kx(), me(), readDocumentState() (+1 more)
 
 ### Community 162 - "Community 162"
+Cohesion: 0.42
+Nodes (8): _iter_story_parts(), main(), _read_xml(), _remove_comment_relationships(), _remove_ct_overrides(), _strip_comment_markup(), strip_comments(), _xml_bytes()
+
+### Community 163 - "Community 163"
+Cohesion: 0.33
+Nodes (8): calc_tol(), enlarge_deck(), inspect_images(), main(), px_to_emu(), Calculate per-channel colour tolerance appropriate for *dpi* (anti-aliasing tole, Enlarge the input PPTX with a fixed grey padding and return the new page size., Return 1-based indices of slides that contain pixels outside the pad.
+
+### Community 164 - "Community 164"
 Cohesion: 0.57
 Nodes (7): _append_para(), apply_patch(), main(), _set_comment_text(), _split_lines(), w(), _xml_bytes()
 
-### Community 163 - "Community 163"
-Cohesion: 0.25
-Nodes (5): Test ticket creation and updates., Test that invalid enums are rejected., Test that invalid enums are rejected in updates., Test that closing a ticket sets closed_at using valid ISO format (if ticket exis, TestTicketMutations
-
-### Community 164 - "Community 164"
-Cohesion: 0.39
-Nodes (6): $(), b(), j(), K(), O(), v()
-
 ### Community 165 - "Community 165"
 Cohesion: 0.25
-Nodes (8): handleArrayResult(), handleCatchall(), handleCheckPropertyResult(), handleMapResult(), handlePropertyResult(), handleTupleResult(), handleTupleResults(), prefixIssues()
+Nodes (7): list_documents(), File System MCP Server — exposes knowledge base document operations as MCP tools, List all available knowledge base documents.     Returns the filename and size o, Read the full contents of a knowledge base document.      Args:         filename, Search across all knowledge base documents for a keyword or phrase.     Returns, read_document(), search_documents()
 
 ### Community 166 - "Community 166"
+Cohesion: 0.32
+Nodes (8): Hz(), oy(), Qz(), _retainDroppedLiveValues(), setLiveValues(), tP(), zB(), zz()
+
+### Community 167 - "Community 167"
+Cohesion: 0.25
+Nodes (8): eq(), gw(), id(), JA(), pg(), tA(), vW(), xW()
+
+### Community 168 - "Community 168"
+Cohesion: 0.29
+Nodes (8): F3(), getHistoryPermission(), handleHistoryPromptResult(), IW(), nX(), pD(), Qk(), Rx()
+
+### Community 169 - "Community 169"
+Cohesion: 0.25
+Nodes (8): addEventProcessor(), e0(), fz(), kM(), oO(), Ry(), v7(), w7()
+
+### Community 170 - "Community 170"
+Cohesion: 0.25
+Nodes (8): aM(), Gj(), read(), Sj(), superRefine(), vD(), vj(), Xx()
+
+### Community 171 - "Community 171"
 Cohesion: 0.54
 Nodes (7): _find_doc_parts(), main(), _read_xml(), remove(), report(), _scan_part(), _xml_bytes()
 
-### Community 167 - "Community 167"
-Cohesion: 0.48
-Nodes (6): _best_effort_format(), _is_empty(), main(), _mark_row_as_header(), Mark a table row as a repeating header row (w:tblHeader).      This improves a, _used_bounds()
-
-### Community 168 - "Community 168"
-Cohesion: 0.57
-Nodes (6): _ensure_settings_override(), _ensure_settings_part(), main(), _read_xml(), set_protection(), _xml_bytes()
-
-### Community 169 - "Community 169"
+### Community 172 - "Community 172"
 Cohesion: 0.52
 Nodes (6): _diff_images(), _extract_text(), _list_pages(), main(), _run_render(), _write_text()
 
-### Community 170 - "Community 170"
+### Community 173 - "Community 173"
+Cohesion: 0.57
+Nodes (6): _ensure_settings_override(), _ensure_settings_part(), main(), _read_xml(), set_protection(), _xml_bytes()
+
+### Community 174 - "Community 174"
 Cohesion: 0.43
 Nodes (6): _add_toc_field(), _clear_paragraph(), main(), Ensure word/settings.xml contains <w:updateFields w:val="true"/>., Insert a TOC field into an existing paragraph., _set_update_fields_on_open()
 
-### Community 171 - "Community 171"
-Cohesion: 0.33
-Nodes (7): ei(), G3(), HL(), k3(), Pm(), preferredWindowIdFor(), uA()
+### Community 175 - "Community 175"
+Cohesion: 0.48
+Nodes (6): _best_effort_format(), _is_empty(), main(), _mark_row_as_header(), Mark a table row as a repeating header row (w:tblHeader).      This improves a, _used_bounds()
 
-### Community 172 - "Community 172"
+### Community 176 - "Community 176"
 Cohesion: 0.29
-Nodes (7): clear(), close(), _onclose(), onData(), onDisconnect(), requestShutdown(), shutdown()
+Nodes (7): brand(), catch(), default(), keyof(), ta(), transform(), x()
 
-### Community 173 - "Community 173"
+### Community 177 - "Community 177"
+Cohesion: 0.38
+Nodes (7): aK(), eW(), isDownload(), jk(), readBytes(), startLocatorRetry(), uk()
+
+### Community 178 - "Community 178"
+Cohesion: 0.29
+Nodes (7): CU(), ij(), ni(), qL(), ri(), Xj(), yt()
+
+### Community 179 - "Community 179"
+Cohesion: 0.43
+Nodes (7): Aq(), da(), ensurePageAssetFallbackFetchAllowed(), iq(), Lg(), oi(), yA()
+
+### Community 180 - "Community 180"
 Cohesion: 0.6
 Nodes (5): clear_paragraph_direct_formatting(), clear_run_direct_formatting(), enforce_heading_spacing(), _is_heading(), main()
 
-### Community 174 - "Community 174"
-Cohesion: 0.4
-Nodes (4): get_rejection_message(), Generate a user-friendly rejection message based on the violations., Tests that rejection messages are user-friendly., TestRejectionMessages
-
-### Community 175 - "Community 175"
+### Community 181 - "Community 181"
 Cohesion: 0.33
 Nodes (6): active_sessions(), Get a list of all active chat sessions., get_all_active_sessions(), Retrieve all active sessions from Redis or memory., Retrieve all active sessions from Redis or memory., Retrieve all active sessions from Redis or memory.
 
-### Community 176 - "Community 176"
+### Community 182 - "Community 182"
+Cohesion: 0.4
+Nodes (4): get_rejection_message(), Generate a user-friendly rejection message based on the violations., Tests that rejection messages are user-friendly., TestRejectionMessages
+
+### Community 183 - "Community 183"
 Cohesion: 0.4
 Nodes (5): ingest(), Ingest knowledge base documents into Pinecone for RAG retrieval.  Reads all .md, Split text into overlapping chunks by character count, respecting paragraph boun, Main ingestion function., split_text()
 
-### Community 177 - "Community 177"
-Cohesion: 0.33
-Nodes (5): Test dashboard/analytics operations., Get dashboard statistics., Test dashboard/analytics operations., Get dashboard statistics., TestDashboardStats
-
-### Community 178 - "Community 178"
-Cohesion: 0.33
-Nodes (4): Integration tests for Supabase database tools.  Tests customer lookup, order t, Test that Supabase is reachable., Test that Supabase is reachable., TestSupabaseHealth
-
-### Community 179 - "Community 179"
-Cohesion: 0.4
-Nodes (6): activeRetiredInternalScreencastSessions(), isCurrentInternalScreencastEvent(), isInternalScreencastEvent(), retireInternalScreencast(), yp(), ZP()
-
-### Community 180 - "Community 180"
-Cohesion: 0.4
-Nodes (6): fte(), gk(), hte(), In(), yu(), ZU()
-
-### Community 181 - "Community 181"
-Cohesion: 0.33
-Nodes (6): _normalize(), _overwrite(), slugify(), _toLowerCase(), _toUpperCase(), _trim()
-
-### Community 182 - "Community 182"
-Cohesion: 0.6
-Nodes (5): apply(), _ensure_override(), _has(), main(), _read()
-
-### Community 183 - "Community 183"
-Cohesion: 0.6
-Nodes (5): _has_drawings(), main(), merge(), _read_xml(), _xml_bytes()
-
 ### Community 184 - "Community 184"
-Cohesion: 0.73
-Nodes (5): cleanup(), commit(), fail(), processRecord(), writePayload()
+Cohesion: 0.6
+Nodes (5): _has_direct_paragraph_formatting(), _has_direct_run_formatting(), _iter_paragraphs(), _looks_like_heading(), main()
 
 ### Community 185 - "Community 185"
-Cohesion: 0.5
-Nodes (5): evaluate(), evaluateAll(), gm(), _i(), Si()
+Cohesion: 0.6
+Nodes (5): _inches_from_emu(), _iter_content_parts(), _load_rels_map(), main(), _rels_path_for_part()
 
 ### Community 186 - "Community 186"
-Cohesion: 0.4
-Nodes (5): bD(), ensure(), ensurePageClipboard(), sa(), xD()
+Cohesion: 0.53
+Nodes (5): extract_field_instructions(), _field_type(), _iter_word_xml_parts(), main(), Extract field instructions from a WordprocessingML part.      Handles:     -
 
 ### Community 187 - "Community 187"
 Cohesion: 0.4
-Nodes (5): Cb(), eH(), eR(), _runLocalStorageCacheEviction(), _writeToCache()
+Nodes (6): handleData(), handleMessage(), jX(), nj(), Rj(), wD()
 
 ### Community 188 - "Community 188"
-Cohesion: 0.4
-Nodes (5): currentPointInParentFrame(), currentTopLevelPointForAction(), obstructingFrameHitTarget(), performPointerAction(), resolvePointerActionTarget()
+Cohesion: 0.33
+Nodes (6): allowDownload(), continueResponse(), handleEvent(), waitForCompletedDownload(), waitForDownload(), waitForDownloadRequest()
 
 ### Community 189 - "Community 189"
-Cohesion: 0.4
-Nodes (5): convertPendingEventsToBatches(), createBatches(), _enqueueBatch(), requeueBatch(), takeAll()
+Cohesion: 0.33
+Nodes (6): _normalize(), _overwrite(), slugify(), _toLowerCase(), _toUpperCase(), _trim()
 
 ### Community 190 - "Community 190"
-Cohesion: 0.4
-Nodes (5): _getLiveDetails(), Hz(), oy(), _retainDroppedLiveValues(), zB()
+Cohesion: 0.6
+Nodes (5): apply(), _ensure_override(), _has(), main(), _read()
 
 ### Community 191 - "Community 191"
-Cohesion: 0.4
-Nodes (5): floatSafeRemainder(), _lte(), max(), _maxLength(), _nonpositive()
+Cohesion: 0.6
+Nodes (5): _has_drawings(), main(), merge(), _read_xml(), _xml_bytes()
 
 ### Community 192 - "Community 192"
-Cohesion: 0.5
-Nodes (4): DashboardStats, Aggregated stats for the analytics dashboard., Aggregated stats for the analytics dashboard., Aggregated stats for the analytics dashboard.
+Cohesion: 0.73
+Nodes (5): cleanup(), commit(), fail(), processRecord(), writePayload()
 
 ### Community 193 - "Community 193"
-Cohesion: 0.5
-Nodes (3): Web Search MCP Server — exposes web search capabilities as MCP tools.  Allows, Search the web for information related to a customer query.     Use this ONLY w, web_search()
+Cohesion: 0.8
+Nodes (4): main(), _note_text(), _read(), _report_part()
 
 ### Community 194 - "Community 194"
-Cohesion: 0.5
-Nodes (4): ChatResponse, Outgoing WebSocket message to the customer., Outgoing WebSocket message to the customer., Outgoing WebSocket message to the customer.
+Cohesion: 0.6
+Nodes (4): counter(), _has_numbering(), _heading_level(), main()
 
 ### Community 195 - "Community 195"
-Cohesion: 0.5
-Nodes (3): SKILL.md → SkillLoader → SkillRegistry → ProductSkillResolver → resolve, SKILL.md → SkillLoader → SkillRegistry → ProductSkillResolver → resolve, SKILL.md → SkillLoader → SkillRegistry → ProductSkillResolver → resolve
+Cohesion: 0.4
+Nodes (5): all(), e(), expectNavigation(), flatten(), formErrors()
 
 ### Community 196 - "Community 196"
-Cohesion: 0.5
-Nodes (4): aR(), _formatError(), _getDiagnosticsData(), sb()
+Cohesion: 0.4
+Nodes (5): handleIncomingMessage(), handleIncomingRequest(), sendMessage(), sendNotification(), Su()
 
 ### Community 197 - "Community 197"
-Cohesion: 0.5
-Nodes (4): b7(), D7(), M7(), x7()
+Cohesion: 0.4
+Nodes (5): Cb(), eH(), eR(), _runLocalStorageCacheEviction(), _writeToCache()
 
 ### Community 198 - "Community 198"
 Cohesion: 0.5
-Nodes (4): addIntegration(), init(), _setupIntegrations(), t0()
+Nodes (5): activeJsDialog(), iI(), Jq(), qg(), updateJsDialogPrompt()
 
 ### Community 199 - "Community 199"
-Cohesion: 0.5
-Nodes (4): hash(), hex2(), hostname2(), _stringFormat()
+Cohesion: 0.4
+Nodes (5): floatSafeRemainder(), _lte(), max(), _maxLength(), _nonpositive()
 
 ### Community 200 - "Community 200"
 Cohesion: 0.5
-Nodes (4): typeEntry(), typeLabel(), verbFor(), withDefinite()
+Nodes (4): DashboardStats, Aggregated stats for the analytics dashboard., Aggregated stats for the analytics dashboard., Aggregated stats for the analytics dashboard.
 
 ### Community 201 - "Community 201"
-Cohesion: 0.83
-Nodes (3): main(), render(), serve()
+Cohesion: 0.5
+Nodes (4): ChatResponse, Outgoing WebSocket message to the customer., Outgoing WebSocket message to the customer., Outgoing WebSocket message to the customer.
+
+### Community 202 - "Community 202"
+Cohesion: 0.5
+Nodes (4): ChatMessage, A single message in the chat., A single message in the chat., A single message in the chat.
+
+### Community 203 - "Community 203"
+Cohesion: 0.5
+Nodes (4): ChatRequest, Incoming WebSocket message from the customer., Incoming WebSocket message from the customer., Incoming WebSocket message from the customer.
+
+### Community 204 - "Community 204"
+Cohesion: 0.5
+Nodes (3): Web Search MCP Server — exposes web search capabilities as MCP tools.  Allows, Search the web for information related to a customer query.     Use this ONLY w, web_search()
 
 ### Community 205 - "Community 205"
-Cohesion: 1.0
-Nodes (3): k1(), Np(), vy()
+Cohesion: 0.5
+Nodes (4): EscalationAlert, Sent to the Agent Dashboard when a customer is escalated., Sent to the Agent Dashboard when a customer is escalated., Sent to the Agent Dashboard when a customer is escalated.
 
 ### Community 206 - "Community 206"
 Cohesion: 0.67
-Nodes (3): deserializeMessage(), processReadBuffer(), readMessage()
+Nodes (4): getClient(), getScope(), getStackTop(), _pushScope()
 
 ### Community 207 - "Community 207"
-Cohesion: 0.67
-Nodes (3): isPlainObject2(), mergeCapabilities(), registerCapabilities()
+Cohesion: 0.5
+Nodes (4): typeEntry(), typeLabel(), verbFor(), withDefinite()
 
 ### Community 208 - "Community 208"
+Cohesion: 0.5
+Nodes (4): hash(), hex2(), hostname2(), _stringFormat()
+
+### Community 209 - "Community 209"
+Cohesion: 0.83
+Nodes (3): main(), render(), serve()
+
+### Community 213 - "Community 213"
+Cohesion: 0.67
+Nodes (3): Live tests that actually call the LLM. Run with RUN_LIVE_TESTS=1., Live tests that actually call the LLM. Run with RUN_LIVE_TESTS=1., TestIntentRoutingLive
+
+### Community 214 - "Community 214"
+Cohesion: 1.0
+Nodes (3): k1(), Np(), vy()
+
+### Community 215 - "Community 215"
 Cohesion: 0.67
 Nodes (3): config(), getErrorMap(), setErrorMap()
 
+### Community 216 - "Community 216"
+Cohesion: 0.67
+Nodes (3): isPlainObject2(), mergeCapabilities(), registerCapabilities()
+
 ## Knowledge Gaps
-- **735 isolated node(s):** `Application configuration loaded from environment variables.`, `Parse comma-separated CORS origins into a list.`, `Resolve knowledge_base_dir relative to backend/ root.`, `Extract the host portion from supabase_url (e.g. tesfafbkhbleipxbpcpk).`, `Async PostgreSQL connection string for SQLAlchemy (asyncpg).` (+730 more)
+- **736 isolated node(s):** `Application configuration loaded from environment variables.`, `Parse comma-separated CORS origins into a list.`, `Resolve knowledge_base_dir relative to backend/ root.`, `Extract the host portion from supabase_url (e.g. tesfafbkhbleipxbpcpk).`, `Async PostgreSQL connection string for SQLAlchemy (asyncpg).` (+731 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **89 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **90 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `counter()` connect `Community 10` to `Community 0`?**
-  _High betweenness centrality (0.068) - this node is a cross-community bridge._
-- **Why does `main()` connect `Community 10` to `Community 6`?**
-  _High betweenness centrality (0.023) - this node is a cross-community bridge._
-- **Why does `main()` connect `Community 10` to `Community 6`?**
+- **Why does `counter()` connect `Community 194` to `Community 0`, `Community 193`, `Community 184`, `Community 185`, `Community 186`?**
+  _High betweenness centrality (0.063) - this node is a cross-community bridge._
+- **Why does `main()` connect `Community 184` to `Community 194`, `Community 11`, `Community 159`?**
   _High betweenness centrality (0.022) - this node is a cross-community bridge._
+- **Why does `main()` connect `Community 185` to `Community 194`, `Community 11`?**
+  _High betweenness centrality (0.021) - this node is a cross-community bridge._
 - **Are the 123 inferred relationships involving `str` (e.g. with `run_test()` and `test_handover()`) actually correct?**
   _`str` has 123 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `Application configuration loaded from environment variables.`, `Parse comma-separated CORS origins into a list.`, `Resolve knowledge_base_dir relative to backend/ root.` to the rest of the system?**
-  _735 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _736 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.01 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**

@@ -35,6 +35,10 @@ class SupervisorDecision(BaseModel):
     transition_reason: str
     transition_metadata: Optional[TransitionMetadata] = None
 
+class InvalidSupervisorDecisionError(ValueError):
+    """Raised when a SupervisorDecision contains an impossible action/status combination."""
+    pass
+
 class Supervisor:
     """
     Deterministic Python Workflow Orchestrator.
@@ -57,7 +61,30 @@ class Supervisor:
             return False
 
     @staticmethod
+    def _validate_decision_compatibility(action: SupervisorAction, status: WorkflowStatus) -> bool:
+        if action == SupervisorAction.START_NEW:
+            return status == WorkflowStatus.IN_PROGRESS
+        elif action == SupervisorAction.SUSPEND_AND_SWITCH:
+            return status == WorkflowStatus.IN_PROGRESS
+        elif action == SupervisorAction.RESUME:
+            return status == WorkflowStatus.RESUMED
+        elif action == SupervisorAction.CONTINUE:
+            return status in (WorkflowStatus.IN_PROGRESS, WorkflowStatus.AWAITING_INPUT)
+        elif action == SupervisorAction.ESCALATE:
+            return status == WorkflowStatus.ESCALATED
+        elif action == SupervisorAction.REQUEST_CLARIFICATION:
+            return status in (
+                WorkflowStatus.IDLE, 
+                WorkflowStatus.IN_PROGRESS, 
+                WorkflowStatus.AWAITING_INPUT,
+                WorkflowStatus.SUSPENDED,
+                WorkflowStatus.RESUMED
+            )
+        return False
+
+    @staticmethod
     def decide(semantic_domain: str, semantic_intent: str, state: WorkflowState, message: str) -> SupervisorDecision:
+
         # 0. Validate existing state.active_domain
         if state.active_domain is not None and not Supervisor._is_valid_domain(state.active_domain):
             return SupervisorDecision(
@@ -217,6 +244,11 @@ class Supervisor:
         Mutation Boundary: Only active_domain and workflow_status are modified.
         F.2 will handle multi-domain state updates.
         """
+        if not Supervisor._validate_decision_compatibility(decision.action, decision.resulting_workflow_status):
+            raise InvalidSupervisorDecisionError(
+                f"Invalid SupervisorDecision: Action '{decision.action}' cannot result in status '{decision.resulting_workflow_status}'"
+            )
+
         new_state = state.model_copy(deep=True)
         
         new_state.active_domain = decision.target_domain.value
