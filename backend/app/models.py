@@ -302,6 +302,9 @@ class WorkflowState(BaseModel):
     order_id: int | None = None
     manufacturer: str | None = None
     
+    # Ticketing
+    active_ticket_id: int | None = None
+    
     # Execution Tracking
     last_tool: str | None = None
     last_tool_result: ToolResultEnvelope | None = None

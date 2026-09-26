@@ -37,6 +37,8 @@ class ProductDomainContext(BaseModel):
     semantic_intent: str = ""
     session_id: str = ""
     customer_id: Optional[int] = None
+    urgency: str = "medium"
+    sentiment: str = "neutral"
     workflow_state: WorkflowState
     
     # Optional transcript up to this point
@@ -191,6 +193,23 @@ class ProductAgent:
         merged_state.active_domain = "product"
         merged_state.turn_count += 1
         
+        # ── Step 0.5: Central Ticket Lifecycle ──
+        if context.customer_id:
+            from app.tickets.lifecycle import TicketLifecycleService, IssueContext
+            issue_ctx = IssueContext(
+                customer_id=context.customer_id,
+                domain="product",
+                intent=context.semantic_intent,
+                message=context.customer_message,
+                order_id=merged_state.order_id,
+                product_name=merged_state.product_name,
+                urgency=context.urgency,
+                sentiment=context.sentiment
+            )
+            ticket_res = TicketLifecycleService.process_issue(issue_ctx, merged_state.active_ticket_id)
+            if ticket_res.ticket_id:
+                merged_state.active_ticket_id = ticket_res.ticket_id
+                
         # ── Step 1: Resolve skill ──
         skill = self.skill_resolver.resolve(context.semantic_intent)
         if skill is None:

@@ -155,6 +155,7 @@ def create_ticket(
     ticket_type: str = "inquiry",
     priority: str = "medium",
     channel: str = "chat",
+    order_id: int | None = None,
 ) -> str:
     """Create a new support ticket for a customer."""
     try:
@@ -180,6 +181,8 @@ def create_ticket(
             "priority": priority_enum.value,
             "channel": channel,
         }
+        if order_id:
+            data["order_id"] = order_id
         response = supabase.table("tickets").insert(data).execute()
         if not response.data:
             return json.dumps({"error": "Failed to create ticket"})

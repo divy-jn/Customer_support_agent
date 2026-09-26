@@ -224,6 +224,8 @@ async def product_node(state: AgentState) -> dict:
         semantic_intent=state.get("intent", ""),
         session_id=state.get("session_id", ""),
         customer_id=state.get("customer_id"),
+        urgency=state.get("urgency", "medium"),
+        sentiment=state.get("sentiment", "neutral"),
         workflow_state=WorkflowState(**ws),
         conversation_history=state["conversation_history"]
     )
