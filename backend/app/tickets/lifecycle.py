@@ -124,7 +124,7 @@ class TicketLifecycleService:
                     return False
             else:
                 # Ticket lacks reliable product identity
-                if not is_active and not (identity.order_id and ticket_order == identity.order_id):
+                if not is_active:
                     return False
         elif ticket_product and not is_active:
             # Ticket has product, new issue lacks product. 
@@ -186,10 +186,8 @@ class TicketLifecycleService:
                 return None # Ambiguous
                 
         # 4. Ambiguity policy -> CREATE
-        if len(candidates) == 1 and not identity.order_id and not identity.product_name:
-            # Safe exact match for generic issue types (e.g. general technical question without product/order)
-            return candidates[0]
-            
+        # If we have reached here, there is no exact order_id match and no exact product match.
+        # Even if len(candidates) == 1, a ticket type alone is NOT enough to prove issue identity.
         return None
 
     @classmethod
