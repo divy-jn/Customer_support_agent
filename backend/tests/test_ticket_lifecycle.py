@@ -160,3 +160,50 @@ def test_cross_customer_not_matched(mock_supabase, mock_create_ticket):
     ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
     res = TicketLifecycleService.process_issue(ctx, active_ticket_id=101)
     assert res.action == "CREATED"
+
+# 1. technical_support + order 123 existing, warranty_claim + order 123 new -> CREATE unless explicitly aliased
+def test_different_intent_same_order_creates(mock_supabase, mock_create_ticket):
+    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
+        {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": 123, "subject": "Issue: Technical Support"}
+    ])
+    mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="warranty_claim", message="Help", order_id=123)
+    res = TicketLifecycleService.process_issue(ctx)
+    assert res.action == "CREATED"
+
+# 2. same canonical intent + same order -> UPDATE
+def test_same_canonical_intent_same_order_updates(mock_supabase, mock_update_ticket):
+    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
+        {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": 123, "subject": "Issue: Technical Support"}
+    ])
+    mock_update_ticket.return_value = json.dumps({"status": "success"})
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=123)
+    res = TicketLifecycleService.process_issue(ctx)
+    assert res.action == "UPDATED"
+
+# 3. active ticket + newly supplied order -> UPDATE and returned TicketLifecycleResult.order_id == new order
+def test_active_ticket_new_order_updates_and_returns_new_order(mock_supabase, mock_update_ticket):
+    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
+        {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": None, "subject": "Issue: Technical Support"}
+    ])
+    mock_update_ticket.return_value = json.dumps({"status": "success"})
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=456)
+    res = TicketLifecycleService.process_issue(ctx, active_ticket_id=101)
+    
+    assert res.action == "UPDATED"
+    assert res.order_id == 456
+
+# 4. explicit intentional alias, if any -> UPDATE
+def test_intentional_alias_intent_same_order_updates(mock_supabase, mock_update_ticket):
+    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
+        {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": 123, "subject": "Issue: Product Warranty"}
+    ])
+    mock_update_ticket.return_value = json.dumps({"status": "success"})
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="warranty_claim", message="Help", order_id=123)
+    res = TicketLifecycleService.process_issue(ctx)
+    assert res.action == "UPDATED"
+

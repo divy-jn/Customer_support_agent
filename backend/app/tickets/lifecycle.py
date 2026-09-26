@@ -52,6 +52,32 @@ class TicketLifecycleService:
         "cancel_order",
         "complaint"
     }
+
+    INTENT_ALIASES = {
+        "warranty_claim": "product_warranty",
+        "product_warranty": "warranty_claim"
+    }
+    
+    @classmethod
+    def _is_compatible_intent(cls, intent_a: str, intent_b: str) -> bool:
+        if intent_a == intent_b:
+            return True
+        if cls.INTENT_ALIASES.get(intent_a) == intent_b:
+            return True
+        return False
+
+    @classmethod
+    def _extract_intent_from_subject(cls, subject: str) -> str | None:
+        if not subject.startswith("Issue: "):
+            return None
+        
+        remainder = subject[7:]
+        intent_title = remainder.split(" - ")[0].strip()
+        
+        for known_intent in cls.ISSUE_INTENTS:
+            if known_intent.replace('_', ' ').title() == intent_title:
+                return known_intent
+        return None
     
     @classmethod
     def _map_to_ticket_type(cls, intent: str) -> str:
@@ -95,6 +121,12 @@ class TicketLifecycleService:
         if ticket.get("type") != identity.ticket_type:
             return False
             
+        # Intent must be compatible canonically
+        ticket_intent = cls._extract_intent_from_subject(ticket.get("subject", ""))
+        if ticket_intent:
+            if not cls._is_compatible_intent(identity.intent, ticket_intent):
+                return False
+                
         ticket_order = ticket.get("order_id")
         
         # Blocker 2: Order Identity
@@ -240,7 +272,7 @@ class TicketLifecycleService:
                     action="UPDATED",
                     ticket_id=ticket_id,
                     customer_id=context.customer_id,
-                    order_id=existing.get("order_id"),
+                    order_id=order_update if order_update is not None else existing.get("order_id"),
                     issue_type=existing.get("type"),
                     status=existing.get("status"),
                     matched_existing=True,
