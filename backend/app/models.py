@@ -2,8 +2,7 @@
 Pydantic schemas for API request/response validation.
 """
 
-from pydantic import BaseModel
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
 from enum import Enum
 from typing import Any
@@ -285,38 +284,132 @@ class TargetAgentState(TypedDict):
     router_diagnostics: dict | None
 
 
+# ──────────────────────────────────────────────
+#  Multi-Domain Workflow State Models (Phase F.2)
+# ──────────────────────────────────────────────
+
+class OrchestrationDomain(str, Enum):
+    PRODUCT = "product"
+    ORDER = "order"
+    PAYMENT = "payment"
+    GENERAL = "general"
+    ESCALATION = "escalation"
+
+class GlobalWorkflowStatus(str, Enum):
+    IDLE = "idle"
+    IN_PROGRESS = "in_progress"
+    ESCALATED = "escalated"
+
+class DomainWorkflowStatus(str, Enum):
+    IN_PROGRESS = "in_progress"
+    AWAITING_INPUT = "awaiting_input"
+    SUSPENDED = "suspended"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    ESCALATED = "escalated"
+
+class ProductState(BaseModel):
+    domain_status: DomainWorkflowStatus = DomainWorkflowStatus.IN_PROGRESS
+    active_ticket_id: int | None = None
+    product_id: int | None = None
+    product_name: str | None = Field(None, max_length=255)
+    manufacturer: str | None = Field(None, max_length=255)
+    last_tool: str | None = Field(None, max_length=255)
+    last_tool_result: str | None = Field(None, max_length=1024)
+
+class OrderState(BaseModel):
+    domain_status: DomainWorkflowStatus = DomainWorkflowStatus.IN_PROGRESS
+    active_ticket_id: int | None = None
+    order_id: str | None = Field(None, max_length=255)
+    tracking_number: str | None = Field(None, max_length=255)
+    last_tool: str | None = Field(None, max_length=255)
+    last_tool_result: str | None = Field(None, max_length=1024)
+
+class PaymentState(BaseModel):
+    domain_status: DomainWorkflowStatus = DomainWorkflowStatus.IN_PROGRESS
+    active_ticket_id: int | None = None
+    transaction_id: str | None = Field(None, max_length=255)
+    payment_method: str | None = Field(None, max_length=255)
+    last_tool: str | None = Field(None, max_length=255)
+    last_tool_result: str | None = Field(None, max_length=1024)
+
+
 class WorkflowState(BaseModel):
     """
     Explicit, strongly typed multi-turn workflow orchestration state.
     Serves as the memory of the conversation bounded to essential fields.
     """
+    # ─── F.2 Global Identity & Versioning ───
+    schema_version: int = 1
+    state_revision: int = 1
     session_id: str
     customer_id: int | None = None
     
-    # Semantic Context
-    active_domain: str | None = None
+    # ─── F.2 Global Orchestration ───
+    global_status: GlobalWorkflowStatus = GlobalWorkflowStatus.IDLE
+    active_domain: OrchestrationDomain | None = None
+    suspended_domains: list[OrchestrationDomain] = Field(default_factory=list, max_length=3)
+    
+    # ─── F.2 Domain States ───
+    product_state: ProductState | None = None
+    order_state: OrderState | None = None
+    payment_state: PaymentState | None = None
+
+    # ─── Legacy Semantic Context (Retained for Compatibility) ───
     semantic_intent: str | None = None
     skill_name: str | None = None
     skill_version: str | None = None
     
-    # Extracted Entities (Immutable unless directly verified/changed by user)
+    # ─── Legacy Extracted Entities (Retained for Compatibility) ───
     product_id: int | None = None
     product_name: str | None = None
     order_id: int | None = None
     manufacturer: str | None = None
     
-    # Ticketing
+    # ─── Legacy Ticketing (Retained for Compatibility) ───
     active_ticket_id: int | None = None
     
-    # Execution Tracking
+    # ─── Legacy Execution Tracking (Retained for Compatibility) ───
     last_tool: str | None = None
     last_tool_result: ToolResultEnvelope | None = None
     
-    # Lifecycle
-    workflow_status: WorkflowStatus = WorkflowStatus.IDLE
+    # ─── Shared Lifecycle ───
+    workflow_status: WorkflowStatus = WorkflowStatus.IDLE  # Legacy
     pending_input: str | None = None
     turn_count: int = 0
     updated_at: datetime | None = None
+
+    @model_validator(mode='after')
+    def _validate_f2_schema_invariants(self) -> 'WorkflowState':
+        """F.2.1 structural schema validation."""
+        # Validate version bounds
+        if self.schema_version < 1:
+            raise ValueError("Invalid schema_version")
+        if self.state_revision < 0:
+            raise ValueError("Negative state_revision")
+            
+        # Validate active domain bounds
+        if self.active_domain == OrchestrationDomain.PRODUCT and not self.product_state:
+            raise ValueError("PRODUCT domain is active but product_state is None.")
+        if self.active_domain == OrchestrationDomain.ORDER and not self.order_state:
+            raise ValueError("ORDER domain is active but order_state is None.")
+        if self.active_domain == OrchestrationDomain.PAYMENT and not self.payment_state:
+            raise ValueError("PAYMENT domain is active but payment_state is None.")
+            
+        # Validate suspended domain bounds
+        for d in self.suspended_domains:
+            if d == OrchestrationDomain.PRODUCT and not self.product_state:
+                raise ValueError("PRODUCT is suspended but state is missing.")
+            if d == OrchestrationDomain.ORDER and not self.order_state:
+                raise ValueError("ORDER is suspended but state is missing.")
+            if d == OrchestrationDomain.PAYMENT and not self.payment_state:
+                raise ValueError("PAYMENT is suspended but state is missing.")
+                
+        # Validate duplicates in suspended domains
+        if len(self.suspended_domains) != len(set(self.suspended_domains)):
+            raise ValueError("Duplicate suspended domains detected.")
+            
+        return self
 
 
 # ──────────────────────────────────────────────

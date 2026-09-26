@@ -56,8 +56,8 @@
     "hash": "4c2107c25c4dc678c36ccd49b73c136f"
   },
   "C:\\building projs\\major_proj\\backend\\app\\models.py": {
-    "mtime": 1790403979.4642568,
-    "hash": "1161145534f7a34084d4e412b2fb1d62"
+    "mtime": 1790406580.980697,
+    "hash": "5cd0a73176c1664164137d6f48cf0724"
   },
   "C:\\building projs\\major_proj\\backend\\app\\routes.py": {
     "mtime": 1789715067.662879,
@@ -290,6 +290,10 @@
   "C:\\building projs\\major_proj\\backend\\tests\\test_websocket.py": {
     "mtime": 1790064574.1019053,
     "hash": "c6f7401ce5c8f611a80ca18966f68bd4"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_workflow_state.py": {
+    "mtime": 1790406600.217532,
+    "hash": "8dbcc5941c28d4469ea96f1c71f2d25e"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\__init__.py": {
     "mtime": 1786478808.9496863,
@@ -956,7 +960,7 @@
     "hash": "5281902136c8ff0926236407b591acf6"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\Chat_Team_CaseStudy FINAL_505d3f90.md": {
-    "mtime": 1790405977.826253,
+    "mtime": 1790406659.5355933,
     "hash": "3be3f2694dd7da9d0ffa5ebe2f3b6fe4"
   },
   "C:\\building projs\\major_proj\\dataset\\README.md": {
@@ -996,8 +1000,8 @@
     "hash": "4db7e120f146d1e87d390f0866646ea6"
   },
   "C:\\building projs\\major_proj\\docs\\architecture\\ADR-006-multi-domain-workflow-state.md": {
-    "mtime": 1790405939.0002,
-    "hash": "b765b9d88cd6ae6cbc2b622c7c257c16"
+    "mtime": 1790406337.2836747,
+    "hash": "e9ddc1b035080bb451725003ab143b57"
   },
   "C:\\building projs\\major_proj\\docs\\architecture\\AGENT_TOOL_MATRIX.md": {
     "mtime": 1790064548.5693269,
@@ -1020,8 +1024,8 @@
     "hash": "de67e7ddc4ac4167613a6008d8d81ecd"
   },
   "C:\\building projs\\major_proj\\docs\\architecture\\PHASE_F2_DISCOVERY.md": {
-    "mtime": 1790405889.272903,
-    "hash": "9cfc40ef0a1fa4723496763e69ce15ad"
+    "mtime": 1790406321.6758442,
+    "hash": "b7195b58c2209019c0cd5cdc315b8bd5"
   },
   "C:\\building projs\\major_proj\\docs\\architecture\\PHASE_F_DISCOVERY.md": {
     "mtime": 1790403187.6610756,
@@ -1084,8 +1088,8 @@
     "hash": "45c84bdc5300a7b963796b5842e55613"
   },
   "C:\\building projs\\major_proj\\docs\\architecture\\WORKFLOW_STATE_SCHEMA.md": {
-    "mtime": 1790405961.9865208,
-    "hash": "9d1d6c0249c930d09a50ca0f593a6053"
+    "mtime": 1790406380.8785362,
+    "hash": "312d0648a41b7aac85b654e26eac8d81"
   },
   "C:\\building projs\\major_proj\\frontend\\AGENTS.md": {
     "mtime": 1786380641.6491373,
@@ -2312,7 +2316,7 @@
     "hash": "97319c8da175b182a713298f93512fcc"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_6948ac1c.md": {
-    "mtime": 1790405984.0234895,
+    "mtime": 1790406670.2398708,
     "hash": "6e7346d28eeda5662ff5bc5dd6f75e35"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-business-review\\SKILL.md": {
@@ -2332,7 +2336,7 @@
     "hash": "eaa4053257ab9f3deb8983cb76d06d5d"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_2dfec4e7.md": {
-    "mtime": 1790405984.159014,
+    "mtime": 1790406670.3694081,
     "hash": "a8badc91d874435d97fe0ff17f330ad0"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-experiment-analysis\\SKILL.md": {
@@ -2344,7 +2348,7 @@
     "hash": "9078451974e132f1253667f17b8dac62"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_2a54b4b5.md": {
-    "mtime": 1790405984.1961255,
+    "mtime": 1790406670.4288516,
     "hash": "c536fcf2f70b8ce3b00c3d777d39676b"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-financial-budget\\SKILL.md": {
@@ -2356,7 +2360,7 @@
     "hash": "b8a2ea79e69883d5b6b2d9738834b1d6"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_6518758b.md": {
-    "mtime": 1790405984.2769213,
+    "mtime": 1790406670.5098639,
     "hash": "0e6e26625fec37cbdb6c11d73f132dc0"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-investment-committee-memo\\SKILL.md": {
@@ -2368,7 +2372,7 @@
     "hash": "d20c8b792ee1b384cdf34b20ca330ad6"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_6e32add5.md": {
-    "mtime": 1790405984.354033,
+    "mtime": 1790406670.5790064,
     "hash": "5c7710d7b6d8de08fc98dfee3b00ca0b"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-legal-memorandum\\SKILL.md": {
@@ -2380,7 +2384,7 @@
     "hash": "46019641750d28759bfe3896fd5cf26e"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_6a455787.md": {
-    "mtime": 1790405984.395939,
+    "mtime": 1790406670.6277318,
     "hash": "90a39bab77da5bfce3de63968c75f677"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-market-trends-report\\SKILL.md": {
@@ -2400,7 +2404,7 @@
     "hash": "b89f46c07572ece98e632c2cf0d98b9a"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_49408230.md": {
-    "mtime": 1790405984.40667,
+    "mtime": 1790406670.634948,
     "hash": "843ea35f235f69c2d34b9eafa44924ad"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-operating-calendar\\SKILL.md": {
@@ -2412,7 +2416,7 @@
     "hash": "5230fd8e413d9efe098f1e56b1544681"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_d092977c.md": {
-    "mtime": 1790405984.4687867,
+    "mtime": 1790406670.6955943,
     "hash": "064cd122359bea5319d3f17f5949a7d9"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-operating-review\\SKILL.md": {
@@ -2440,7 +2444,7 @@
     "hash": "52935f002c8b3de9eabe737cb21844e2"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_4e68109d.md": {
-    "mtime": 1790405984.5200322,
+    "mtime": 1790406670.7432473,
     "hash": "634aefdc6e995b762b70aec37a2f6124"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-sales-pipeline\\SKILL.md": {
@@ -2452,7 +2456,7 @@
     "hash": "be15004e70ad56f44e293f3aa9b4930d"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_b626651f.md": {
-    "mtime": 1790405984.559218,
+    "mtime": 1790406670.7888696,
     "hash": "cc5fc47d4b7f3a72373e815b1d96d120"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-simple-dark-mode\\SKILL.md": {
@@ -2480,7 +2484,7 @@
     "hash": "490d310010e6fa60aa615105be1787a6"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_a0f74a6f.md": {
-    "mtime": 1790405984.6657448,
+    "mtime": 1790406670.912728,
     "hash": "c4fd4357403b1f61b92d9a505c6be41f"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-system-design\\SKILL.md": {
@@ -2492,7 +2496,7 @@
     "hash": "dc507a7601a363a44ac789d4209affb0"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_aa1af3ff.md": {
-    "mtime": 1790405984.7283678,
+    "mtime": 1790406670.9872236,
     "hash": "85611d5e12048e0f47f4a4d54bca0fc2"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-team-alignment\\SKILL.md": {
@@ -2512,7 +2516,7 @@
     "hash": "66ae75a7353dfa0a8acfeb1ce3b88087"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_e7d29e18.md": {
-    "mtime": 1790405984.9479947,
+    "mtime": 1790406671.2183323,
     "hash": "7f5cdf180886c27e384efacfe3fe2f7a"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\plugin-management\\0.1.0\\skills\\plugin-management\\SKILL.md": {
