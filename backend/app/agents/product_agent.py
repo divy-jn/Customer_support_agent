@@ -400,6 +400,7 @@ class ProductAgent:
         """
         state = context.workflow_state.model_copy(deep=True)
         import json
+        import re
         
         # Fast extraction prompt
         prompt = f"""Extract the following entities from the customer's message if explicitly mentioned.
@@ -462,7 +463,11 @@ Message: "{context.customer_message}"
                     
             new_manufacturer = get_explicit("manufacturer")
             if new_manufacturer is not None and str(new_manufacturer).strip():
-                state.manufacturer = new_manufacturer
+                if state.manufacturer != new_manufacturer:
+                    state.manufacturer = new_manufacturer
+                    # If manufacturer changes, previous results might be stale too
+                    state.last_tool = None
+                    state.last_tool_result = None
                     
         except Exception as e:
             logger.error("State extraction failed: %s", e)

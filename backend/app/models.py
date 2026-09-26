@@ -301,7 +301,6 @@ class WorkflowState(BaseModel):
     product_name: str | None = None
     order_id: int | None = None
     manufacturer: str | None = None
-    entities: dict = {}
     
     # Execution Tracking
     last_tool: str | None = None

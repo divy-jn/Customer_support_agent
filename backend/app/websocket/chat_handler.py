@@ -82,8 +82,7 @@ async def _get_session(session_id: str, authenticated_customer_id: int | None = 
             "session_id": session_id,
             "customer_id": authenticated_customer_id,
             "workflow_status": "idle",
-            "turn_count": 0,
-            "entities": {}
+            "turn_count": 0
         }
     }
     await session_store.save_session(session_id, new_session)
@@ -336,8 +335,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         "session_id": session_id,
                         "customer_id": customer_id,
                         "workflow_status": "idle",
-                        "turn_count": 0,
-                        "entities": {}
+                        "turn_count": 0
                     }),
                 }
 

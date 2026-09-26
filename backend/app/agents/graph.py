@@ -53,8 +53,9 @@ class GraphLLMAdapter:
     @property
     def llm(self):
         if self._llm is None:
-            from langchain_openai import ChatOpenAI
-            self._llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+            from app.llm_factory import get_llm
+            from app.config import settings
+            self._llm = get_llm(model=settings.llm_small_model, temperature=0.0)
         return self._llm
         
     async def invoke(self, system: str, user: str) -> str:
@@ -230,7 +231,7 @@ async def product_node(state: AgentState) -> dict:
     response = await agent.handle(ctx)
     return {
         "response": response.response,
-        "workflow_state": response.workflow_state.model_dump(),
+        "workflow_state": response.workflow_state.model_dump(mode="json"),
         "escalated": False
     }
 
