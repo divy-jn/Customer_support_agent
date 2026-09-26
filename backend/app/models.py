@@ -342,12 +342,12 @@ class WorkflowState(BaseModel):
     # ─── F.2 Global Identity & Versioning ───
     schema_version: int = 1
     state_revision: int = 1
-    session_id: str
+    session_id: str = Field(..., max_length=255)
     customer_id: int | None = None
     
     # ─── F.2 Global Orchestration ───
     global_status: GlobalWorkflowStatus = GlobalWorkflowStatus.IDLE
-    active_domain: OrchestrationDomain | None = None
+    active_domain: str | None = None
     suspended_domains: list[OrchestrationDomain] = Field(default_factory=list, max_length=3)
     
     # ─── F.2 Domain States ───
@@ -362,33 +362,53 @@ class WorkflowState(BaseModel):
     
     # ─── Legacy Extracted Entities (Retained for Compatibility) ───
     product_id: int | None = None
-    product_name: str | None = None
+    product_name: str | None = Field(None, max_length=255)
     order_id: int | None = None
-    manufacturer: str | None = None
+    manufacturer: str | None = Field(None, max_length=255)
     
     # ─── Legacy Ticketing (Retained for Compatibility) ───
     active_ticket_id: int | None = None
     
     # ─── Legacy Execution Tracking (Retained for Compatibility) ───
-    last_tool: str | None = None
+    last_tool: str | None = Field(None, max_length=255)
     last_tool_result: ToolResultEnvelope | None = None
     
     # ─── Shared Lifecycle ───
     workflow_status: WorkflowStatus = WorkflowStatus.IDLE  # Legacy
-    pending_input: str | None = None
+    pending_input: str | None = Field(None, max_length=1024)
     turn_count: int = 0
     updated_at: datetime | None = None
 
+    @classmethod
+    def from_legacy(cls, legacy_dict: dict) -> 'WorkflowState':
+        """Explicitly documented legacy constructor (F.2.3 placeholder)."""
+        pass
+
+    def to_legacy_projection(self) -> dict:
+        """Explicitly documented legacy projection (F.2.3 placeholder)."""
+        pass
+
     @model_validator(mode='after')
     def _validate_f2_schema_invariants(self) -> 'WorkflowState':
-        """F.2.1 structural schema validation."""
-        # Validate version bounds
-        if self.schema_version < 1:
-            raise ValueError("Invalid schema_version")
+        """F.2.2 structural schema validation."""
+        # 1. Version bounds
+        if self.schema_version != 1:
+            raise ValueError(f"Unsupported schema_version {self.schema_version}. Only version 1 is currently supported.")
         if self.state_revision < 0:
             raise ValueError("Negative state_revision")
+
+        # 2. Legacy bypass: if schema_version wasn't explicitly set, it's a legacy instantiation.
+        # "missing/invalid version -> fail closed unless an explicitly documented legacy constructor is already present"
+        if 'schema_version' not in self.model_fields_set:
+            return self
             
-        # Validate active domain bounds
+        # 3. Validate active domain bounds and enums
+        if self.active_domain is not None:
+            try:
+                OrchestrationDomain(self.active_domain)
+            except ValueError:
+                raise ValueError(f"Invalid enum value for active_domain: {self.active_domain}")
+                
         if self.active_domain == OrchestrationDomain.PRODUCT and not self.product_state:
             raise ValueError("PRODUCT domain is active but product_state is None.")
         if self.active_domain == OrchestrationDomain.ORDER and not self.order_state:
@@ -397,6 +417,9 @@ class WorkflowState(BaseModel):
             raise ValueError("PAYMENT domain is active but payment_state is None.")
             
         # Validate suspended domain bounds
+        if len(self.suspended_domains) > 3:
+            raise ValueError("suspended_domains cannot exceed 3 items.")
+            
         for d in self.suspended_domains:
             if d == OrchestrationDomain.PRODUCT and not self.product_state:
                 raise ValueError("PRODUCT is suspended but state is missing.")

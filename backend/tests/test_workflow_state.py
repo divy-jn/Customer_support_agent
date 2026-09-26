@@ -86,13 +86,20 @@ def test_missing_suspended_domain_state():
     assert "PRODUCT is suspended but state is missing" in str(exc_info.value)
 
 def test_invalid_schema_version():
-    """schema_version must be >= 1"""
+    """schema_version != 1 must be rejected."""
     with pytest.raises(ValidationError) as exc_info:
         WorkflowState(
             session_id="s1",
             schema_version=0
         )
-    assert "Invalid schema_version" in str(exc_info.value)
+    assert "Unsupported schema_version 0. Only version 1 is currently supported." in str(exc_info.value)
+    
+    with pytest.raises(ValidationError) as exc_info:
+        WorkflowState(
+            session_id="s1",
+            schema_version=2
+        )
+    assert "Unsupported schema_version 2. Only version 1 is currently supported." in str(exc_info.value)
 
 def test_negative_state_revision():
     """state_revision cannot be negative"""
@@ -156,3 +163,40 @@ def test_one_state_per_domain_invariant():
     # Overwriting it replaces the singular instance (maintaining the "at most one" invariant)
     state.product_state = ProductState(product_id=2)
     assert state.product_state.product_id == 2
+
+def test_suspended_domains_length_exceeded():
+    """suspended_domains > 3 must be rejected."""
+    with pytest.raises(ValidationError) as exc_info:
+        WorkflowState(
+            session_id="s1",
+            suspended_domains=[
+                OrchestrationDomain.PRODUCT,
+                OrchestrationDomain.ORDER,
+                OrchestrationDomain.PAYMENT,
+                OrchestrationDomain.GENERAL  # 4th domain
+            ],
+            product_state=ProductState(),
+            order_state=OrderState(),
+            payment_state=PaymentState()
+        )
+    # Pydantic built-in validation for max_length=3 might trigger first, or the custom validator.
+    # The error string will contain "at most 3 items" (Pydantic standard) or our custom string.
+    assert "3 items" in str(exc_info.value) or "cannot exceed 3" in str(exc_info.value)
+
+def test_supported_active_domains_accept():
+    """valid version + valid revision + valid nested states => accept"""
+    state1 = WorkflowState(
+        session_id="s1",
+        schema_version=1,
+        state_revision=0,
+        active_domain=OrchestrationDomain.ORDER,
+        order_state=OrderState(order_id="ord_1")
+    )
+    assert state1.active_domain == OrchestrationDomain.ORDER
+    
+    state2 = WorkflowState(
+        session_id="s2",
+        active_domain=OrchestrationDomain.PAYMENT,
+        payment_state=PaymentState(transaction_id="txn_2")
+    )
+    assert state2.active_domain == OrchestrationDomain.PAYMENT
