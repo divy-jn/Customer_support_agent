@@ -418,9 +418,11 @@ def route_after_classification(state: AgentState) -> str:
     if ws_dict:
         status = ws_dict.get("workflow_status")
         domain = ws_dict.get("active_domain")
+        active_ticket = ws_dict.get("active_ticket_id")
         
-        # If we are waiting for input in an active Product workflow, continue it
-        if status in ["awaiting_input", "in_progress"] and domain == "product":
+        # A valid Product continuation signal: either we are explicitly awaiting input, 
+        # or we have an established ticket for this session.
+        if (status in ["awaiting_input", "in_progress"] or active_ticket) and domain == "product":
             # Unless there's a hard semantic switch to a completely unrelated domain
             if intent not in ["billing", "refund", "order_cancellation", "account_management", "complaint", "faq"]:
                 return "product_node"

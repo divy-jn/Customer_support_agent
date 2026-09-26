@@ -137,7 +137,8 @@ def test_workflow_continuation_routing():
         "route_to": "rag_agent",
         "workflow_state": {
             "workflow_status": "awaiting_input",
-            "active_domain": "product"
+            "active_domain": "product",
+            "active_ticket_id": None
         }
     }
     # It should break out because faq is a hard switch
@@ -152,6 +153,52 @@ def test_workflow_continuation_routing():
     state["intent"] = "complaint"
     state["route_to"] = "escalation"
     assert route_after_classification(state) == "escalation_node"
+    
+    # Completed workflow but with an active ticket (a proven product issue)
+    state = {
+        "intent": "order_tracking",
+        "route_to": "db_agent",
+        "workflow_state": {
+            "workflow_status": "completed",
+            "active_domain": "product",
+            "active_ticket_id": 101
+        }
+    }
+    # Should continue to product_node because of active ticket (continuation signal)
+    assert route_after_classification(state) == "product_node"
+    
+    # Completed workflow WITHOUT active ticket (no continuation signal)
+    state_no_ticket = {
+        "intent": "order_tracking",
+        "route_to": "db_agent",
+        "workflow_state": {
+            "workflow_status": "completed",
+            "active_domain": "product",
+            "active_ticket_id": None
+        }
+    }
+    assert route_after_classification(state_no_ticket) == "db_plan_node"
+    
+    # Completed product workflow + billing
+    state["intent"] = "billing"
+    assert route_after_classification(state) == "db_plan_node"
+    
+    # Completed product workflow + refund
+    state["intent"] = "refund"
+    assert route_after_classification(state) == "db_plan_node"
+    
+    # Completed product workflow + order_cancellation
+    state["intent"] = "order_cancellation"
+    assert route_after_classification(state) == "db_plan_node"
+    
+    # Completed product workflow + complaint
+    state["intent"] = "complaint"
+    state["route_to"] = "escalation"
+    assert route_after_classification(state) == "escalation_node"
+    
+    # Completed product workflow + product follow-up (general)
+    state["intent"] = "general"
+    assert route_after_classification(state) == "product_node"
 
 @patch("app.llm_factory.get_llm")
 def test_graph_llm_adapter_factory(mock_get_llm):
@@ -207,19 +254,24 @@ async def test_chat_handler_session_persistence():
     # Mock WebSocket
     mock_ws = AsyncMock(spec=WebSocket)
     # Give it exactly two messages to simulate two turns
-    # It loops `await websocket.receive_text()` until exception
-    mock_ws.receive_text.side_effect = ["My phone broke", "It is a SuperPhone", Exception("disconnect")]
+    # Turn 1: Product issue. Turn 2: Order ID follow-up
+    mock_ws.receive_text.side_effect = ["My SuperPhone broke", "It is order 123", Exception("disconnect")]
     
-    # Mock intent router
+    # Mock intent router: Turn 1 is product_inquiry, Turn 2 is order_tracking
     with patch("app.agents.intent_router.classify_intent", new_callable=AsyncMock) as mock_router:
-        mock_router.return_value = {"intent": "product_inquiry", "route_to": "rag_agent"}
+        mock_router.side_effect = [
+            {"intent": "product_inquiry", "route_to": "rag_agent"},
+            {"intent": "order_tracking", "route_to": "db_agent"}
+        ]
         
         # Mock product llm
         with patch("app.agents.graph.product_llm_adapter.invoke", new_callable=AsyncMock) as mock_llm:
             async def mock_invoke(system, user):
-                if "strict data extraction" in system:
-                    if "SuperPhone" in user:
-                        return '{"product_name": {"value": "SuperPhone", "source": "USER_EXPLICIT"}, "order_id": null, "manufacturer": null}'
+                if "SuperPhone broke" in user:
+                    return '{"product_name": {"value": "SuperPhone", "source": "USER_EXPLICIT"}, "order_id": null, "manufacturer": null}'
+                elif "order 123" in user:
+                    return '{"product_name": null, "order_id": {"value": 123, "source": "USER_EXPLICIT"}, "manufacturer": null}'
+                elif "{" in system: # If it looks like a JSON extraction task
                     return '{"product_name": null, "order_id": null, "manufacturer": null}'
                 return "How can I help?"
             mock_llm.side_effect = mock_invoke
@@ -228,8 +280,26 @@ async def test_chat_handler_session_persistence():
             import uuid
             session_id = f"test_sess_pers_{uuid.uuid4().hex}"
             
+            # Seed the session with a customer_id so TicketLifecycleService creates a ticket
+            await session_store.save_session(session_id, {"customer_id": 123, "conversation_history": [], "workflow_state": {}})
+            
             try:
-                await handle_customer_ws(mock_ws, session_id=session_id)
+                # Mock TicketLifecycleService.process_issue to return a ticket
+                with patch("app.tickets.lifecycle.TicketLifecycleService.process_issue") as mock_process_issue:
+                    from app.tickets.lifecycle import TicketLifecycleResult
+                    from datetime import datetime, timezone
+                    mock_process_issue.return_value = TicketLifecycleResult(
+                        action="CREATED",
+                        ticket_id=999,
+                        customer_id=123,
+                        order_id=None,
+                        issue_type="technical_issue",
+                        status="open",
+                        matched_existing=False,
+                        reason="test",
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    await handle_customer_ws(mock_ws, session_id=session_id, authenticated_customer_id=123)
             except Exception as e:
                 if str(e) != "disconnect":
                     raise
@@ -238,6 +308,11 @@ async def test_chat_handler_session_persistence():
             session = await session_store.get_session(session_id)
             assert session is not None
             assert "workflow_state" in session
+            
+            # Verify Turn 2 properly reached ProductAgent and merged order_id
             assert session["workflow_state"]["product_name"] == "SuperPhone"
+            assert session["workflow_state"]["order_id"] == 123
+            assert session["workflow_state"]["active_ticket_id"] == 999
             assert session["workflow_state"]["turn_count"] == 2
+
 
