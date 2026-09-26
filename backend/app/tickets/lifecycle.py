@@ -86,36 +86,50 @@ class TicketLifecycleService:
         )
 
     @classmethod
-    def _is_compatible_identity(cls, identity: IssueIdentity, ticket: dict) -> bool:
+    def _is_compatible_identity(cls, identity: IssueIdentity, ticket: dict, is_active: bool = False) -> bool:
         """
         Validates if an open ticket is compatible with the new issue identity.
+        is_active is True if this ticket is the active_ticket_id, allowing stronger continuation overrides.
         """
         # Type must match EXACTLY.
         if ticket.get("type") != identity.ticket_type:
             return False
             
-        # If the context is explicitly for a specific order, it must match.
+        ticket_order = ticket.get("order_id")
+        
+        # Blocker 2: Order Identity
         if identity.order_id is not None:
-            ticket_order = ticket.get("order_id")
-            if ticket_order is not None and ticket_order != identity.order_id:
-                return False
+            if ticket_order is not None:
+                if ticket_order != identity.order_id:
+                    return False
+            else:
+                # ticket has null order_id, new issue has order_id
+                if not is_active:
+                    return False # Do not absorb new order into generic ticket unless it's active
+        elif ticket_order is not None:
+            # New issue lacks order_id, ticket has one. This is fine to continue if active or same product.
+            pass
+            
+        # Blocker 3: Product Identity
+        ticket_subject = ticket.get("subject", "").lower()
+        ticket_product = None
+        if "-" in ticket_subject:
+            parts = ticket_subject.split("-")
+            if len(parts) > 1:
+                ticket_product = parts[-1].strip()
                 
-        # If the context is explicitly for a product, and the ticket is tracking one, it shouldn't conflict.
-        # However, product_name is mostly stored in the subject right now, so we do a softer check.
-        if identity.product_name and identity.order_id is None:
-            # We don't have a rigid product_id column, so we check if the ticket subject mentions a different product.
-            subject = ticket.get("subject", "").lower()
-            if identity.product_name.lower() not in subject and "-" in subject:
-                # Basic heuristic to avoid crossing distinct products if order_id is missing
-                # e.g., "Issue: Technical Issue - Phone" vs "Issue: Technical Issue - Laptop"
-                pass # This is best-effort. If they are completely different, we might accidentally merge. 
-                # To be strict, if product_name is provided, require it in the subject if subject has a hyphen
-                parts = subject.split("-")
-                if len(parts) > 1:
-                    existing_product = parts[-1].strip()
-                    if existing_product and existing_product != identity.product_name.lower():
-                        return False
-                        
+        if identity.product_name:
+            if ticket_product:
+                if ticket_product != identity.product_name.lower():
+                    return False
+            else:
+                # Ticket lacks reliable product identity
+                if not is_active and not (identity.order_id and ticket_order == identity.order_id):
+                    return False
+        elif ticket_product and not is_active:
+            # Ticket has product, new issue lacks product. 
+            pass
+            
         return True
 
     @classmethod
@@ -130,54 +144,53 @@ class TicketLifecycleService:
         try:
             resp = query.execute()
         except Exception:
-            # Lookup failure MUST bubble up to FAILED, not fall through to None (which causes CREATE).
             raise RuntimeError("Database lookup failed.")
             
         open_tickets = resp.data or []
         if not open_tickets:
             return None
             
-        # We only match tickets created/updated recently (e.g. within 30 days) if needed, 
-        # but 'status != closed' is our primary defense.
-            
         identity = cls._get_issue_identity(context)
-        candidates = []
         
-        for t in open_tickets:
-            if cls._is_compatible_identity(identity, t):
-                candidates.append(t)
+        # 1. Active ticket check
+        if active_ticket_id:
+            active_ticket = next((t for t in open_tickets if t["id"] == active_ticket_id), None)
+            if active_ticket and cls._is_compatible_identity(identity, active_ticket, is_active=True):
+                return active_ticket
                 
+        # Non-active candidates
+        candidates = [t for t in open_tickets if cls._is_compatible_identity(identity, t, is_active=False)]
         if not candidates:
             return None
             
-        # 1. Exact active_ticket_id + compatible issue identity
-        if active_ticket_id:
-            for t in candidates:
-                if t["id"] == active_ticket_id:
-                    return t
-                    
-        # 2. Exact issue identity + exact order_id
+        # 2. Exact order_id match
         if identity.order_id:
-            exact_order_candidates = [t for t in candidates if t.get("order_id") == identity.order_id]
-            if exact_order_candidates:
-                # Sort by updated_at desc
-                exact_order_candidates.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
-                return exact_order_candidates[0]
+            exact_order = [t for t in candidates if t.get("order_id") == identity.order_id]
+            if len(exact_order) == 1:
+                return exact_order[0]
+            elif len(exact_order) > 1:
+                return None # Ambiguous
                 
-        # 3. Exact issue identity + exact product identity
+        # 3. Exact product match (no order_id)
         if identity.product_name:
-            exact_product_candidates = []
+            exact_product = []
             for t in candidates:
-                subject = t.get("subject", "").lower()
-                if identity.product_name.lower() in subject:
-                    exact_product_candidates.append(t)
-            if exact_product_candidates:
-                exact_product_candidates.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
-                return exact_product_candidates[0]
+                ticket_subject = t.get("subject", "").lower()
+                if "-" in ticket_subject:
+                    ticket_product = ticket_subject.split("-")[-1].strip()
+                    if ticket_product == identity.product_name.lower():
+                        exact_product.append(t)
+            if len(exact_product) == 1:
+                return exact_product[0]
+            elif len(exact_product) > 1:
+                return None # Ambiguous
                 
-        # 4. If we have multiple candidates but no strong anchor, we pick the most recently updated compatible one
-        candidates.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
-        return candidates[0]
+        # 4. Ambiguity policy -> CREATE
+        if len(candidates) == 1 and not identity.order_id and not identity.product_name:
+            # Safe exact match for generic issue types (e.g. general technical question without product/order)
+            return candidates[0]
+            
+        return None
 
     @classmethod
     def process_issue(cls, context: IssueContext, active_ticket_id: int | None = None) -> TicketLifecycleResult:
@@ -211,11 +224,14 @@ class TicketLifecycleService:
                 # Actual mutation logic for continuation
                 priority_update = new_priority if existing.get("priority") != new_priority and existing.get("priority") not in ("high", "critical") else None
                 
+                order_update = context.order_id if context.order_id is not None and existing.get("order_id") != context.order_id else None
+                
                 resp_str = update_ticket(
                     ticket_id=ticket_id, 
                     customer_id=context.customer_id, 
                     priority=priority_update,
-                    description_append=context.message
+                    description_append=context.message,
+                    order_id=order_update
                 )
                 
                 resp_json = json.loads(resp_str)

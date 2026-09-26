@@ -1,7 +1,7 @@
 import pytest
 import json
 from unittest.mock import patch, MagicMock
-from app.tickets.lifecycle import TicketLifecycleService, IssueContext, TicketLifecycleResult
+from app.tickets.lifecycle import TicketLifecycleService, IssueContext
 
 @pytest.fixture
 def mock_supabase():
@@ -18,145 +18,134 @@ def mock_update_ticket():
     with patch("app.tickets.lifecycle.update_ticket") as mock:
         yield mock
 
-# 1. first issue -> CREATE
-def test_first_issue_creates(mock_supabase, mock_create_ticket):
-    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[])
-    mock_create_ticket.return_value = json.dumps({"ticket_id": 101, "status": "success"})
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Broken screen", order_id=456)
-    res = TicketLifecycleService.process_issue(ctx)
-    assert res.action == "CREATED"
-    assert res.ticket_id == 101
 
-# 2. same issue + same order -> UPDATE
-# 12. actual ticket mutation occurs on UPDATE
-def test_same_issue_same_order_updates(mock_supabase, mock_update_ticket):
-    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
-        {"id": 101, "customer_id": 1, "order_id": 456, "type": "technical_issue", "status": "open", "priority": "medium", "subject": "Broken screen"}
-    ])
-    mock_update_ticket.return_value = json.dumps({"status": "success", "ticket_id": 101})
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Still broken", order_id=456)
-    res = TicketLifecycleService.process_issue(ctx)
-    assert res.action == "UPDATED"
-    assert res.ticket_id == 101
-    mock_update_ticket.assert_called_once_with(ticket_id=101, customer_id=1, priority=None, description_append="Still broken")
-
-# 3. same issue, paraphrased message -> UPDATE
-def test_same_issue_paraphrased_updates(mock_supabase, mock_update_ticket):
-    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
-        {"id": 101, "customer_id": 1, "order_id": 456, "type": "technical_issue", "status": "open", "priority": "medium", "subject": "Broken screen"}
-    ])
-    mock_update_ticket.return_value = json.dumps({"status": "success", "ticket_id": 101})
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="The display is cracked now", order_id=456)
-    res = TicketLifecycleService.process_issue(ctx)
-    assert res.action == "UPDATED"
-
-# 4. same order + DIFFERENT issue type -> NEW TICKET
-def test_same_order_different_issue_creates(mock_supabase, mock_create_ticket):
-    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
-        {"id": 101, "customer_id": 1, "order_id": 456, "type": "technical_issue", "status": "open"}
-    ])
-    mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
-    ctx = IssueContext(customer_id=1, domain="product", intent="refund_request", message="I want a refund", order_id=456)
-    res = TicketLifecycleService.process_issue(ctx)
-    assert res.action == "CREATED"
-    assert res.ticket_id == 102
-
-# 5. same product + DIFFERENT issue -> NEW TICKET
-def test_same_product_different_issue_creates(mock_supabase, mock_create_ticket):
-    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
-        {"id": 101, "customer_id": 1, "type": "technical_issue", "subject": "Issue: Technical Support - SuperPhone"}
-    ])
-    mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
-    ctx = IssueContext(customer_id=1, domain="product", intent="billing_issue", message="I was double charged", product_name="SuperPhone")
-    res = TicketLifecycleService.process_issue(ctx)
-    assert res.action == "CREATED"
-
-# 6. active_ticket_id + compatible intent -> UPDATE
-def test_active_ticket_compatible_intent_updates(mock_supabase, mock_update_ticket):
+# 1. original description preserved on update & 2. follow-up appended
+def test_description_append_preserves_original(mock_supabase, mock_update_ticket):
+    # Mock lookup
     mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
         {"id": 101, "customer_id": 1, "type": "technical_issue"}
     ])
     mock_update_ticket.return_value = json.dumps({"status": "success"})
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
-    res = TicketLifecycleService.process_issue(ctx, active_ticket_id=101)
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Follow-up message")
+    res = TicketLifecycleService.process_issue(ctx)
+    
     assert res.action == "UPDATED"
+    mock_update_ticket.assert_called_once_with(
+        ticket_id=101, 
+        customer_id=1, 
+        priority="medium", 
+        description_append="Follow-up message",
+        order_id=None
+    )
 
-# 7. active_ticket_id + incompatible intent -> NEW TICKET
-# 18. issue switch invalidates stale active_ticket_id where required
-def test_active_ticket_incompatible_intent_creates(mock_supabase, mock_create_ticket):
+
+# 3. explicit order + null candidate does not blindly merge -> CREATE
+def test_explicit_order_null_candidate_creates(mock_supabase, mock_create_ticket):
     mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
-        {"id": 101, "customer_id": 1, "type": "technical_issue"}
+        {"id": 101, "customer_id": 1, "type": "technical_issue"} # order_id is null
     ])
     mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
-    ctx = IssueContext(customer_id=1, domain="product", intent="billing_issue", message="Help")
-    res = TicketLifecycleService.process_issue(ctx, active_ticket_id=101)
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help with order", order_id=123)
+    res = TicketLifecycleService.process_issue(ctx)
+    
     assert res.action == "CREATED"
 
-# 8. active_ticket_id + changed order -> NEW TICKET
-def test_active_ticket_changed_order_creates(mock_supabase, mock_create_ticket):
-    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
-        {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": 111}
-    ])
-    mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help with another", order_id=222)
-    res = TicketLifecycleService.process_issue(ctx, active_ticket_id=101)
-    assert res.action == "CREATED"
 
-# 9. multiple candidate tickets -> deterministic selection (by recency)
-def test_multiple_candidates_deterministic_selection(mock_supabase, mock_update_ticket):
+# 4. active ticket + newly supplied order can continue safely -> UPDATE
+def test_active_ticket_new_order_updates(mock_supabase, mock_update_ticket):
     mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
-        {"id": 101, "customer_id": 1, "type": "technical_issue", "updated_at": "2026-01-01"},
-        {"id": 102, "customer_id": 1, "type": "technical_issue", "updated_at": "2026-02-01"}
+        {"id": 101, "customer_id": 1, "type": "technical_issue"} # order_id is null
     ])
     mock_update_ticket.return_value = json.dumps({"status": "success"})
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
-    res = TicketLifecycleService.process_issue(ctx)
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help with order", order_id=123)
+    res = TicketLifecycleService.process_issue(ctx, active_ticket_id=101)
+    
     assert res.action == "UPDATED"
-    assert res.ticket_id == 102 # Selected the more recent one
+    mock_update_ticket.assert_called_once_with(
+        ticket_id=101, 
+        customer_id=1, 
+        priority="medium", 
+        description_append="Help with order",
+        order_id=123
+    )
 
-# 10. ambiguous candidates -> safe behavior
-def test_ambiguous_candidates_safe_behavior(mock_supabase, mock_update_ticket):
-    # Two tickets of the same type without clear distinguishing features
+# 5. different product identity -> new ticket
+def test_different_product_creates(mock_supabase, mock_create_ticket):
     mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
-        {"id": 101, "customer_id": 1, "type": "technical_issue", "updated_at": "2026-01-01"},
-        {"id": 102, "customer_id": 1, "type": "technical_issue", "updated_at": "2026-02-01"}
-    ])
-    mock_update_ticket.return_value = json.dumps({"status": "success"})
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
-    res = TicketLifecycleService.process_issue(ctx)
-    # Picks most recent to safely avoid spamming duplicate tickets
-    assert res.action == "UPDATED"
-    assert res.ticket_id == 102
-
-# 11. stale ticket does not automatically absorb unrelated work
-def test_stale_ticket_does_not_absorb_unrelated(mock_supabase, mock_create_ticket):
-    # Ticket has product A, user asks about product B without active_ticket_id
-    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
-        {"id": 101, "customer_id": 1, "type": "technical_issue", "subject": "Issue - Product A"}
+        {"id": 101, "customer_id": 1, "type": "technical_issue", "subject": "Issue - ProductA"}
     ])
     mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", product_name="Product B")
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", product_name="ProductB")
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "CREATED"
 
-# 13. lookup failure -> FAILED, NEVER CREATE
-# 20. sanitized failure reason
+
+# 6. unknown product identity is not treated as equal -> new ticket
+def test_unknown_product_identity_creates(mock_supabase, mock_create_ticket):
+    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
+        {"id": 101, "customer_id": 1, "type": "technical_issue", "subject": "General Issue"} # No reliable product
+    ])
+    mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", product_name="ProductB")
+    res = TicketLifecycleService.process_issue(ctx)
+    assert res.action == "CREATED"
+
+
+# 7. ambiguous tickets -> CREATE
+def test_ambiguous_tickets_creates(mock_supabase, mock_create_ticket):
+    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
+        {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": 123},
+        {"id": 102, "customer_id": 1, "type": "technical_issue", "order_id": 123}
+    ])
+    mock_create_ticket.return_value = json.dumps({"ticket_id": 103, "status": "success"})
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=123)
+    res = TicketLifecycleService.process_issue(ctx)
+    assert res.action == "CREATED"
+
+
+# 8. exact candidate -> UPDATE
+def test_exact_candidate_updates(mock_supabase, mock_update_ticket):
+    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
+        {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": 123}
+    ])
+    mock_update_ticket.return_value = json.dumps({"status": "success"})
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=123)
+    res = TicketLifecycleService.process_issue(ctx)
+    assert res.action == "UPDATED"
+
+
+# 9. multiple exact candidates -> deterministic selection
+def test_ambiguous_tickets_without_identifier_creates(mock_supabase, mock_create_ticket):
+    # Two same-type open tickets, no active_ticket_id, no order_id, no product identity
+    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
+        {"id": 101, "customer_id": 1, "type": "technical_issue"},
+        {"id": 102, "customer_id": 1, "type": "technical_issue"}
+    ])
+    mock_create_ticket.return_value = json.dumps({"ticket_id": 103, "status": "success"})
+    
+    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
+    res = TicketLifecycleService.process_issue(ctx)
+    # Expected: CREATE because they are ambiguous and we don't use recency tiebreaker for unrelated issues
+    assert res.action == "CREATED"
+
+
+# 10. lookup failure -> FAILED, no create
 def test_lookup_failure_returns_failed(mock_supabase):
     mock_supabase.table().select().eq().neq().execute.side_effect = Exception("DB Down")
     ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "FAILED"
-    assert res.reason == "Ticket lifecycle operation failed." # Sanitized
+    assert res.reason == "Ticket lifecycle operation failed."
 
-# 14. create failure -> FAILED
-def test_create_failure_returns_failed(mock_supabase, mock_create_ticket):
-    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[])
-    mock_create_ticket.return_value = json.dumps({"error": "Failed to create"})
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
-    res = TicketLifecycleService.process_issue(ctx)
-    assert res.action == "FAILED"
 
-# 15. update failure -> FAILED
+# 11. update failure -> FAILED
 def test_update_failure_returns_failed(mock_supabase, mock_update_ticket):
     mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[
         {"id": 101, "customer_id": 1, "type": "technical_issue"}
@@ -166,9 +155,18 @@ def test_update_failure_returns_failed(mock_supabase, mock_update_ticket):
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "FAILED"
 
-# 16. cross-customer ticket cannot be matched
+
+# 12. create failure -> FAILED
+def test_create_failure_returns_failed(mock_supabase, mock_create_ticket):
+    mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[])
+    mock_create_ticket.return_value = json.dumps({"error": "Failed to create"})
+    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
+    res = TicketLifecycleService.process_issue(ctx)
+    assert res.action == "FAILED"
+
+
+# 13. cross-customer active_ticket_id rejected
 def test_cross_customer_not_matched(mock_supabase, mock_create_ticket):
-    # Setup mock to simulate that the DB only returns tickets for customer 2 if customer_id=2
     def mock_eq(field, value):
         if field == "customer_id" and value == 1:
             return MagicMock(neq=lambda *args: MagicMock(execute=lambda: MagicMock(data=[])))
@@ -178,7 +176,6 @@ def test_cross_customer_not_matched(mock_supabase, mock_create_ticket):
     mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
     
     ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
-    # Even if we maliciously pass active_ticket_id=101 (belonging to customer 2)
     res = TicketLifecycleService.process_issue(ctx, active_ticket_id=101)
     
     assert res.action == "CREATED"

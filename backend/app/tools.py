@@ -207,16 +207,23 @@ def update_ticket(
     satisfaction_rating: int = None,
     customer_id: int | None = None,
     description_append: str | None = None,
+    order_id: int | None = None,
 ) -> str:
     """Update a ticket's status, priority, resolution, or assigned agent."""
     try:
         _validate_positive_int(ticket_id, "ticket_id")
         
-        # Enforce customer ownership
+        # Enforce customer ownership and fetch description for append
+        existing_desc = ""
         if customer_id is not None:
-            existing = supabase.table("tickets").select("customer_id").eq("id", ticket_id).execute()
+            existing = supabase.table("tickets").select("customer_id, description").eq("id", ticket_id).execute()
             if not existing.data or existing.data[0].get("customer_id") != customer_id:
                 return json.dumps({"error": f"Ticket #{ticket_id} not found or does not belong to you"})
+            existing_desc = existing.data[0].get("description", "")
+        else:
+            existing = supabase.table("tickets").select("description").eq("id", ticket_id).execute()
+            if existing.data:
+                existing_desc = existing.data[0].get("description", "")
 
         updates = {}
         if status:
@@ -240,15 +247,10 @@ def update_ticket(
         if satisfaction_rating is not None:
             updates["satisfaction_rating"] = satisfaction_rating
             
+        if order_id is not None:
+            updates["order_id"] = order_id
+            
         if description_append:
-            existing_desc = ""
-            if customer_id is not None:
-                existing_desc = existing.data[0].get("description", "")
-            else:
-                existing_record = supabase.table("tickets").select("description").eq("id", ticket_id).execute()
-                if existing_record.data:
-                    existing_desc = existing_record.data[0].get("description", "")
-                    
             timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
             updates["description"] = f"{existing_desc}\n\n--- Update ({timestamp}) ---\n{description_append}"
 

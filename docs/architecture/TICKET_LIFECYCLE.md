@@ -11,23 +11,27 @@ It ensures that:
 
 ## Core Policies
 
-### 1. Issue Identity (Deterministic Fingerprint)
-Candidate matching is not based on fuzzy semantic text, but on a rigid `IssueIdentity` struct:
+### 1. Issue Identity (Bounded Deterministic Compatibility)
+Candidate matching is not based on fuzzy semantic text, but on an `IssueIdentity` struct providing bounded deterministic compatibility. Since the current schema lacks strict relational tracking for products inside tickets, we define identity compatibility defensively:
 - `domain` (e.g. product)
 - `intent` (e.g. technical_support)
 - `ticket_type` (e.g. technical_issue)
 - `order_id` (optional, explicit dependency)
-- `product_name` (optional, explicit dependency)
+- `product_name` (optional, explicit dependency via subject text)
 
-Two issues are considered "the same issue" if and only if their identities are strictly compatible (e.g., ticket types match exactly, and explicitly tracked order/product identifiers do not conflict).
+Two issues are considered "compatible" if and only if:
+1. Ticket types match exactly.
+2. If `order_id` is supplied, it does not conflict with the ticket's `order_id`. A null ticket `order_id` does NOT automatically absorb a newly supplied `order_id` unless it is explicitly continuing the active workflow (via `active_ticket_id`).
+3. If `product_name` is supplied, it does not conflict with the ticket's product. A generic ticket without reliable product identity does NOT automatically absorb a new product issue unless explicitly continuing the active workflow.
 
 ### 2. Issue Identity & Creation (CREATE)
-When a customer raises an issue, the lifecycle service checks for an existing open ticket that matches the `IssueIdentity`.
-If no compatible ticket is found, or if the user pivots to a fundamentally different issue (e.g., changing `order_id` or `intent`), a **new ticket** is deterministically created.
+When a customer raises an issue, the lifecycle service checks for an existing open ticket that is compatible with the `IssueIdentity`.
+If no compatible ticket is found, or if candidates are ambiguous (see below), a **new ticket** is deterministically created.
 
 ### 3. Issue Continuation (UPDATE)
-If an existing open ticket is found that perfectly aligns with the `IssueIdentity`, the service will **mutate** the existing ticket. 
-Mutation means actual data change: the new message is appended to the ticket's history (`description_append`) and the `priority` may be bumped.
+If an existing open ticket is found that aligns with the `IssueIdentity`, the service will **mutate** the existing ticket. 
+Mutation means actual data change: the new message is appended to the ticket's history (`description_append`) and the `priority` may be bumped. 
+This queries the authoritative persistence layer for the latest `description`, appends the new text, and updates the `updated_at` timestamp.
 We NEVER "fake" an update by simply returning `UPDATED` without modifying the ticket.
 
 ### 4. Candidate Matching Hierarchy & Ambiguity
@@ -35,10 +39,11 @@ If multiple open tickets exist, we prioritize candidates securely and determinis
 1. Exact `active_ticket_id` matching an open ticket with a fully compatible `IssueIdentity`.
 2. Exact `ticket_type` + exact `order_id` match.
 3. Exact `ticket_type` + exact `product_name` match.
-4. If multiple candidates tie (or are ambiguous), we deterministically sort by `updated_at` (recency) and select the most recently updated compatible ticket.
+
+**Ambiguity Policy**: If multiple candidates match equally, or if there are multiple same-type open tickets with no strong anchor (no explicit order/product, no active ticket ID), the system safely defaults to **CREATE**. We do NOT use "most recent" as a semantic tie-breaker for unrelated issues to prevent unrelated generic tickets from incorrectly merging.
 
 ### 5. Stale Tickets
-We actively defend against stale tickets absorbing unrelated work by strictly enforcing `status != closed`. If a ticket is closed, it is completely ignored, forcing a new ticket to be created. Additionally, mismatched identifiers (`order_id`, `product_name`) will aggressively reject stale candidates.
+We actively defend against stale tickets absorbing unrelated work by strictly enforcing `status != closed`. If a ticket is closed, it is completely ignored. Additionally, mismatched identifiers (`order_id`, `product_name`) or lack thereof will conservatively reject candidates unless there is an active session link.
 
 ### 6. Customer Isolation
 Authenticated `customer_id` is the absolute perimeter. The service forcefully filters all lookups (`eq("customer_id", ...)`) and refuses to merge or attach to any ticket ID that crosses customer boundaries.
@@ -55,24 +60,6 @@ It does **NOT** provide a mathematically pure "exactly-once" idempotency guarant
 ## Boundary Implementation
 Agents (e.g., `ProductAgent`) do **not** directly invoke `create_ticket` or `update_ticket` tools. 
 
-Instead, agents extract verified state (like `order_id` or `product_name`), and hand an `IssueContext` over to the `TicketLifecycleService`. The service enforces the policy, creates or updates the ticket, and returns a `TicketLifecycleResult`. 
+Instead, agents extract verified state, and hand an `IssueContext` over to the `TicketLifecycleService`. The service enforces the policy, creates or updates the ticket, and returns a `TicketLifecycleResult`. 
 
 The Agent then persists the returned `ticket_id` into its `WorkflowState` so that subsequent turns in the same workflow safely map to the same ticket.
-
-```python
-# ── Step 0.5: Central Ticket Lifecycle ──
-issue_ctx = IssueContext(
-    customer_id=context.customer_id,
-    domain="product",
-    intent=context.semantic_intent,
-    message=context.customer_message,
-    order_id=merged_state.order_id,
-    product_name=merged_state.product_name,
-    urgency=context.urgency,
-    sentiment=context.sentiment
-)
-
-ticket_res = TicketLifecycleService.process_issue(issue_ctx, merged_state.active_ticket_id)
-if ticket_res.ticket_id:
-    merged_state.active_ticket_id = ticket_res.ticket_id
-```
