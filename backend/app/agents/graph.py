@@ -422,7 +422,7 @@ def route_after_classification(state: AgentState) -> str:
         # If we are waiting for input in an active Product workflow, continue it
         if status in ["awaiting_input", "in_progress"] and domain == "product":
             # Unless there's a hard semantic switch to a completely unrelated domain
-            if intent not in ["escalation", "return_policy", "billing_issue", "general_question"]:
+            if intent not in ["billing", "refund", "order_cancellation", "account_management", "complaint", "faq"]:
                 return "product_node"
                 
     if intent in ["product_inquiry", "product_information", "product_features", "product_specs", "product_details", "product_availability", "product_question", "technical_support", "product_comparison", "warranty_claim", "product_warranty"]:

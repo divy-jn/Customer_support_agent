@@ -133,14 +133,14 @@ from app.agents.graph import route_after_classification
 def test_workflow_continuation_routing():
     # Active product workflow waiting for input
     state = {
-        "intent": "general_question",
+        "intent": "faq",
         "route_to": "rag_agent",
         "workflow_state": {
             "workflow_status": "awaiting_input",
             "active_domain": "product"
         }
     }
-    # It should break out because general_question is a hard switch
+    # It should break out because faq is a hard switch
     assert route_after_classification(state) == "rag_node"
     
     # Active product workflow getting order ID (might be misclassified as general by intent router)
@@ -149,7 +149,7 @@ def test_workflow_continuation_routing():
     assert route_after_classification(state) == "product_node"
     
     # Hard switch to escalation
-    state["intent"] = "escalation"
+    state["intent"] = "complaint"
     state["route_to"] = "escalation"
     assert route_after_classification(state) == "escalation_node"
 
