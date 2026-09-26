@@ -1,7 +1,7 @@
 import AgentSidebar from "../components/Sidebar";
 
 export const metadata = {
-  title: "Agent Dashboard — Project Bestie",
+  title: "Agent Dashboard — Support Team",
   description: "Internal support team dashboard for monitoring, tickets, and analytics.",
 };
 

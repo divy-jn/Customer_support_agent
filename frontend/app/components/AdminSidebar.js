@@ -54,7 +54,7 @@ export default function AdminSidebar() {
           Tech Admin
         </h1>
         <p className="text-xs text-[var(--text-muted)] mt-1">
-          Project Bestie System
+          Support Team System
         </p>
       </div>
 

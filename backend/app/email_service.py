@@ -31,7 +31,7 @@ def _base_template(title: str, body: str) -> str:
 <body style="margin:0;padding:0;background:#0a0a0f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
 <div style="max-width:600px;margin:0 auto;padding:32px 24px;">
   <div style="text-align:center;margin-bottom:32px;">
-    <h1 style="color:#818cf8;font-size:24px;margin:0;">Project Bestie</h1>
+    <h1 style="color:#818cf8;font-size:24px;margin:0;">Support Team</h1>
     <p style="color:#606078;font-size:13px;margin:4px 0 0;">Intelligent Customer Support</p>
   </div>
   <div style="background:#16161f;border:1px solid #2a2a3a;border-radius:16px;padding:32px;">
@@ -40,7 +40,7 @@ def _base_template(title: str, body: str) -> str:
   </div>
   <div style="text-align:center;margin-top:24px;">
     <p style="color:#606078;font-size:11px;margin:0;">
-      Powered by Project Bestie &bull; LangGraph + MCP + RAG
+      Powered by Support Team &bull; LangGraph + MCP + RAG
     </p>
   </div>
 </div>
@@ -113,7 +113,7 @@ def send_ticket_created_email(
     </p>
     """
     html = _base_template("Ticket Created", body)
-    return _send_email(customer_email, f"[Project Bestie] Ticket #{ticket_id} Created — {subject}", html)
+    return _send_email(customer_email, f"[Support Team] Ticket #{ticket_id} Created — {subject}", html)
 
 
 def send_escalation_email(
@@ -145,7 +145,7 @@ def send_escalation_email(
     </p>
     """
     html = _base_template("Escalation Alert", team_body)
-    result = _send_email(settings.support_team_email, "[Project Bestie] 🚨 Escalation Alert — Immediate Action Required", html)
+    result = _send_email(settings.support_team_email, "[Support Team] 🚨 Escalation Alert — Immediate Action Required", html)
 
     # Customer notification (optional)
     if customer_email:
@@ -159,7 +159,7 @@ def send_escalation_email(
         </p>
         """
         cust_html = _base_template("We're Connecting You With a Human Agent", cust_body)
-        _send_email(customer_email, "[Project Bestie] A human agent is on the way", cust_html)
+        _send_email(customer_email, "[Support Team] A human agent is on the way", cust_html)
 
     return result
 
@@ -189,7 +189,7 @@ def send_resolution_email(
     </p>
     """
     html = _base_template("Ticket Resolved", body)
-    return _send_email(customer_email, f"[Project Bestie] Ticket #{ticket_id} Resolved", html)
+    return _send_email(customer_email, f"[Support Team] Ticket #{ticket_id} Resolved", html)
 
 
 def send_system_alert_email(
@@ -217,7 +217,7 @@ def send_system_alert_email(
     </p>
     """
     html = _base_template(f"System Alert — {alert_type.upper()}", body)
-    return _send_email(settings.tech_team_email, f"[Project Bestie] System Alert: {alert_type}", html)
+    return _send_email(settings.tech_team_email, f"[Support Team] System Alert: {alert_type}", html)
 
 
 def send_custom_ticket_email(
@@ -241,7 +241,7 @@ def send_custom_ticket_email(
     </p>
     """
     html = _base_template(f"Update on Ticket #{ticket_id}", body)
-    return _send_email(customer_email, f"[Project Bestie] Update on Ticket #{ticket_id}", html)
+    return _send_email(customer_email, f"[Support Team] Update on Ticket #{ticket_id}", html)
 
 
 def send_order_update_email(
@@ -265,4 +265,4 @@ def send_order_update_email(
     </p>
     """
     html = _base_template(f"Order #{order_id} Update", body)
-    return _send_email(customer_email, f"[Project Bestie] Order #{order_id} Update", html)
+    return _send_email(customer_email, f"[Support Team] Order #{order_id} Update", html)

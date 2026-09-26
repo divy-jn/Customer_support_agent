@@ -61,9 +61,9 @@ class Settings(BaseSettings):
     # --- Email ---
     gmail_address: str = Field(default="", alias="GMAIL_ADDRESS")
     gmail_app_password: str = Field(default="", alias="GMAIL_APP_PASSWORD")
-    support_team_email: str = Field(default="support@projectbestie.com", alias="SUPPORT_TEAM_EMAIL")
-    tech_team_email: str = Field(default="tech@projectbestie.com", alias="TECH_TEAM_EMAIL")
-    from_email: str = Field(default="noreply@projectbestie.com", alias="FROM_EMAIL")
+    support_team_email: str = Field(default="support@supportteam.com", alias="SUPPORT_TEAM_EMAIL")
+    tech_team_email: str = Field(default="tech@supportteam.com", alias="TECH_TEAM_EMAIL")
+    from_email: str = Field(default="noreply@supportteam.com", alias="FROM_EMAIL")
 
     # --- Logging & Debug ---
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

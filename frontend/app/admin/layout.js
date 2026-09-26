@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "Tech Admin — Project Bestie",
+  title: "Tech Admin — Support Team",
   description: "System administration and technical maintenance dashboard.",
 };
 

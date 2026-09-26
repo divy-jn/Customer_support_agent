@@ -1,6 +1,6 @@
-# Project Bestie — Frontend
+# Support Team — Frontend
 
-This is the Next.js 16 frontend for the Project Bestie platform. It provides the customer chat interface, agent co-pilot dashboard, and tech admin settings.
+This is the Next.js 16 frontend for the Support Team platform. It provides the customer chat interface, agent co-pilot dashboard, and tech admin settings.
 
 ## Getting Started
 

@@ -58,7 +58,7 @@ export default function AgentSidebar() {
     <aside className="fixed left-0 top-0 h-full w-64 bg-[var(--bg-secondary)] border-r border-[var(--border)] flex flex-col z-50">
       {/* Logo */}
       <div className="p-6 border-b border-[var(--border)]">
-        <h1 className="text-xl font-bold gradient-text">Project Bestie</h1>
+        <h1 className="text-xl font-bold gradient-text">Support Team</h1>
         <p className="text-xs text-[var(--text-muted)] mt-1">
           Agent Co-Pilot Dashboard
         </p>

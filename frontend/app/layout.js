@@ -12,7 +12,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "Project Bestie — Multi-Agent Customer Support",
+  title: "Support Team — Multi-Agent Customer Support",
   description:
     "Intelligent multi-agent customer support system powered by LangGraph, MCP, and RAG.",
 };

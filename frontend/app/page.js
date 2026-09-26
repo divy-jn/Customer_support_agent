@@ -379,7 +379,7 @@ export default function CustomerChatPage() {
               </div>
 
               <h2 className="text-xl font-bold text-center mb-1">
-                Welcome to <span className="bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Project Bestie</span>
+                Welcome to <span className="bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Support Team</span>
               </h2>
               <p className="text-sm text-[var(--text-muted)] text-center mb-6">
                 Get instant AI-powered support for orders, tickets, and more.
@@ -686,7 +686,7 @@ export default function CustomerChatPage() {
               </button>
             </div>
             <p className="text-[10px] text-[var(--text-muted)] text-center mt-2.5 opacity-50 tracking-wide">
-              Powered by Project Bestie · Responses may be generated
+              Powered by Support Team · Responses may be generated
             </p>
           </form>
         </div>
