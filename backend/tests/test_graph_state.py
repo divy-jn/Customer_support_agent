@@ -94,9 +94,9 @@ async def test_workflow_state_roundtrip(mock_intent_router, mock_product_llm):
     result_2 = await customer_support_graph.ainvoke(state_2)
     
     ws_2 = result_2["workflow_state"]
+    ws_2 = result_2["workflow_state"]
     # Should merge
     assert ws_2["product_name"] == "SuperPhone X"
-    assert ws_2["order_id"] == 123
     assert ws_2["turn_count"] == 2
 
     # TURN 3 - Continuation with manufacturer
@@ -216,38 +216,46 @@ async def test_product_agent_extraction():
     agent = ProductAgent(ProductSkillResolver(None), SkillRuntime(None), mock_llm_adapter)
     
     # Base context
-    ctx = ProductDomainContext(customer_message="I have a SuperPhone from HP, order 1234", workflow_state=WorkflowState(session_id="test1"))
+    ctx = ProductDomainContext(
+        customer_message="I have a SuperPhone from HP, order 1234",
+        workflow_state=WorkflowState.from_legacy({"session_id": "test1", "active_domain": "product"})
+    )
 
     # A. explicit manufacturer in message -> accepted
     mock_llm_adapter.invoke.return_value = '{"product_name": null, "order_id": null, "manufacturer": {"value": "HP", "source": "USER_EXPLICIT"}}'
-    state = await agent._extract_and_merge_state(ctx)
-    assert state.manufacturer == "HP"
+    state, extracted_order_id = await agent._extract_and_merge_state(ctx)
+    assert state.product_state.manufacturer == "HP"
 
     # B. manufacturer absent from message but LLM says USER_EXPLICIT -> rejected
-    ctx_no_mfg = ProductDomainContext(customer_message="I have a SuperPhone", workflow_state=WorkflowState(session_id="test1"))
+    ctx_no_mfg = ProductDomainContext(
+        customer_message="I have a SuperPhone", 
+        workflow_state=WorkflowState.from_legacy({"session_id": "test1", "active_domain": "product"})
+    )
     mock_llm_adapter.invoke.return_value = '{"product_name": null, "order_id": null, "manufacturer": {"value": "Dell", "source": "USER_EXPLICIT"}}'
-    state = await agent._extract_and_merge_state(ctx_no_mfg)
-    assert state.manufacturer is None
+    state, extracted_order_id = await agent._extract_and_merge_state(ctx_no_mfg)
+    assert state.product_state.manufacturer is None
 
     # C. manufacturer marked MODEL_INFERENCE -> rejected
     mock_llm_adapter.invoke.return_value = '{"product_name": null, "order_id": null, "manufacturer": {"value": "HP", "source": "MODEL_INFERENCE"}}'
-    state = await agent._extract_and_merge_state(ctx)
-    assert state.manufacturer is None
+    state, extracted_order_id = await agent._extract_and_merge_state(ctx)
+    assert state.product_state.manufacturer is None
 
-    # D. explicit order ID -> accepted
+    # D. explicit order ID -> extracted but not placed in state
     mock_llm_adapter.invoke.return_value = '{"product_name": null, "order_id": {"value": 1234, "source": "USER_EXPLICIT"}, "manufacturer": null}'
-    state = await agent._extract_and_merge_state(ctx)
-    assert state.order_id == 1234
+    state, extracted_order_id = await agent._extract_and_merge_state(ctx)
+    assert extracted_order_id == "1234"
+    assert state.order_state is None
+    assert state.order_id is None
 
     # E. hallucinated order ID not present in message -> rejected
     mock_llm_adapter.invoke.return_value = '{"product_name": null, "order_id": {"value": 9999, "source": "USER_EXPLICIT"}, "manufacturer": null}'
-    state = await agent._extract_and_merge_state(ctx)
-    assert state.order_id is None
+    state, extracted_order_id = await agent._extract_and_merge_state(ctx)
+    assert extracted_order_id is None
 
     # F. explicit product -> accepted
     mock_llm_adapter.invoke.return_value = '{"product_name": {"value": "SuperPhone", "source": "USER_EXPLICIT"}, "order_id": null, "manufacturer": null}'
-    state = await agent._extract_and_merge_state(ctx)
-    assert state.product_name == "SuperPhone"
+    state, extracted_order_id = await agent._extract_and_merge_state(ctx)
+    assert state.product_state.product_name == "SuperPhone"
 
 @pytest.mark.asyncio
 async def test_chat_handler_session_persistence():
@@ -311,7 +319,6 @@ async def test_chat_handler_session_persistence():
             
             # Verify Turn 2 properly reached ProductAgent and merged order_id
             assert session["workflow_state"]["product_name"] == "SuperPhone"
-            assert session["workflow_state"]["order_id"] == 123
             assert session["workflow_state"]["active_ticket_id"] == 999
             assert session["workflow_state"]["turn_count"] == 2
 

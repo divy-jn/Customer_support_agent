@@ -3,15 +3,22 @@ from app.models import WorkflowState, WorkflowStatus
 from app.agents.supervisor import Supervisor, SupervisorAction, SupervisorDecision, OrchestrationDomain, InvalidSupervisorDecisionError
 
 def create_base_state(domain=None, status=WorkflowStatus.IDLE, ticket_id=None) -> WorkflowState:
-    return WorkflowState(
-        session_id="test_session",
-        customer_id=999,
-        active_domain=domain,
-        workflow_status=status,
-        active_ticket_id=ticket_id,
-        product_id=123,
-        product_name="Test Product"
-    )
+    legacy_dict = {
+        "session_id": "test_session",
+        "customer_id": 999,
+        "active_domain": domain,
+        "workflow_status": status.value if isinstance(status, WorkflowStatus) else status,
+        "active_ticket_id": ticket_id,
+    }
+    
+    # Only inject domain facts if they match the domain, avoiding F.2 strict cross-domain validation
+    if domain == "product":
+        legacy_dict["product_id"] = 123
+        legacy_dict["product_name"] = "Test Product"
+    elif domain == "order":
+        legacy_dict["order_id"] = 456
+        
+    return WorkflowState.from_legacy(legacy_dict)
 
 def test_product_workflow_product_message():
     state = create_base_state(domain="product", status=WorkflowStatus.IN_PROGRESS)
@@ -132,31 +139,33 @@ def test_invalid_semantic_domain():
     WorkflowStatus.IDLE
 ])
 def test_invalid_active_domain_all_statuses(status):
-    state = create_base_state(domain="banana", status=status)
-    decision = Supervisor.decide("product", "support", state, "hello")
-    assert decision.action == SupervisorAction.REQUEST_CLARIFICATION
-    assert decision.target_domain == OrchestrationDomain.GENERAL
-    assert decision.resulting_workflow_status == WorkflowStatus.IDLE
+    with pytest.raises(ValueError):
+        create_base_state(domain="banana", status=status)
 
 def test_invalid_semantic_and_invalid_workflow_domain():
-    state = create_base_state(domain="banana", status=WorkflowStatus.IN_PROGRESS)
-    decision = Supervisor.decide("apple", "support", state, "hello")
-    assert decision.action == SupervisorAction.REQUEST_CLARIFICATION
-    assert decision.target_domain == OrchestrationDomain.GENERAL
-    assert decision.resulting_workflow_status == WorkflowStatus.IDLE
+    with pytest.raises(ValueError):
+        create_base_state(domain="banana", status=WorkflowStatus.IN_PROGRESS)
     
 def test_apply_decision_clarification():
     # Prove that apply_decision respects the output of a REQUEST_CLARIFICATION for invalid state
-    state = create_base_state(domain="banana", status=WorkflowStatus.IN_PROGRESS)
-    decision = Supervisor.decide("apple", "support", state, "hello")
+    state = create_base_state(domain="general", status=WorkflowStatus.IN_PROGRESS)
+    
+    # We fake a clarification decision
+    decision = SupervisorDecision(
+        action=SupervisorAction.REQUEST_CLARIFICATION,
+        reason="Test clarification",
+        transition_reason="Test clarification",
+        target_domain=OrchestrationDomain.GENERAL,
+        resulting_workflow_status=WorkflowStatus.AWAITING_INPUT
+    )
     new_state = Supervisor.apply_decision(state, decision)
     
     # Check new state applied correctly
-    assert new_state.active_domain == "general"
-    assert new_state.workflow_status == WorkflowStatus.IDLE
+    assert new_state.active_domain == OrchestrationDomain.GENERAL
+    assert new_state.workflow_status == WorkflowStatus.AWAITING_INPUT
     
     # Original untouched
-    assert state.active_domain == "banana"
+    assert state.active_domain == OrchestrationDomain.GENERAL
     assert state.workflow_status == WorkflowStatus.IN_PROGRESS
 
 # --- BOUNDARIES ---

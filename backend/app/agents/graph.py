@@ -27,7 +27,7 @@ from app.skills.registry import SkillRegistry
 from app.skills.loader import SkillLoader
 from app.skills.runtime import SkillRuntime
 from app.agents.product_agent import ProductAgent, ProductSkillResolver, ProductDomainContext
-from app.models import WorkflowState
+from app.models import WorkflowState, OrchestrationDomain
 import os
 from pathlib import Path
 
@@ -218,6 +218,9 @@ async def product_node(state: AgentState) -> dict:
     ws = state.get("workflow_state")
     if not ws:
         ws = {"session_id": state.get("session_id", "unknown")}
+    
+    # Legacy orchestrator explicitly asserts domain context
+    ws["active_domain"] = OrchestrationDomain.PRODUCT.value
         
     ctx = ProductDomainContext(
         customer_message=state["message"],
@@ -226,7 +229,7 @@ async def product_node(state: AgentState) -> dict:
         customer_id=state.get("customer_id"),
         urgency=state.get("urgency", "medium"),
         sentiment=state.get("sentiment", "neutral"),
-        workflow_state=WorkflowState(**ws),
+        workflow_state=WorkflowState.from_legacy(ws),
         conversation_history=state["conversation_history"]
     )
     
