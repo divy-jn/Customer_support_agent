@@ -295,6 +295,30 @@ class OrchestrationDomain(str, Enum):
     GENERAL = "general"
     ESCALATION = "escalation"
 
+class TicketContext(BaseModel):
+    """
+    Transient, strictly typed payload connecting domain workflows to the central
+    ticket lifecycle service (Phase F.2.5).
+
+    This context does NOT persist ticket state.
+    TicketState ownership remains with the respective domain workflow
+    (e.g., ProductState.active_ticket_id).
+    """
+    customer_id: int = Field(..., gt=0)
+    domain: OrchestrationDomain
+    intent: str = Field(..., min_length=1, max_length=255)
+    message: str = Field(..., min_length=1, max_length=10000)
+    urgency: Urgency = Urgency.MEDIUM
+    sentiment: Sentiment = Sentiment.NEUTRAL
+    
+    # Domain Facts (Transient context for lifecycle matching, NOT state mutation)
+    order_id: int | None = Field(default=None, gt=0)
+    product_name: str | None = Field(default=None, max_length=255)
+    
+    # Transient reference to the active ticket, provided for deduplication logic,
+    # NOT representing ownership.
+    active_ticket_id: int | None = Field(default=None, gt=0)
+
 class GlobalWorkflowStatus(str, Enum):
     IDLE = "idle"
     IN_PROGRESS = "in_progress"
