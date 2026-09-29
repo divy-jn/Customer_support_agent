@@ -315,7 +315,7 @@ class ProductState(BaseModel):
     product_name: str | None = Field(None, max_length=255)
     manufacturer: str | None = Field(None, max_length=255)
     last_tool: str | None = Field(None, max_length=255)
-    last_tool_result: str | None = Field(None, max_length=1024)
+    last_tool_result: ToolResultEnvelope | None = None
 
 class OrderState(BaseModel):
     domain_status: DomainWorkflowStatus = DomainWorkflowStatus.IN_PROGRESS
@@ -323,7 +323,7 @@ class OrderState(BaseModel):
     order_id: str | None = Field(None, max_length=255)
     tracking_number: str | None = Field(None, max_length=255)
     last_tool: str | None = Field(None, max_length=255)
-    last_tool_result: str | None = Field(None, max_length=1024)
+    last_tool_result: ToolResultEnvelope | None = None
 
 class PaymentState(BaseModel):
     domain_status: DomainWorkflowStatus = DomainWorkflowStatus.IN_PROGRESS
@@ -331,7 +331,7 @@ class PaymentState(BaseModel):
     transaction_id: str | None = Field(None, max_length=255)
     payment_method: str | None = Field(None, max_length=255)
     last_tool: str | None = Field(None, max_length=255)
-    last_tool_result: str | None = Field(None, max_length=1024)
+    last_tool_result: ToolResultEnvelope | None = None
 
 
 class WorkflowState(BaseModel):

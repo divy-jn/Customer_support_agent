@@ -192,7 +192,6 @@ class ProductAgent:
 
         # ── Step 0: Extract and merge state ──
         merged_state = await self._extract_and_merge_state(context)
-        merged_state.active_domain = OrchestrationDomain.PRODUCT
         merged_state.turn_count += 1
         
         # ── Step 0.5: Central Ticket Lifecycle ──
@@ -202,12 +201,19 @@ class ProductAgent:
             # Temporary compatibility projection for legacy TicketLifecycleService
             proj = merged_state.to_legacy_projection()
             
+            # Explicit order compatibility boundary: read from OrderState or fallback to unmigrated root
+            order_id = None
+            if merged_state.order_state and merged_state.order_state.order_id:
+                order_id = merged_state.order_state.order_id
+            elif merged_state.order_id:
+                order_id = str(merged_state.order_id)
+                
             issue_ctx = IssueContext(
                 customer_id=context.customer_id,
                 domain="product",
                 intent=context.semantic_intent,
                 message=context.customer_message,
-                order_id=proj.get("order_id"),
+                order_id=order_id,
                 product_name=proj.get("product_name"),
                 urgency=context.urgency,
                 sentiment=context.sentiment
@@ -223,7 +229,7 @@ class ProductAgent:
                 "ProductAgent: no skill matched for intent=%s",
                 context.semantic_intent,
             )
-            merged_state.product_state.domain_status = DomainWorkflowStatus.FAILED
+            self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
             self._apply_legacy_projection(merged_state)
             return ProductAgentResponse(
                 response=(
@@ -244,7 +250,7 @@ class ProductAgent:
             skill, {"Customer query text": context.customer_message}
         )
         if input_result.status != SkillExecutionStatus.SUCCESS:
-            merged_state.product_state.domain_status = DomainWorkflowStatus.AWAITING_INPUT
+            self._set_domain_status(merged_state, DomainWorkflowStatus.AWAITING_INPUT)
             self._apply_legacy_projection(merged_state)
             return ProductAgentResponse(
                 response="I need more information to help you with that product question.",
@@ -255,7 +261,7 @@ class ProductAgent:
                 metadata={"message": input_result.message},
             )
 
-        merged_state.product_state.domain_status = DomainWorkflowStatus.IN_PROGRESS
+        self._set_domain_status(merged_state, DomainWorkflowStatus.IN_PROGRESS)
         merged_state.skill_name = skill.name
         merged_state.skill_version = skill.metadata.version
 
@@ -276,7 +282,7 @@ class ProductAgent:
                 llm_response = await self.llm_adapter.invoke(system_prompt, conversation_history)
             except Exception as e:
                 logger.error("ProductAgent: LLM invocation failed: %s", type(e).__name__)
-                merged_state.product_state.domain_status = DomainWorkflowStatus.FAILED
+                self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
                 self._apply_legacy_projection(merged_state)
                 return ProductAgentResponse(
                     response=(
@@ -349,7 +355,7 @@ class ProductAgent:
             else:
                 # No tool call detected, this is the final response.
                 latency_ms = int((time.time() - start_time) * 1000)
-                merged_state.product_state.domain_status = DomainWorkflowStatus.COMPLETED
+                self._set_domain_status(merged_state, DomainWorkflowStatus.COMPLETED)
                 self._apply_legacy_projection(merged_state)
                 return ProductAgentResponse(
                     response=llm_response,
@@ -368,7 +374,7 @@ class ProductAgent:
 
         # ── Step 4: Max iterations exceeded ──
         logger.warning("ProductAgent: Max tool iterations exceeded for skill=%s", skill.name)
-        merged_state.product_state.domain_status = DomainWorkflowStatus.FAILED
+        self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
         self._apply_legacy_projection(merged_state)
         return ProductAgentResponse(
             response="I apologize, but I'm having trouble retrieving the requested information right now. Please try again later.",
@@ -387,6 +393,14 @@ class ProductAgent:
         for k, v in proj.items():
             if hasattr(state, k):
                 setattr(state, k, v)
+
+    def _set_domain_status(self, state: WorkflowState, new_status: DomainWorkflowStatus) -> None:
+        """
+        Safely update product domain status without overwriting orchestration-owned statuses.
+        """
+        if state.product_state.domain_status in (DomainWorkflowStatus.SUSPENDED, DomainWorkflowStatus.ESCALATED):
+            return
+        state.product_state.domain_status = new_status
 
     def _build_system_prompt(self, skill: SkillDefinition) -> str:
         """
@@ -496,9 +510,14 @@ Message: "{context.customer_message}"
             new_order_id = get_explicit("order_id")
             if new_order_id is not None:
                 try:
-                    new_order_id = int(new_order_id)
-                    if state.order_id != new_order_id:
-                        state.order_id = new_order_id
+                    new_order_id = str(new_order_id)
+                    
+                    if state.order_state is None:
+                        from app.models import OrderState
+                        state.order_state = OrderState()
+                        
+                    if state.order_state.order_id != new_order_id:
+                        state.order_state.order_id = new_order_id
                         # Stale result invalidation does not apply to ProductState 
                         # when only the order_id changes, to avoid accidentally clearing unrelated domain state.
                 except (ValueError, TypeError):
