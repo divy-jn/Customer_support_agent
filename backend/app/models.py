@@ -380,13 +380,200 @@ class WorkflowState(BaseModel):
     updated_at: datetime | None = None
 
     @classmethod
+    def _map_legacy_workflow_status(cls, status: str | WorkflowStatus) -> DomainWorkflowStatus:
+        if isinstance(status, str):
+            try:
+                status = WorkflowStatus(status)
+            except ValueError:
+                return DomainWorkflowStatus.IN_PROGRESS
+                
+        mapping = {
+            WorkflowStatus.COMPLETED: DomainWorkflowStatus.COMPLETED,
+            WorkflowStatus.SUSPENDED: DomainWorkflowStatus.SUSPENDED,
+            WorkflowStatus.ESCALATED: DomainWorkflowStatus.ESCALATED,
+            WorkflowStatus.IDLE: DomainWorkflowStatus.IN_PROGRESS,
+            WorkflowStatus.IN_PROGRESS: DomainWorkflowStatus.IN_PROGRESS,
+            WorkflowStatus.AWAITING_INPUT: DomainWorkflowStatus.AWAITING_INPUT,
+            WorkflowStatus.RESUMED: DomainWorkflowStatus.IN_PROGRESS,
+            WorkflowStatus.FAILED: DomainWorkflowStatus.FAILED
+        }
+        return mapping.get(status, DomainWorkflowStatus.IN_PROGRESS)
+
+    @classmethod
     def from_legacy(cls, legacy_dict: dict) -> 'WorkflowState':
-        """Explicitly documented legacy constructor (F.2.3 placeholder)."""
-        pass
+        """Explicitly documented legacy constructor (F.2.3)."""
+        session_id = legacy_dict.get("session_id")
+        if not session_id:
+            raise ValueError("session_id is required")
+            
+        legacy_version = legacy_dict.get("schema_version", 1)
+        if legacy_version != 1:
+            raise ValueError(f"Unsupported legacy schema_version: {legacy_version}")
+
+        # 1. Determine domain
+        domain_enum = None
+        active = legacy_dict.get("active_domain")
+        if active:
+            try:
+                domain_enum = OrchestrationDomain(active)
+            except ValueError:
+                raise ValueError(f"Invalid active_domain: {active}")
+        else:
+            intent = legacy_dict.get("semantic_intent")
+            intent_map = {
+                "product_inquiry": OrchestrationDomain.PRODUCT,
+                "tech_support": OrchestrationDomain.PRODUCT,
+                "warranty_check": OrchestrationDomain.PRODUCT,
+                "order_status": OrchestrationDomain.ORDER,
+                "cancel_order": OrchestrationDomain.ORDER,
+                "return_order": OrchestrationDomain.ORDER,
+                "billing_inquiry": OrchestrationDomain.PAYMENT,
+                "refund_request": OrchestrationDomain.PAYMENT,
+                "payment_issue": OrchestrationDomain.PAYMENT,
+                "escalation": OrchestrationDomain.ESCALATION
+            }
+            if intent in intent_map:
+                domain_enum = intent_map[intent]
+            else:
+                skill = legacy_dict.get("skill_name")
+                skill_map = {
+                    "product_lookup": OrchestrationDomain.PRODUCT,
+                    "warranty_lookup": OrchestrationDomain.PRODUCT,
+                    "troubleshoot_device": OrchestrationDomain.PRODUCT,
+                    "order_lookup": OrchestrationDomain.ORDER,
+                    "cancel_order_action": OrchestrationDomain.ORDER,
+                    "process_refund": OrchestrationDomain.PAYMENT
+                }
+                if skill in skill_map:
+                    domain_enum = skill_map[skill]
+                else:
+                    # Deterministic presence of facts
+                    has_prod = bool(legacy_dict.get("product_id") or legacy_dict.get("product_name") or legacy_dict.get("manufacturer"))
+                    has_order = bool(legacy_dict.get("order_id"))
+                    
+                    if has_prod and has_order:
+                        raise ValueError("Ambiguous domain: multiple domain facts present.")
+                    elif has_prod:
+                        domain_enum = OrchestrationDomain.PRODUCT
+                    elif has_order:
+                        domain_enum = OrchestrationDomain.ORDER
+
+        # 2. Map domain states
+        active_ticket_id = legacy_dict.get("active_ticket_id")
+        domain_status = cls._map_legacy_workflow_status(legacy_dict.get("workflow_status", WorkflowStatus.IDLE))
+
+        product_state = None
+        order_state = None
+        payment_state = None
+
+        if domain_enum == OrchestrationDomain.PRODUCT:
+            product_state = ProductState(
+                domain_status=domain_status,
+                active_ticket_id=active_ticket_id,
+                product_id=legacy_dict.get("product_id"),
+                product_name=legacy_dict.get("product_name"),
+                manufacturer=legacy_dict.get("manufacturer")
+            )
+        elif domain_enum == OrchestrationDomain.ORDER:
+            order_state = OrderState(
+                domain_status=domain_status,
+                active_ticket_id=active_ticket_id,
+                order_id=str(legacy_dict.get("order_id")) if legacy_dict.get("order_id") is not None else None
+            )
+        elif domain_enum == OrchestrationDomain.PAYMENT:
+            payment_state = PaymentState(
+                domain_status=domain_status,
+                active_ticket_id=active_ticket_id
+            )
+        elif active_ticket_id is not None and domain_enum != OrchestrationDomain.ESCALATION:
+            # Cross-domain ticket leakage or ticket without domain context
+            raise ValueError("active_ticket_id present but domain is ambiguous or general.")
+
+        # Initialize base state with legacy fields preserved at root
+        state = cls(
+            session_id=session_id,
+            schema_version=1,
+            state_revision=legacy_dict.get("state_revision", 1),
+            customer_id=legacy_dict.get("customer_id"),
+            active_domain=domain_enum.value if domain_enum else None,
+            product_state=product_state,
+            order_state=order_state,
+            payment_state=payment_state,
+            semantic_intent=legacy_dict.get("semantic_intent"),
+            skill_name=legacy_dict.get("skill_name"),
+            skill_version=legacy_dict.get("skill_version"),
+            product_id=legacy_dict.get("product_id"),
+            product_name=legacy_dict.get("product_name"),
+            order_id=legacy_dict.get("order_id"),
+            manufacturer=legacy_dict.get("manufacturer"),
+            active_ticket_id=legacy_dict.get("active_ticket_id"),
+            last_tool=legacy_dict.get("last_tool"),
+            last_tool_result=legacy_dict.get("last_tool_result"),
+            workflow_status=legacy_dict.get("workflow_status", WorkflowStatus.IDLE),
+            pending_input=legacy_dict.get("pending_input"),
+            turn_count=legacy_dict.get("turn_count", 0),
+            updated_at=legacy_dict.get("updated_at")
+        )
+
+        return state
 
     def to_legacy_projection(self) -> dict:
-        """Explicitly documented legacy projection (F.2.3 placeholder)."""
-        pass
+        """Explicitly documented legacy projection (F.2.3)."""
+        d = {
+            "session_id": self.session_id,
+            "customer_id": self.customer_id,
+            "schema_version": self.schema_version,
+            "state_revision": self.state_revision,
+            "active_domain": self.active_domain,
+            "semantic_intent": self.semantic_intent,
+            "skill_name": self.skill_name,
+            "skill_version": self.skill_version,
+            "last_tool": self.last_tool,
+            "workflow_status": self.workflow_status.value if isinstance(self.workflow_status, WorkflowStatus) else self.workflow_status,
+            "pending_input": self.pending_input,
+            "turn_count": self.turn_count,
+        }
+        
+        if self.last_tool_result:
+            if isinstance(self.last_tool_result, ToolResultEnvelope):
+                d["last_tool_result"] = self.last_tool_result.model_dump()
+            elif isinstance(self.last_tool_result, dict):
+                d["last_tool_result"] = self.last_tool_result
+            else:
+                d["last_tool_result"] = str(self.last_tool_result)
+        else:
+            d["last_tool_result"] = None
+
+        if self.updated_at:
+            if isinstance(self.updated_at, datetime):
+                d["updated_at"] = self.updated_at.isoformat()
+            else:
+                d["updated_at"] = self.updated_at
+        else:
+            d["updated_at"] = None
+
+        # Base legacy fields mapped to domain states where appropriate
+        d["active_ticket_id"] = self.active_ticket_id
+        d["product_id"] = self.product_id
+        d["product_name"] = self.product_name
+        d["order_id"] = self.order_id
+        d["manufacturer"] = self.manufacturer
+
+        if self.active_domain == OrchestrationDomain.PRODUCT.value and self.product_state:
+            d["active_ticket_id"] = self.product_state.active_ticket_id
+            d["product_id"] = self.product_state.product_id
+            d["product_name"] = self.product_state.product_name
+            d["manufacturer"] = self.product_state.manufacturer
+        elif self.active_domain == OrchestrationDomain.ORDER.value and self.order_state:
+            d["active_ticket_id"] = self.order_state.active_ticket_id
+            try:
+                d["order_id"] = int(self.order_state.order_id) if self.order_state.order_id else None
+            except (ValueError, TypeError):
+                d["order_id"] = None
+        elif self.active_domain == OrchestrationDomain.PAYMENT.value and self.payment_state:
+            d["active_ticket_id"] = self.payment_state.active_ticket_id
+
+        return d
 
     @model_validator(mode='after')
     def _validate_f2_schema_invariants(self) -> 'WorkflowState':
