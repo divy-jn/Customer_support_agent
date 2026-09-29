@@ -1,6 +1,19 @@
 # WORKFLOW STATE SCHEMA (Phase F.2 Proposed)
 
-> **NOTE:** This is a Python/Pydantic pseudocode proposal only. Do not implement this in code yet.
+> **NOTE:** This schema represents the implemented F.2 multi-domain workflow state.
+
+## Legacy Compatibility (F.2.3 Adapters)
+
+To safely bridge the existing legacy runtime (which passes a flat, untyped `dict` around) with the F.2 `WorkflowState`, two explicit adapters are implemented in `models.py`:
+- `WorkflowState.from_legacy(legacy_dict)`
+- `WorkflowState.to_legacy_projection()`
+
+### Fail-Closed Behavior & Intentional Omissions
+The adapters strictly enforce domain isolation:
+- **Unknown Status:** Any unsupported legacy `workflow_status` (e.g., `"garbage"`) fails closed immediately, rejecting silent normalization.
+- **Contradictory Domain Facts:** If legacy state presents conflicting facts across boundaries (e.g., `active_domain="product"` alongside an `order_id`), it is firmly rejected. The adapter never silently discards meaningful domain facts; inputs must be clean.
+- **GENERAL & ESCALATION Isolation:** The `GENERAL` and `ESCALATION` domains are explicitly prevented from inheriting `product_id`, `order_id`, or `active_ticket_id` via legacy dictionaries, guaranteeing they do not unsafely hold cross-domain metadata where no domain state can structurally represent it.
+- **Cross-Domain Data Leakage Prevention:** In `to_legacy_projection()`, only the *active domain's* properties are flatly projected. Unassociated domain properties are deterministically nulled out, avoiding accidental state sharing into untyped boundaries.
 
 ```python
 from datetime import datetime

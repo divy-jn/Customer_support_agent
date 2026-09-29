@@ -282,6 +282,30 @@ def test_contradictory_cross_domain_facts():
         WorkflowState.from_legacy(legacy4)
     assert 'Contradictory cross-domain facts' in str(excinfo.value)
 
+    # General domain + facts
+    for fact_dict in [
+        {'product_id': 100},
+        {'order_id': 500},
+        {'active_ticket_id': 999}
+    ]:
+        legacy_general = {'session_id': 'sess_gen', 'active_domain': 'general'}
+        legacy_general.update(fact_dict)
+        with pytest.raises(ValueError) as excinfo:
+            WorkflowState.from_legacy(legacy_general)
+        assert 'Contradictory cross-domain facts' in str(excinfo.value)
+
+    # Escalation domain + facts
+    for fact_dict in [
+        {'product_id': 100},
+        {'order_id': 500},
+        {'active_ticket_id': 999}
+    ]:
+        legacy_esc = {'session_id': 'sess_esc', 'active_domain': 'escalation'}
+        legacy_esc.update(fact_dict)
+        with pytest.raises(ValueError) as excinfo:
+            WorkflowState.from_legacy(legacy_esc)
+        assert 'Contradictory cross-domain facts' in str(excinfo.value)
+
 def test_cross_domain_data_leakage():
     """3. Prevent cross-domain data leakage in to_legacy_projection"""
     state = WorkflowState(

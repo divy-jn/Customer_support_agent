@@ -466,6 +466,11 @@ class WorkflowState(BaseModel):
             raise ValueError("Contradictory cross-domain facts: ORDER domain with product facts.")
         if domain_enum == OrchestrationDomain.PAYMENT and (has_prod or has_order):
             raise ValueError("Contradictory cross-domain facts: PAYMENT domain with product/order facts.")
+        if domain_enum in (OrchestrationDomain.GENERAL, OrchestrationDomain.ESCALATION):
+            if has_prod or has_order:
+                raise ValueError(f"Contradictory cross-domain facts: {domain_enum.value} domain with product/order facts.")
+            if legacy_dict.get("active_ticket_id") is not None:
+                raise ValueError(f"Contradictory cross-domain facts: {domain_enum.value} domain with active_ticket_id.")
 
         # 2. Map domain states
         active_ticket_id = legacy_dict.get("active_ticket_id")
@@ -494,7 +499,7 @@ class WorkflowState(BaseModel):
                 domain_status=domain_status,
                 active_ticket_id=active_ticket_id
             )
-        elif active_ticket_id is not None and domain_enum != OrchestrationDomain.ESCALATION:
+        elif active_ticket_id is not None:
             # Cross-domain ticket leakage or ticket without domain context
             raise ValueError("active_ticket_id present but domain is ambiguous or general.")
 
