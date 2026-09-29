@@ -44,6 +44,7 @@ def test_invalid_active_domain_state_combinations():
     with pytest.raises(ValidationError) as exc_info:
         WorkflowState(
             session_id="s1",
+            schema_version=1,
             active_domain=OrchestrationDomain.PRODUCT,
             product_state=None  # Missing!
         )
@@ -52,6 +53,7 @@ def test_invalid_active_domain_state_combinations():
     with pytest.raises(ValidationError) as exc_info:
         WorkflowState(
             session_id="s1",
+            schema_version=1,
             active_domain=OrchestrationDomain.ORDER,
             order_state=None
         )
@@ -60,6 +62,7 @@ def test_invalid_active_domain_state_combinations():
     with pytest.raises(ValidationError) as exc_info:
         WorkflowState(
             session_id="s1",
+            schema_version=1,
             active_domain=OrchestrationDomain.PAYMENT,
             payment_state=None
         )
@@ -70,6 +73,7 @@ def test_duplicate_suspended_domains():
     with pytest.raises(ValidationError) as exc_info:
         WorkflowState(
             session_id="s1",
+            schema_version=1,
             suspended_domains=[OrchestrationDomain.PRODUCT, OrchestrationDomain.PRODUCT],
             product_state=ProductState()
         )
@@ -80,6 +84,7 @@ def test_missing_suspended_domain_state():
     with pytest.raises(ValidationError) as exc_info:
         WorkflowState(
             session_id="s1",
+            schema_version=1,
             suspended_domains=[OrchestrationDomain.PRODUCT],
             product_state=None
         )
@@ -169,6 +174,7 @@ def test_suspended_domains_length_exceeded():
     with pytest.raises(ValidationError) as exc_info:
         WorkflowState(
             session_id="s1",
+            schema_version=1,
             suspended_domains=[
                 OrchestrationDomain.PRODUCT,
                 OrchestrationDomain.ORDER,

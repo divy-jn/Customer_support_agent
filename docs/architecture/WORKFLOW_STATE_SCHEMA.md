@@ -27,52 +27,50 @@ class GlobalWorkflowStatus(str, Enum):
 class DomainWorkflowStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     AWAITING_INPUT = "awaiting_input"
+    SUSPENDED = "suspended"
     COMPLETED = "completed"
     FAILED = "failed"
+    # RESUMED is an action, not a persistent status.
 
 # ---------------------------------------------------------
 # DOMAIN MODELS (Strongly Typed, Bounded)
 # ---------------------------------------------------------
+# Invariant: Each session may have at most ONE live workflow instance for each supported domain.
 
 class ProductState(BaseModel):
     domain_status: DomainWorkflowStatus = DomainWorkflowStatus.IN_PROGRESS
     active_ticket_id: Optional[int] = None
     product_id: Optional[int] = None
-    product_name: Optional[str] = None
-    manufacturer: Optional[str] = None
-    last_tool: Optional[str] = None
-    last_tool_result: Optional[str] = None
-    # Add bounded fields as required by ProductAgent
+    product_name: Optional[str] = Field(None, max_length=255)
+    manufacturer: Optional[str] = Field(None, max_length=255)
+    last_tool: Optional[str] = Field(None, max_length=255)
+    last_tool_result: Optional[str] = Field(None, max_length=1024)
 
 class OrderState(BaseModel):
     domain_status: DomainWorkflowStatus = DomainWorkflowStatus.IN_PROGRESS
     active_ticket_id: Optional[int] = None
-    order_id: Optional[str] = None
-    tracking_number: Optional[str] = None
-    last_tool: Optional[str] = None
-    last_tool_result: Optional[str] = None
-    # Add bounded fields as required by OrderAgent
+    order_id: Optional[str] = Field(None, max_length=255)
+    tracking_number: Optional[str] = Field(None, max_length=255)
+    last_tool: Optional[str] = Field(None, max_length=255)
+    last_tool_result: Optional[str] = Field(None, max_length=1024)
 
 class PaymentState(BaseModel):
     domain_status: DomainWorkflowStatus = DomainWorkflowStatus.IN_PROGRESS
     active_ticket_id: Optional[int] = None
-    transaction_id: Optional[str] = None
-    payment_method: Optional[str] = None
-    last_tool: Optional[str] = None
-    last_tool_result: Optional[str] = None
-    # Add bounded fields as required by PaymentAgent
+    transaction_id: Optional[str] = Field(None, max_length=255)
+    payment_method: Optional[str] = Field(None, max_length=255)
+    last_tool: Optional[str] = Field(None, max_length=255)
+    last_tool_result: Optional[str] = Field(None, max_length=1024)
 
 # ---------------------------------------------------------
 # GLOBAL STATE
 # ---------------------------------------------------------
 
-class PendingAction(BaseModel):
-    """(For F.8) Bounded approval structure"""
-    action_type: str
-    target_domain: OrchestrationDomain
-    payload: dict  # Bounded in future specific models if needed
-
 class WorkflowState(BaseModel):
+    # Versioning & Concurrency
+    schema_version: int = 1
+    state_revision: int = 1
+    
     # Global Identity
     session_id: str
     customer_id: int
@@ -81,9 +79,9 @@ class WorkflowState(BaseModel):
     global_status: GlobalWorkflowStatus = GlobalWorkflowStatus.IDLE
     active_domain: Optional[OrchestrationDomain] = None
     suspended_domains: list[OrchestrationDomain] = Field(default_factory=list, max_length=3)
-    pending_approval: Optional[PendingAction] = None
+    # NOTE: PendingAction/Approval dict has been REMOVED. F.8 will handle strongly typed approvals.
 
-    # Domain Fact Storage (Owned by Domain Agents)
+    # Domain Fact Storage (At most 1 per domain, Owned by Domain Agents)
     product_state: Optional[ProductState] = None
     order_state: Optional[OrderState] = None
     payment_state: Optional[PaymentState] = None
@@ -93,7 +91,17 @@ class WorkflowState(BaseModel):
     updated_at: Optional[datetime] = None
     pending_input: Optional[str] = None
 
-    # Validators to enforce impossible states
+    # Migration adapters
+    @classmethod
+    def from_legacy(cls, legacy_dict: dict) -> 'WorkflowState':
+        """Explicitly inflate flat legacy state into typed DomainStates. (F.2.3)"""
+        pass
+        
+    def to_legacy_projection(self) -> dict:
+        """Project typed DomainStates back to a flat dictionary for legacy compatibility. (F.2.3)"""
+        pass
+
+    # Fail-closed validators
     @model_validator(mode='after')
     def validate_impossible_states(self) -> 'WorkflowState':
         # 1. Enforce active_domain has instantiated state
@@ -103,11 +111,31 @@ class WorkflowState(BaseModel):
             raise ValueError("ORDER domain is active but order_state is None.")
         if self.active_domain == OrchestrationDomain.PAYMENT and not self.payment_state:
             raise ValueError("PAYMENT domain is active but payment_state is None.")
-        
-        # 2. Enforce ESCALATED terminal state bounds (if any specific rules apply)
-        if self.global_status == GlobalWorkflowStatus.ESCALATED and self.active_domain is None:
-            # Escalations generally preserve the active_domain at the time of failure
-            pass
+            
+        # 2. Suspended domains must have instantiated state
+        for d in self.suspended_domains:
+            if d == OrchestrationDomain.PRODUCT and not self.product_state:
+                raise ValueError("PRODUCT is suspended but state is missing.")
+            if d == OrchestrationDomain.ORDER and not self.order_state:
+                raise ValueError("ORDER is suspended but state is missing.")
+            if d == OrchestrationDomain.PAYMENT and not self.payment_state:
+                raise ValueError("PAYMENT is suspended but state is missing.")
+                
+        # 3. Duplicate suspended domains are rejected
+        if len(self.suspended_domains) != len(set(self.suspended_domains)):
+            raise ValueError("Duplicate suspended domains detected.")
+            
+        # 4. Active domain cannot be COMPLETED or FAILED without explicit recovery handling
+        if self.active_domain == OrchestrationDomain.PRODUCT and self.product_state.domain_status in (DomainWorkflowStatus.COMPLETED, DomainWorkflowStatus.FAILED):
+            raise ValueError("Active domain PRODUCT cannot have COMPLETED or FAILED status.")
+        if self.active_domain == OrchestrationDomain.ORDER and self.order_state.domain_status in (DomainWorkflowStatus.COMPLETED, DomainWorkflowStatus.FAILED):
+            raise ValueError("Active domain ORDER cannot have COMPLETED or FAILED status.")
+        if self.active_domain == OrchestrationDomain.PAYMENT and self.payment_state.domain_status in (DomainWorkflowStatus.COMPLETED, DomainWorkflowStatus.FAILED):
+            raise ValueError("Active domain PAYMENT cannot have COMPLETED or FAILED status.")
+
+        # 5. Schema constraints
+        if self.schema_version < 1 or self.state_revision < 1:
+            raise ValueError("Invalid schema_version or state_revision.")
             
         return self
 ```
