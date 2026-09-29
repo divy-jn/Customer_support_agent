@@ -191,7 +191,7 @@ class ProductAgent:
         start_time = time.time()
 
         # ── Step 0: Extract and merge state ──
-        merged_state = await self._extract_and_merge_state(context)
+        merged_state, extracted_order_id = await self._extract_and_merge_state(context)
         merged_state.turn_count += 1
         
         # ── Step 0.5: Central Ticket Lifecycle ──
@@ -201,12 +201,13 @@ class ProductAgent:
             # Temporary compatibility projection for legacy TicketLifecycleService
             proj = merged_state.to_legacy_projection()
             
-            # Explicit order compatibility boundary: read from OrderState or fallback to unmigrated root
-            order_id = None
-            if merged_state.order_state and merged_state.order_state.order_id:
-                order_id = merged_state.order_state.order_id
-            elif merged_state.order_id:
-                order_id = str(merged_state.order_id)
+            # Explicit order compatibility boundary: use transient extraction, OR read from OrderState, OR fallback to unmigrated root
+            order_id = extracted_order_id
+            if not order_id:
+                if merged_state.order_state and merged_state.order_state.order_id:
+                    order_id = merged_state.order_state.order_id
+                elif merged_state.order_id:
+                    order_id = str(merged_state.order_id)
                 
             issue_ctx = IssueContext(
                 customer_id=context.customer_id,
@@ -448,11 +449,12 @@ class ProductAgent:
         parts.append(f"Customer's latest message: {context.customer_message}")
         return "\n\n".join(parts)
         
-    async def _extract_and_merge_state(self, context: ProductDomainContext) -> WorkflowState:
+    async def _extract_and_merge_state(self, context: ProductDomainContext) -> tuple[WorkflowState, Optional[str]]:
         """
         Merge semantically, not blindly.
         Updates state fields that are present/verified in the new message.
         Clears dependent fields if their parent changes (e.g., product_name changes -> clear tool_result).
+        Returns a tuple of (Updated WorkflowState, Transient Extracted OrderID).
         """
         state = context.workflow_state.model_copy(deep=True)
         if state.product_state is None:
@@ -474,6 +476,7 @@ IMPORTANT: Never extract or modify customer_id or session_id.
 
 Message: "{context.customer_message}"
 """
+        transient_order_id = None
         try:
             extraction_response = await self.llm_adapter.invoke(
                 "You are a strict data extraction AI. Output only valid JSON.",
@@ -510,16 +513,7 @@ Message: "{context.customer_message}"
             new_order_id = get_explicit("order_id")
             if new_order_id is not None:
                 try:
-                    new_order_id = str(new_order_id)
-                    
-                    if state.order_state is None:
-                        from app.models import OrderState
-                        state.order_state = OrderState()
-                        
-                    if state.order_state.order_id != new_order_id:
-                        state.order_state.order_id = new_order_id
-                        # Stale result invalidation does not apply to ProductState 
-                        # when only the order_id changes, to avoid accidentally clearing unrelated domain state.
+                    transient_order_id = str(new_order_id)
                 except (ValueError, TypeError):
                     pass
             
@@ -543,4 +537,4 @@ Message: "{context.customer_message}"
             logger.error("State extraction failed: %s", e)
             
         state.updated_at = __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
-        return state
+        return state, transient_order_id

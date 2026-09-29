@@ -47,45 +47,84 @@ class TestProductAgentF24Migration:
         result2 = await agent.handle(ctx)
         assert result2.workflow_state.product_state.domain_status == DomainWorkflowStatus.ESCALATED
 
-    async def test_order_id_compatibility(self):
+    async def test_order_id_compatibility(self, monkeypatch):
         """
         Verify order_id compatibility:
-        - ProductState does not own order_id
-        - OrderState remains the source of truth for order facts
+        - ProductAgent cannot create OrderState from an extracted order_id.
+        - ProductAgent cannot mutate an existing OrderState.order_id.
+        - Existing OrderState survives ProductAgent unchanged.
+        - ProductAgent passes required order context to the legacy ticket compatibility path without owning OrderState.
         """
         agent, _, _, llm, _ = make_product_agent(
             executor_return="Phone specs",
             llm_response="Here is the info."
         )
-        # Provide order_id via user message
-        state = WorkflowState(session_id="test")
+        
+        # Mock TicketLifecycleService to verify it receives the transient order_id
+        from app.tickets.lifecycle import TicketLifecycleService
+        received_issue_ctx = None
+        original_process_issue = TicketLifecycleService.process_issue
+        
+        def mock_process_issue(issue_ctx, active_ticket_id):
+            nonlocal received_issue_ctx
+            received_issue_ctx = issue_ctx
+            return original_process_issue(issue_ctx, active_ticket_id)
+            
+        monkeypatch.setattr(TicketLifecycleService, "process_issue", mock_process_issue)
+
+        # Provide order_id via user message. Existing state has no OrderState.
+        state = WorkflowState(session_id="test", customer_id=123)
         state.active_domain = OrchestrationDomain.PRODUCT
-        state.product_state = ProductState()
+        state.product_state = ProductState(product_name="OldPhone")
         ctx = ProductDomainContext(
-            customer_message="My order is 999. Tell me about the phone features.",
+            customer_message="My order is 999. Tell me about the NewPhone features.",
             semantic_intent="product_inquiry",
+            customer_id=123,
             workflow_state=state
         )
         
         # We need LLM to extract order_id, then return final response
         llm.invoke.side_effect = [
-            '{"order_id": {"value": "999", "source": "USER_EXPLICIT"}}',
+            '{"order_id": {"value": "999", "source": "USER_EXPLICIT"}, "product_name": {"value": "NewPhone", "source": "USER_EXPLICIT"}}',
             'Here is the info.'
         ]
         
         result = await agent.handle(ctx)
         
-        # order_id should be in order_state
-        assert result.workflow_state.order_state is not None
-        assert result.workflow_state.order_state.order_id == "999"
+        # 1. ProductAgent cannot create OrderState from an extracted order_id
+        assert result.workflow_state.order_state is None, "ProductAgent MUST NOT create OrderState"
         
-        # product_state does not contain order_id
+        # 4. ProductState remains authoritative for product facts
+        assert result.workflow_state.product_state.product_name == "NewPhone"
         assert not hasattr(result.workflow_state.product_state, "order_id")
         
-        # legacy root field might be set or not depending on projection, but let's check it doesn't break
-        # Since active_domain is PRODUCT, legacy projection clears root order_id
-        proj = result.workflow_state.to_legacy_projection()
-        assert proj.get("order_id") is None
+        # 5. Passes required order context to legacy ticket compatibility path without owning OrderState
+        assert received_issue_ctx is not None
+        assert str(received_issue_ctx.order_id) == "999"
+
+        # Now test with an existing OrderState
+        state2 = WorkflowState(session_id="test2", customer_id=123)
+        state2.active_domain = OrchestrationDomain.PRODUCT
+        state2.product_state = ProductState()
+        state2.order_state = OrderState(order_id="111")
+        ctx2 = ProductDomainContext(
+            customer_message="My order is 999. Tell me about the phone features.",
+            semantic_intent="product_inquiry",
+            customer_id=123,
+            workflow_state=state2
+        )
+        
+        llm.invoke.side_effect = [
+            '{"order_id": {"value": "999", "source": "USER_EXPLICIT"}}',
+            'Here is the info.'
+        ]
+        
+        result2 = await agent.handle(ctx2)
+        
+        # 2. ProductAgent cannot mutate an existing OrderState.order_id
+        # 3. Existing OrderState survives ProductAgent unchanged
+        assert result2.workflow_state.order_state is not None
+        assert result2.workflow_state.order_state.order_id == "111", "ProductAgent MUST NOT mutate existing OrderState"
         
     async def test_persistence_round_trip(self):
         """
