@@ -397,10 +397,8 @@ class WorkflowState(BaseModel):
         if self.state_revision < 0:
             raise ValueError("Negative state_revision")
 
-        # 2. Legacy bypass: if schema_version wasn't explicitly set, it's a legacy instantiation.
-        # "missing/invalid version -> fail closed unless an explicitly documented legacy constructor is already present"
-        if 'schema_version' not in self.model_fields_set:
-            return self
+        # Legacy bypass removed: all constructions run F.2 validation.
+        # "WorkflowState(session_id='x') cannot silently bypass F.2 validation"
             
         # 3. Validate active domain bounds and enums
         if self.active_domain is not None:

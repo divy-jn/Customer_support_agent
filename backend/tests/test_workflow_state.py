@@ -68,6 +68,17 @@ def test_invalid_active_domain_state_combinations():
         )
     assert "PAYMENT domain is active but payment_state is None" in str(exc_info.value)
 
+def test_no_silent_bypass():
+    """WorkflowState(session_id='x') cannot silently bypass F.2 validation."""
+    with pytest.raises(ValidationError) as exc_info:
+        # Before this fix, omitting schema_version would bypass validation entirely.
+        # Now, it runs validation and fails because product_state is missing.
+        WorkflowState(
+            session_id="s1",
+            active_domain=OrchestrationDomain.PRODUCT
+        )
+    assert "PRODUCT domain is active but product_state is None" in str(exc_info.value)
+
 def test_duplicate_suspended_domains():
     """Suspended domains cannot contain duplicates."""
     with pytest.raises(ValidationError) as exc_info:
