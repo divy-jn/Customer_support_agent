@@ -144,7 +144,7 @@ def test_ambiguous_domain_rejected():
     }
     with pytest.raises(ValueError) as excinfo:
         WorkflowState.from_legacy(legacy)
-    assert "Ambiguous domain" in str(excinfo.value)
+    assert "Contradictory cross-domain facts" in str(excinfo.value)
 
 def test_cross_domain_ticket_leakage():
     """I. cross-domain ticket leakage attempt -> rejected"""
@@ -226,3 +226,98 @@ def test_schema_version_current():
     assert state.schema_version == 1
     proj = state.to_legacy_projection()
     assert proj["schema_version"] == 1
+
+def test_unknown_workflow_status():
+    """1. Fail closed on unknown workflow status"""
+    legacy = {
+        'session_id': 'sess_1',
+        'semantic_intent': 'product_inquiry',
+        'workflow_status': 'garbage'
+    }
+    with pytest.raises(ValueError) as excinfo:
+        WorkflowState.from_legacy(legacy)
+    assert 'Unknown workflow status' in str(excinfo.value)
+
+def test_contradictory_cross_domain_facts():
+    """2. Reject contradictory cross-domain facts"""
+    # Explicit product domain + order facts
+    legacy1 = {
+        'session_id': 'sess_1',
+        'active_domain': 'product',
+        'product_id': 100,
+        'order_id': 500
+    }
+    with pytest.raises(ValueError) as excinfo:
+        WorkflowState.from_legacy(legacy1)
+    assert 'Contradictory cross-domain facts' in str(excinfo.value)
+
+    # Explicit order domain + product facts
+    legacy2 = {
+        'session_id': 'sess_2',
+        'active_domain': 'order',
+        'product_id': 100,
+        'order_id': 500
+    }
+    with pytest.raises(ValueError) as excinfo:
+        WorkflowState.from_legacy(legacy2)
+    assert 'Contradictory cross-domain facts' in str(excinfo.value)
+
+    # Explicit payment domain + product/order facts
+    legacy3 = {
+        'session_id': 'sess_3',
+        'active_domain': 'payment',
+        'product_id': 100
+    }
+    with pytest.raises(ValueError) as excinfo:
+        WorkflowState.from_legacy(legacy3)
+    assert 'Contradictory cross-domain facts' in str(excinfo.value)
+
+    # Explicit payment domain + order facts
+    legacy4 = {
+        'session_id': 'sess_4',
+        'active_domain': 'payment',
+        'order_id': 500
+    }
+    with pytest.raises(ValueError) as excinfo:
+        WorkflowState.from_legacy(legacy4)
+    assert 'Contradictory cross-domain facts' in str(excinfo.value)
+
+def test_cross_domain_data_leakage():
+    """3. Prevent cross-domain data leakage in to_legacy_projection"""
+    state = WorkflowState(
+        session_id='sess_5',
+        active_domain=OrchestrationDomain.PRODUCT,
+        product_state=ProductState(
+            product_id=101,
+            product_name='Tablet',
+            manufacturer='Samsung',
+            active_ticket_id=123
+        ),
+        order_state=OrderState(
+            order_id='1002',
+            active_ticket_id=124
+        ),
+        payment_state=PaymentState(
+            active_ticket_id=125
+        )
+    )
+    
+    # Active domain is PRODUCT
+    proj = state.to_legacy_projection()
+    assert proj['product_id'] == 101
+    assert proj['order_id'] is None
+    assert proj['active_ticket_id'] == 123
+    
+    # Switch active domain to ORDER
+    state.active_domain = OrchestrationDomain.ORDER
+    proj = state.to_legacy_projection()
+    assert proj['order_id'] == 1002
+    assert proj['product_id'] is None
+    assert proj['active_ticket_id'] == 124
+
+    # Switch active domain to PAYMENT
+    state.active_domain = OrchestrationDomain.PAYMENT
+    proj = state.to_legacy_projection()
+    assert proj['order_id'] is None
+    assert proj['product_id'] is None
+    assert proj['active_ticket_id'] == 125

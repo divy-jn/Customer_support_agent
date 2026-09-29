@@ -385,7 +385,7 @@ class WorkflowState(BaseModel):
             try:
                 status = WorkflowStatus(status)
             except ValueError:
-                return DomainWorkflowStatus.IN_PROGRESS
+                raise ValueError(f"Unknown workflow status: {status}")
                 
         mapping = {
             WorkflowStatus.COMPLETED: DomainWorkflowStatus.COMPLETED,
@@ -397,7 +397,9 @@ class WorkflowState(BaseModel):
             WorkflowStatus.RESUMED: DomainWorkflowStatus.IN_PROGRESS,
             WorkflowStatus.FAILED: DomainWorkflowStatus.FAILED
         }
-        return mapping.get(status, DomainWorkflowStatus.IN_PROGRESS)
+        if status not in mapping:
+            raise ValueError(f"Unknown workflow status enum: {status}")
+        return mapping[status]
 
     @classmethod
     def from_legacy(cls, legacy_dict: dict) -> 'WorkflowState':
@@ -409,6 +411,12 @@ class WorkflowState(BaseModel):
         legacy_version = legacy_dict.get("schema_version", 1)
         if legacy_version != 1:
             raise ValueError(f"Unsupported legacy schema_version: {legacy_version}")
+
+        has_prod = bool(legacy_dict.get("product_id") or legacy_dict.get("product_name") or legacy_dict.get("manufacturer"))
+        has_order = bool(legacy_dict.get("order_id"))
+        
+        if has_prod and has_order:
+            raise ValueError("Contradictory cross-domain facts: both product and order facts present in legacy state.")
 
         # 1. Determine domain
         domain_enum = None
@@ -447,16 +455,17 @@ class WorkflowState(BaseModel):
                 if skill in skill_map:
                     domain_enum = skill_map[skill]
                 else:
-                    # Deterministic presence of facts
-                    has_prod = bool(legacy_dict.get("product_id") or legacy_dict.get("product_name") or legacy_dict.get("manufacturer"))
-                    has_order = bool(legacy_dict.get("order_id"))
-                    
-                    if has_prod and has_order:
-                        raise ValueError("Ambiguous domain: multiple domain facts present.")
-                    elif has_prod:
+                    if has_prod:
                         domain_enum = OrchestrationDomain.PRODUCT
                     elif has_order:
                         domain_enum = OrchestrationDomain.ORDER
+
+        if domain_enum == OrchestrationDomain.PRODUCT and has_order:
+            raise ValueError("Contradictory cross-domain facts: PRODUCT domain with order facts.")
+        if domain_enum == OrchestrationDomain.ORDER and has_prod:
+            raise ValueError("Contradictory cross-domain facts: ORDER domain with product facts.")
+        if domain_enum == OrchestrationDomain.PAYMENT and (has_prod or has_order):
+            raise ValueError("Contradictory cross-domain facts: PAYMENT domain with product/order facts.")
 
         # 2. Map domain states
         active_ticket_id = legacy_dict.get("active_ticket_id")
@@ -552,12 +561,12 @@ class WorkflowState(BaseModel):
         else:
             d["updated_at"] = None
 
-        # Base legacy fields mapped to domain states where appropriate
-        d["active_ticket_id"] = self.active_ticket_id
-        d["product_id"] = self.product_id
-        d["product_name"] = self.product_name
-        d["order_id"] = self.order_id
-        d["manufacturer"] = self.manufacturer
+        # Explicitly control cross-domain data leakage by projecting only active domain facts
+        d["active_ticket_id"] = None
+        d["product_id"] = None
+        d["product_name"] = None
+        d["order_id"] = None
+        d["manufacturer"] = None
 
         if self.active_domain == OrchestrationDomain.PRODUCT.value and self.product_state:
             d["active_ticket_id"] = self.product_state.active_ticket_id
