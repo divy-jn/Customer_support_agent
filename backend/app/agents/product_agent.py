@@ -21,8 +21,10 @@ from app.skills.base import SkillDefinition, render_skill_prompt
 from app.skills.policy import GLOBAL_SYSTEM_POLICY
 from app.skills.registry import SkillRegistry
 from app.skills.runtime import SkillRuntime
-from app.models import SkillExecutionStatus, SkillExecutionResult, WorkflowState, WorkflowStatus, ToolResultEnvelope
-
+from app.models import (
+    SkillExecutionStatus, SkillExecutionResult, WorkflowState, WorkflowStatus, 
+    ToolResultEnvelope, OrchestrationDomain, ProductState, DomainWorkflowStatus
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,25 +192,29 @@ class ProductAgent:
 
         # ── Step 0: Extract and merge state ──
         merged_state = await self._extract_and_merge_state(context)
-        merged_state.active_domain = "product"
+        merged_state.active_domain = OrchestrationDomain.PRODUCT
         merged_state.turn_count += 1
         
         # ── Step 0.5: Central Ticket Lifecycle ──
         if context.customer_id:
             from app.tickets.lifecycle import TicketLifecycleService, IssueContext
+            
+            # Temporary compatibility projection for legacy TicketLifecycleService
+            proj = merged_state.to_legacy_projection()
+            
             issue_ctx = IssueContext(
                 customer_id=context.customer_id,
                 domain="product",
                 intent=context.semantic_intent,
                 message=context.customer_message,
-                order_id=merged_state.order_id,
-                product_name=merged_state.product_name,
+                order_id=proj.get("order_id"),
+                product_name=proj.get("product_name"),
                 urgency=context.urgency,
                 sentiment=context.sentiment
             )
-            ticket_res = TicketLifecycleService.process_issue(issue_ctx, merged_state.active_ticket_id)
+            ticket_res = TicketLifecycleService.process_issue(issue_ctx, merged_state.product_state.active_ticket_id)
             if ticket_res.ticket_id:
-                merged_state.active_ticket_id = ticket_res.ticket_id
+                merged_state.product_state.active_ticket_id = ticket_res.ticket_id
                 
         # ── Step 1: Resolve skill ──
         skill = self.skill_resolver.resolve(context.semantic_intent)
@@ -217,7 +223,8 @@ class ProductAgent:
                 "ProductAgent: no skill matched for intent=%s",
                 context.semantic_intent,
             )
-            merged_state.workflow_status = WorkflowStatus.FAILED
+            merged_state.product_state.domain_status = DomainWorkflowStatus.FAILED
+            self._apply_legacy_projection(merged_state)
             return ProductAgentResponse(
                 response=(
                     "I'm sorry, I don't have the specific expertise to handle "
@@ -237,7 +244,8 @@ class ProductAgent:
             skill, {"Customer query text": context.customer_message}
         )
         if input_result.status != SkillExecutionStatus.SUCCESS:
-            merged_state.workflow_status = WorkflowStatus.AWAITING_INPUT
+            merged_state.product_state.domain_status = DomainWorkflowStatus.AWAITING_INPUT
+            self._apply_legacy_projection(merged_state)
             return ProductAgentResponse(
                 response="I need more information to help you with that product question.",
                 workflow_state=merged_state,
@@ -247,7 +255,7 @@ class ProductAgent:
                 metadata={"message": input_result.message},
             )
 
-        merged_state.workflow_status = WorkflowStatus.IN_PROGRESS
+        merged_state.product_state.domain_status = DomainWorkflowStatus.IN_PROGRESS
         merged_state.skill_name = skill.name
         merged_state.skill_version = skill.metadata.version
 
@@ -268,6 +276,8 @@ class ProductAgent:
                 llm_response = await self.llm_adapter.invoke(system_prompt, conversation_history)
             except Exception as e:
                 logger.error("ProductAgent: LLM invocation failed: %s", type(e).__name__)
+                merged_state.product_state.domain_status = DomainWorkflowStatus.FAILED
+                self._apply_legacy_projection(merged_state)
                 return ProductAgentResponse(
                     response=(
                         "I apologize, but I'm experiencing a technical issue. "
@@ -320,10 +330,10 @@ class ProductAgent:
                         tool_result_str = f"TOOL EXECUTOR ERROR ({exec_result.status.value}): {exec_result.message}"
                         
                     # Save to workflow state
-                    entity_ref = str(merged_state.order_id) if merged_state.order_id else (merged_state.product_name or None)
+                    entity_ref = str(merged_state.order_id) if merged_state.order_id else (merged_state.product_state.product_name or None)
                     result_data = json.loads(tool_result_str) if tool_result_str.startswith("{") or tool_result_str.startswith("[") else {"result": tool_result_str}
-                    merged_state.last_tool = tool_name
-                    merged_state.last_tool_result = ToolResultEnvelope(
+                    merged_state.product_state.last_tool = tool_name
+                    merged_state.product_state.last_tool_result = ToolResultEnvelope(
                         tool_name=tool_name,
                         entity_reference=entity_ref,
                         result=result_data
@@ -339,7 +349,8 @@ class ProductAgent:
             else:
                 # No tool call detected, this is the final response.
                 latency_ms = int((time.time() - start_time) * 1000)
-                merged_state.workflow_status = WorkflowStatus.COMPLETED
+                merged_state.product_state.domain_status = DomainWorkflowStatus.COMPLETED
+                self._apply_legacy_projection(merged_state)
                 return ProductAgentResponse(
                     response=llm_response,
                     workflow_state=merged_state,
@@ -357,7 +368,8 @@ class ProductAgent:
 
         # ── Step 4: Max iterations exceeded ──
         logger.warning("ProductAgent: Max tool iterations exceeded for skill=%s", skill.name)
-        merged_state.workflow_status = WorkflowStatus.FAILED
+        merged_state.product_state.domain_status = DomainWorkflowStatus.FAILED
+        self._apply_legacy_projection(merged_state)
         return ProductAgentResponse(
             response="I apologize, but I'm having trouble retrieving the requested information right now. Please try again later.",
             workflow_state=merged_state,
@@ -365,6 +377,16 @@ class ProductAgent:
             skill_version=skill.metadata.version,
             execution_status="max_iterations_exceeded",
         )
+
+    def _apply_legacy_projection(self, state: WorkflowState) -> None:
+        """
+        Temporary compatibility projection for unmigrated legacy consumers.
+        Applies the typed domain facts to the flat root fields before returning.
+        """
+        proj = state.to_legacy_projection()
+        for k, v in proj.items():
+            if hasattr(state, k):
+                setattr(state, k, v)
 
     def _build_system_prompt(self, skill: SkillDefinition) -> str:
         """
@@ -401,10 +423,10 @@ class ProductAgent:
         # Inject extracted state so the LLM doesn't have to guess or reread the whole transcript
         state_parts = []
         if state.order_id: state_parts.append(f"Verified Order ID: {state.order_id}")
-        if state.product_name: state_parts.append(f"Target Product: {state.product_name}")
-        if state.manufacturer: state_parts.append(f"Target Manufacturer: {state.manufacturer}")
-        if state.last_tool_result:
-            state_parts.append(f"Previous Workflow Result: {state.last_tool_result.model_dump_json()}")
+        if state.product_state.product_name: state_parts.append(f"Target Product: {state.product_state.product_name}")
+        if state.product_state.manufacturer: state_parts.append(f"Target Manufacturer: {state.product_state.manufacturer}")
+        if state.product_state.last_tool_result:
+            state_parts.append(f"Previous Workflow Result: {state.product_state.last_tool_result.model_dump_json()}")
             
         if state_parts:
             parts.append("VERIFIED WORKFLOW STATE:\n" + "\n".join(state_parts))
@@ -416,9 +438,12 @@ class ProductAgent:
         """
         Merge semantically, not blindly.
         Updates state fields that are present/verified in the new message.
-        Clears dependent fields if their parent changes (e.g., order_id changes -> clear tool_result).
+        Clears dependent fields if their parent changes (e.g., product_name changes -> clear tool_result).
         """
         state = context.workflow_state.model_copy(deep=True)
+        if state.product_state is None:
+            state.product_state = ProductState()
+            
         import json
         import re
         
@@ -474,27 +499,26 @@ Message: "{context.customer_message}"
                     new_order_id = int(new_order_id)
                     if state.order_id != new_order_id:
                         state.order_id = new_order_id
-                        # Stale result invalidation
-                        state.last_tool = None
-                        state.last_tool_result = None
+                        # Stale result invalidation does not apply to ProductState 
+                        # when only the order_id changes, to avoid accidentally clearing unrelated domain state.
                 except (ValueError, TypeError):
                     pass
             
             new_product = get_explicit("product_name")
             if new_product is not None and str(new_product).strip():
-                if state.product_name != new_product:
-                    state.product_name = new_product
+                if state.product_state.product_name != new_product:
+                    state.product_state.product_name = new_product
                     # If product changes, previous results might be stale too
-                    state.last_tool = None
-                    state.last_tool_result = None
+                    state.product_state.last_tool = None
+                    state.product_state.last_tool_result = None
                     
             new_manufacturer = get_explicit("manufacturer")
             if new_manufacturer is not None and str(new_manufacturer).strip():
-                if state.manufacturer != new_manufacturer:
-                    state.manufacturer = new_manufacturer
+                if state.product_state.manufacturer != new_manufacturer:
+                    state.product_state.manufacturer = new_manufacturer
                     # If manufacturer changes, previous results might be stale too
-                    state.last_tool = None
-                    state.last_tool_result = None
+                    state.product_state.last_tool = None
+                    state.product_state.last_tool_result = None
                     
         except Exception as e:
             logger.error("State extraction failed: %s", e)
