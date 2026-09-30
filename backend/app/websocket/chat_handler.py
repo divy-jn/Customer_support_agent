@@ -32,8 +32,20 @@ async def _get_session(session_id: str, authenticated_customer_id: int | None = 
             if session.get("customer_id") is not None and session.get("customer_id") != authenticated_customer_id:
                 raise ValueError(f"Session {session_id} belongs to a different customer.")
             if session.get("customer_id") is None:
-                session["customer_id"] = authenticated_customer_id
-                await session_store.save_session(session_id, session)
+                from app.persistence.session import SaveResult
+                for attempt in range(3):
+                    expected_revision = session.get("_session_revision", 1)
+                    session["customer_id"] = authenticated_customer_id
+                    result = await session_store.save_session_conditional(session_id, session, expected_revision)
+                    if result == SaveResult.SUCCESS:
+                        break
+                    elif result == SaveResult.MISSING:
+                        raise ValueError(f"Session {session_id} went missing during init.")
+                    session = await session_store.get_session(session_id)
+                    if not session:
+                        raise ValueError(f"Session {session_id} went missing during init.")
+                else:
+                    raise RuntimeError("Concurrency conflict initializing customer_id")
         return session
 
     # Initialize new session bounded to the authenticated customer
@@ -52,12 +64,13 @@ async def _get_session(session_id: str, authenticated_customer_id: int | None = 
             "turn_count": 0
         }
     }
+    # Intentionally unconditional: new session creation with safe unique ID fallback
     await session_store.save_session(session_id, new_session)
     return new_session
 
 
 
-async def _mutate_session(session_id: str, mutator_fn, allow_retry: bool = True, customer_id: int | None = None) -> dict:
+async def _mutate_session(session_id: str, mutator_fn, allow_retry: bool = True, customer_id: int | None = None) -> tuple[dict, bool]:
     from app.persistence.session import SaveResult
     MAX_CAS_RETRIES = 3
     retries = MAX_CAS_RETRIES if allow_retry else 1
@@ -68,12 +81,12 @@ async def _mutate_session(session_id: str, mutator_fn, allow_retry: bool = True,
         
         should_save = mutator_fn(session)
         if not should_save:
-            return session
+            return session, False
             
         result = await session_store.save_session_conditional(session_id, session, expected_revision)
         
         if result == SaveResult.SUCCESS:
-            return session
+            return session, True
         elif result == SaveResult.MISSING:
             logger.error("Session missing during CAS mutation", extra={"session_id": session_id})
             raise RuntimeError(f"Session {session_id} missing")
@@ -90,9 +103,7 @@ async def _mutate_session(session_id: str, mutator_fn, allow_retry: bool = True,
     logger.error("CAS conflict exhausted retries or retry disabled", extra={"session_id": session_id, "retry_count": retries})
     raise RuntimeError("Concurrency conflict: stale session data could not be saved safely.")
 
-async def _save_session(session_id: str, session: dict):
-    """Save session back to Redis (or memory)."""
-    await session_store.save_session(session_id, session)
+    raise RuntimeError("Concurrency conflict: stale session data could not be saved safely.")
 
 async def get_all_active_sessions() -> list:
     """Retrieve all active sessions from Redis or memory."""
@@ -199,7 +210,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     "pii_detected": guard_result.pii_detected,
                 })
                 return True
-            session = await _mutate_session(session_id, _append_customer, allow_retry=True, customer_id=customer_id)
+            session, _ = await _mutate_session(session_id, _append_customer, allow_retry=True, customer_id=customer_id)
 
             # Broadcast to monitoring agents
             await manager.broadcast_to_agents({
@@ -256,7 +267,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         })
                         s.pop("pending_approval", None)
                         return True
-                    session = await _mutate_session(session_id, _approve_execute, allow_retry=True)
+                    session, _ = await _mutate_session(session_id, _approve_execute, allow_retry=True)
                     
                     await manager.send_personal_message({
                         "type": "agent_response",
@@ -287,7 +298,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     })
                     return True
-                session = await _mutate_session(session_id, _approve_reject, allow_retry=True)
+                session, _ = await _mutate_session(session_id, _approve_reject, allow_retry=True)
                 await manager.send_personal_message({
                     "type": "agent_response",
                     "message": "No problem! I've cancelled that action. Is there anything else I can help with?",
@@ -345,23 +356,9 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     }, session_id)
                     continue
 
-                # RE-CHECK MODE AFTER AWAIT TO PREVENT RACE CONDITIONS
-                session = await _get_session(session_id, customer_id)
-                if session.get("mode") == "human":
-                    logger.info(f"AI response discarded for {session_id} - agent took over during processing.")
-                    continue
-
+                # We still re-check mode but the whole mutation must be atomic
                 raw_response = result.get("response", "I'm sorry, I couldn't process your request.")
                 is_escalated = result.get("escalated", False)
-                
-                # Check if graph returned a pending approval
-                if result.get("pending_approval"):
-                    session["pending_approval"] = result["pending_approval"]
-                    session["pending_approval"]["original_message"] = message
-                    session["pending_approval"]["intent"] = result.get("intent", "")
-
-                if result.get("workflow_state"):
-                    session["workflow_state"] = result["workflow_state"]
 
                 # ── Output Guardrails ──
                 output_guard = validate_output(raw_response)
@@ -372,13 +369,42 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         extra={"violations": output_guard.violations, "risk_score": output_guard.risk_score},
                     )
 
-                # Append agent response to history
-                session["conversation_history"].append({
-                    "role": "agent",
-                    "content": response_text,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
-                await _save_session(session_id, session)
+                def _apply_graph_result(s):
+                    if s.get("mode") == "human":
+                        return False # do not save, human took over
+                    
+                    if result.get("pending_approval"):
+                        s["pending_approval"] = result["pending_approval"]
+                        s["pending_approval"]["original_message"] = message
+                        s["pending_approval"]["intent"] = result.get("intent", "")
+
+                    if result.get("workflow_state"):
+                        s["workflow_state"] = result["workflow_state"]
+
+                    s["conversation_history"].append({
+                        "role": "agent",
+                        "content": response_text,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    return True
+
+                try:
+                    # NEVER blindly merge arbitrary typed domain state. 
+                    session, was_changed = await _mutate_session(session_id, _apply_graph_result, allow_retry=False, customer_id=customer_id)
+                    if not was_changed:
+                        logger.info(f"AI response discarded for {session_id} - agent took over during processing.")
+                        continue
+                except RuntimeError as e:
+                    if "Concurrency conflict" in str(e):
+                        logger.error(f"CAS conflict on graph result for session {session_id}: {e}")
+                        await manager.send_personal_message({
+                            "type": "error",
+                            "message": "The conversation was updated in another window. Please try your request again.",
+                            "agent_name": "Adi",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }, session_id)
+                        continue
+                    raise e
 
                 # Send response to customer
                 response_payload = {
@@ -545,7 +571,7 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                         "agent_name": agent_name,
                     })
                     return True
-                session = await _mutate_session(session_id, _agent_message, allow_retry=True)
+                session, _ = await _mutate_session(session_id, _agent_message, allow_retry=True)
 
                 # Send to customer
                 await manager.send_personal_message({
@@ -563,8 +589,8 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                         s["mode"] = "human"
                         return True
                     return False
-                session = await _mutate_session(session_id, _takeover, allow_retry=True)
-                if session and session.get("mode") == "human":
+                session, was_changed = await _mutate_session(session_id, _takeover, allow_retry=True)
+                if was_changed and session and session.get("mode") == "human":
                     await manager.send_personal_message({
                         "type": "mode_change",
                         "mode": "human",
@@ -579,8 +605,8 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                         s["mode"] = "ai"
                         return True
                     return False
-                session = await _mutate_session(session_id, _release, allow_retry=True)
-                if session and session.get("mode") == "ai":
+                session, was_changed = await _mutate_session(session_id, _release, allow_retry=True)
+                if was_changed and session and session.get("mode") == "ai":
                     await manager.send_personal_message({
                         "type": "mode_change",
                         "mode": "ai",
@@ -603,8 +629,8 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
             return False
             
         try:
-            session = await _mutate_session(session_id, _abandon, allow_retry=True)
-            if session and session.get("mode") == "ai" and not has_other_agents:
+            session, was_changed = await _mutate_session(session_id, _abandon, allow_retry=True)
+            if was_changed and session and session.get("mode") == "ai" and not has_other_agents:
                 # Notify customer that AI has resumed
                 await manager.send_personal_message({
                     "type": "mode_change",
