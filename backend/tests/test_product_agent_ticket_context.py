@@ -238,3 +238,70 @@ async def test_ignored_action_preserves_ticket(mock_process, product_agent):
     
     # Preserves active ticket
     assert res.workflow_state.product_state.active_ticket_id == 20
+
+@pytest.mark.asyncio
+@patch("app.tickets.lifecycle.TicketLifecycleService.process_issue")
+async def test_invalid_urgency_fails_closed(mock_process, product_agent):
+    state = WorkflowState(session_id="test")
+    state.product_state = ProductState(active_ticket_id=10)
+    
+    ctx = ProductDomainContext(
+        customer_message="Help",
+        semantic_intent="test",
+        customer_id=1,
+        workflow_state=state,
+        urgency="INVALID_URGENCY"
+    )
+    
+    res = await product_agent.handle(ctx)
+    
+    assert res.execution_status == "invalid_urgency"
+    assert res.workflow_state.product_state.domain_status == DomainWorkflowStatus.FAILED
+    assert res.workflow_state.product_state.active_ticket_id == 10
+    mock_process.assert_not_called()
+
+@pytest.mark.asyncio
+@patch("app.tickets.lifecycle.TicketLifecycleService.process_issue")
+async def test_invalid_sentiment_fails_closed(mock_process, product_agent):
+    state = WorkflowState(session_id="test")
+    state.product_state = ProductState(active_ticket_id=10)
+    
+    ctx = ProductDomainContext(
+        customer_message="Help",
+        semantic_intent="test",
+        customer_id=1,
+        workflow_state=state,
+        sentiment="SUPER_MAD"
+    )
+    
+    res = await product_agent.handle(ctx)
+    
+    assert res.execution_status == "invalid_sentiment"
+    assert res.workflow_state.product_state.domain_status == DomainWorkflowStatus.FAILED
+    assert res.workflow_state.product_state.active_ticket_id == 10
+    mock_process.assert_not_called()
+
+@pytest.mark.asyncio
+@patch("app.tickets.lifecycle.TicketLifecycleService.process_issue")
+async def test_invalid_order_id_fails_closed(mock_process, product_agent):
+    state = WorkflowState(session_id="test")
+    state.product_state = ProductState(active_ticket_id=10)
+    
+    ctx = ProductDomainContext(
+        customer_message="Help my order ABC",
+        semantic_intent="test",
+        customer_id=1,
+        workflow_state=state
+    )
+    
+    # Extract an invalid order_id explicitly
+    product_agent.llm_adapter.invoke.return_value = '{"order_id": {"value": "ABC", "source": "USER_EXPLICIT"}}'
+    
+    res = await product_agent.handle(ctx)
+    
+    assert res.execution_status == "invalid_order_id"
+    assert res.workflow_state.product_state.domain_status == DomainWorkflowStatus.FAILED
+    assert res.workflow_state.product_state.active_ticket_id == 10
+    assert res.workflow_state.order_state is None
+    mock_process.assert_not_called()
+

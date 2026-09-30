@@ -215,17 +215,41 @@ class ProductAgent:
                 try:
                     parsed_order_id = int(order_id)
                 except ValueError:
-                    parsed_order_id = None
+                    logger.error("ProductAgent: Invalid order_id format for ticket context: %s", order_id)
+                    self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
+                    self._apply_legacy_projection(merged_state)
+                    return ProductAgentResponse(
+                        response="I apologize, but the provided order ID is invalid. Please try again.",
+                        workflow_state=merged_state,
+                        execution_status="invalid_order_id",
+                        metadata={"intent": context.semantic_intent, "latency_ms": int((time.time() - start_time) * 1000)}
+                    )
                     
             try:
-                urgency = Urgency(context.urgency)
+                urgency = Urgency(context.urgency) if context.urgency else Urgency.MEDIUM
             except ValueError:
-                urgency = Urgency.MEDIUM
+                logger.error("ProductAgent: Invalid urgency format for ticket context: %s", context.urgency)
+                self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
+                self._apply_legacy_projection(merged_state)
+                return ProductAgentResponse(
+                    response="I apologize, but I received an invalid priority setting. Please try again.",
+                    workflow_state=merged_state,
+                    execution_status="invalid_urgency",
+                    metadata={"intent": context.semantic_intent, "latency_ms": int((time.time() - start_time) * 1000)}
+                )
                 
             try:
-                sentiment = Sentiment(context.sentiment)
+                sentiment = Sentiment(context.sentiment) if context.sentiment else Sentiment.NEUTRAL
             except ValueError:
-                sentiment = Sentiment.NEUTRAL
+                logger.error("ProductAgent: Invalid sentiment format for ticket context: %s", context.sentiment)
+                self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
+                self._apply_legacy_projection(merged_state)
+                return ProductAgentResponse(
+                    response="I apologize, but I received an invalid feedback setting. Please try again.",
+                    workflow_state=merged_state,
+                    execution_status="invalid_sentiment",
+                    metadata={"intent": context.semantic_intent, "latency_ms": int((time.time() - start_time) * 1000)}
+                )
                 
             ticket_ctx = TicketContext(
                 customer_id=context.customer_id,
