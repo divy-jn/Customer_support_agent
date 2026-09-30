@@ -279,6 +279,40 @@ class Supervisor:
                     f"RESUME target_domain '{decision.target_domain.value}' does not match "
                     f"resumed_domain '{meta.resumed_domain.value}'"
                 )
+            
+            # If the current active domain is a suspendable typed domain, it must be suspended.
+            active_enum = OrchestrationDomain(state.active_domain) if state.active_domain else None
+            is_active_suspendable = active_enum in _SUSPENDABLE_DOMAINS
+            
+            if is_active_suspendable and not meta.suspended_domain:
+                raise InvalidSupervisorDecisionError(
+                    "RESUME from a typed domain requires transitioning that domain into suspended_domain metadata."
+                )
+
+            if meta.suspended_domain:
+                if meta.suspended_domain not in _SUSPENDABLE_DOMAINS:
+                    raise InvalidSupervisorDecisionError(
+                        f"suspended_domain '{meta.suspended_domain.value}' must be a suspendable typed domain"
+                    )
+                if meta.suspended_domain == meta.resumed_domain:
+                    raise InvalidSupervisorDecisionError(
+                        f"suspended_domain '{meta.suspended_domain.value}' cannot equal resumed_domain"
+                    )
+                if active_enum and meta.suspended_domain != active_enum:
+                    raise InvalidSupervisorDecisionError(
+                        f"suspended_domain '{meta.suspended_domain.value}' does not match current active_domain '{active_enum.value}'"
+                    )
+                
+                # Outgoing typed state validation
+                outgoing_status = Supervisor._get_domain_status(state, meta.suspended_domain)
+                if not outgoing_status:
+                    raise InvalidSupervisorDecisionError(
+                        f"RESUME outgoing domain '{meta.suspended_domain.value}' is missing typed state"
+                    )
+                if outgoing_status not in (DomainWorkflowStatus.IN_PROGRESS, DomainWorkflowStatus.AWAITING_INPUT):
+                    raise InvalidSupervisorDecisionError(
+                        f"RESUME outgoing domain '{meta.suspended_domain.value}' state must be IN_PROGRESS or AWAITING_INPUT"
+                    )
 
         elif decision.action == SupervisorAction.SUSPEND_AND_SWITCH:
             if not meta or not meta.suspended_domain:
@@ -293,6 +327,21 @@ class Supervisor:
             if meta.suspended_domain not in _SUSPENDABLE_DOMAINS:
                 raise InvalidSupervisorDecisionError(
                     f"Domain '{meta.suspended_domain.value}' is not a suspendable workflow domain"
+                )
+            if decision.target_domain == meta.suspended_domain:
+                raise InvalidSupervisorDecisionError(
+                    f"target_domain '{decision.target_domain.value}' MUST NOT equal suspended_domain"
+                )
+            
+            # Outgoing typed state validation
+            outgoing_status = Supervisor._get_domain_status(state, meta.suspended_domain)
+            if not outgoing_status:
+                raise InvalidSupervisorDecisionError(
+                    f"SUSPEND_AND_SWITCH outgoing domain '{meta.suspended_domain.value}' is missing typed state"
+                )
+            if outgoing_status not in (DomainWorkflowStatus.IN_PROGRESS, DomainWorkflowStatus.AWAITING_INPUT):
+                raise InvalidSupervisorDecisionError(
+                    f"SUSPEND_AND_SWITCH outgoing domain '{meta.suspended_domain.value}' state must be IN_PROGRESS or AWAITING_INPUT"
                 )
 
         elif decision.action == SupervisorAction.CONTINUE:

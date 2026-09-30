@@ -752,3 +752,171 @@ def test_start_new_removes_from_suspended_domains():
     # ORDER must not be simultaneously active and in suspended_domains
     assert OrchestrationDomain.ORDER not in new_state.suspended_domains
     assert new_state.active_domain == "order"
+
+# ──────────────────────────────────────────────
+#  F.2.7.3A FINAL HARDENING: MANUAL DECISION VALIDATION
+# ──────────────────────────────────────────────
+
+def test_resume_suspended_domain_equals_resumed_domain():
+    state = _base(
+        active="order",
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        order_status=DomainWorkflowStatus.IN_PROGRESS,
+        suspended=[OrchestrationDomain.PRODUCT],
+        product_status=DomainWorkflowStatus.SUSPENDED
+    )
+    d = SupervisorDecision(
+        action=SupervisorAction.RESUME,
+        target_domain=OrchestrationDomain.PRODUCT,
+        transition_metadata=TransitionMetadata(
+            resumed_domain=OrchestrationDomain.PRODUCT,
+            suspended_domain=OrchestrationDomain.PRODUCT
+        ),
+        transition_reason="test"
+    )
+    with pytest.raises(InvalidSupervisorDecisionError, match="cannot equal resumed_domain"):
+        Supervisor.apply_decision(state, d)
+
+def test_resume_with_general_outgoing_suspended_domain():
+    state = _base(
+        active="general",
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        suspended=[OrchestrationDomain.PRODUCT],
+        product_status=DomainWorkflowStatus.SUSPENDED
+    )
+    d = SupervisorDecision(
+        action=SupervisorAction.RESUME,
+        target_domain=OrchestrationDomain.PRODUCT,
+        transition_metadata=TransitionMetadata(
+            resumed_domain=OrchestrationDomain.PRODUCT,
+            suspended_domain=OrchestrationDomain.GENERAL
+        ),
+        transition_reason="test"
+    )
+    with pytest.raises(InvalidSupervisorDecisionError, match="must be a suspendable typed domain"):
+        Supervisor.apply_decision(state, d)
+
+def test_resume_with_non_active_outgoing_suspended_domain():
+    state = _base(
+        active="order",
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        order_status=DomainWorkflowStatus.IN_PROGRESS,
+        suspended=[OrchestrationDomain.PRODUCT],
+        product_status=DomainWorkflowStatus.SUSPENDED
+    )
+    d = SupervisorDecision(
+        action=SupervisorAction.RESUME,
+        target_domain=OrchestrationDomain.PRODUCT,
+        transition_metadata=TransitionMetadata(
+            resumed_domain=OrchestrationDomain.PRODUCT,
+            suspended_domain=OrchestrationDomain.PAYMENT # not active
+        ),
+        transition_reason="test"
+    )
+    with pytest.raises(InvalidSupervisorDecisionError, match="does not match current active_domain"):
+        Supervisor.apply_decision(state, d)
+
+def test_resume_with_outgoing_domain_missing_typed_state():
+    state = WorkflowState.model_construct(
+        session_id="test",
+        active_domain="payment",
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        suspended_domains=[OrchestrationDomain.PRODUCT],
+        product_state=ProductState.model_construct(domain_status=DomainWorkflowStatus.SUSPENDED),
+        payment_state=None
+    )
+    d = SupervisorDecision(
+        action=SupervisorAction.RESUME,
+        target_domain=OrchestrationDomain.PRODUCT,
+        transition_metadata=TransitionMetadata(
+            resumed_domain=OrchestrationDomain.PRODUCT,
+            suspended_domain=OrchestrationDomain.PAYMENT
+        ),
+        transition_reason="test"
+    )
+    with pytest.raises(InvalidSupervisorDecisionError, match="is missing typed state"):
+        Supervisor.apply_decision(state, d)
+
+def test_resume_with_outgoing_typed_state_already_suspended():
+    state = WorkflowState.model_construct(
+        session_id="test",
+        active_domain="payment",
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        suspended_domains=[OrchestrationDomain.PRODUCT],
+        product_state=ProductState.model_construct(domain_status=DomainWorkflowStatus.SUSPENDED),
+        payment_state=PaymentState.model_construct(domain_status=DomainWorkflowStatus.SUSPENDED)
+    )
+    d = SupervisorDecision(
+        action=SupervisorAction.RESUME,
+        target_domain=OrchestrationDomain.PRODUCT,
+        transition_metadata=TransitionMetadata(
+            resumed_domain=OrchestrationDomain.PRODUCT,
+            suspended_domain=OrchestrationDomain.PAYMENT
+        ),
+        transition_reason="test"
+    )
+    with pytest.raises(InvalidSupervisorDecisionError, match="state must be IN_PROGRESS or AWAITING_INPUT"):
+        Supervisor.apply_decision(state, d)
+
+def test_suspend_and_switch_target_equals_suspended_domain():
+    state = _base(
+        active="order",
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        order_status=DomainWorkflowStatus.IN_PROGRESS
+    )
+    d = SupervisorDecision(
+        action=SupervisorAction.SUSPEND_AND_SWITCH,
+        target_domain=OrchestrationDomain.ORDER,
+        transition_metadata=TransitionMetadata(
+            suspended_domain=OrchestrationDomain.ORDER
+        ),
+        transition_reason="test"
+    )
+    with pytest.raises(InvalidSupervisorDecisionError, match="MUST NOT equal suspended_domain"):
+        Supervisor.apply_decision(state, d)
+
+def test_valid_typed_resume_preserves_facts():
+    state = _base(
+        active="order",
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        order_status=DomainWorkflowStatus.IN_PROGRESS,
+        suspended=[OrchestrationDomain.PRODUCT],
+        product_status=DomainWorkflowStatus.SUSPENDED
+    )
+    state.product_state.product_name = "Laptop"
+    state.order_state.order_id = "ORD-123"
+    
+    d = SupervisorDecision(
+        action=SupervisorAction.RESUME,
+        target_domain=OrchestrationDomain.PRODUCT,
+        transition_metadata=TransitionMetadata(
+            resumed_domain=OrchestrationDomain.PRODUCT,
+            suspended_domain=OrchestrationDomain.ORDER
+        ),
+        transition_reason="test"
+    )
+    new_state = Supervisor.apply_decision(state, d)
+    assert new_state.active_domain == "product"
+    assert new_state.product_state.product_name == "Laptop"
+    assert new_state.order_state.order_id == "ORD-123"
+    assert OrchestrationDomain.ORDER in new_state.suspended_domains
+    assert OrchestrationDomain.PRODUCT not in new_state.suspended_domains
+
+def test_valid_general_resume_has_no_outgoing_suspend_metadata():
+    state = _base(
+        active="general",
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        suspended=[OrchestrationDomain.PRODUCT],
+        product_status=DomainWorkflowStatus.SUSPENDED
+    )
+    d = SupervisorDecision(
+        action=SupervisorAction.RESUME,
+        target_domain=OrchestrationDomain.PRODUCT,
+        transition_metadata=TransitionMetadata(
+            resumed_domain=OrchestrationDomain.PRODUCT
+        ),
+        transition_reason="test"
+    )
+    new_state = Supervisor.apply_decision(state, d)
+    assert new_state.active_domain == "product"
+    assert new_state.product_state.domain_status == DomainWorkflowStatus.IN_PROGRESS
