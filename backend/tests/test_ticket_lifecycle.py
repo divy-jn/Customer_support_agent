@@ -1,7 +1,8 @@
 import pytest
 import json
 from unittest.mock import patch, MagicMock
-from app.tickets.lifecycle import TicketLifecycleService, IssueContext
+from app.tickets.lifecycle import TicketLifecycleService
+from app.models import TicketContext, OrchestrationDomain
 
 @pytest.fixture
 def mock_supabase():
@@ -26,8 +27,8 @@ def test_description_append_preserves_original(mock_supabase, mock_update_ticket
     ])
     mock_update_ticket.return_value = json.dumps({"status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Follow-up message")
-    res = TicketLifecycleService.process_issue(ctx, active_ticket_id=101)
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Follow-up message", active_ticket_id=101)
+    res = TicketLifecycleService.process_issue(ctx)
     
     assert res.action == "UPDATED"
     mock_update_ticket.assert_called_once_with(
@@ -46,7 +47,7 @@ def test_same_type_existing_order_no_new_id_no_active_creates(mock_supabase, moc
     ])
     mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help")
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "CREATED"
 
@@ -58,7 +59,7 @@ def test_same_order_unknown_product_new_product_explicit_creates(mock_supabase, 
     ])
     mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=123, product_name="ProductB")
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help", order_id=123, product_name="ProductB")
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "CREATED"
 
@@ -70,7 +71,7 @@ def test_same_order_same_explicit_product_updates(mock_supabase, mock_update_tic
     ])
     mock_update_ticket.return_value = json.dumps({"status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=123, product_name="ProductB")
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help", order_id=123, product_name="ProductB")
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "UPDATED"
 
@@ -82,7 +83,7 @@ def test_same_order_different_explicit_product_creates(mock_supabase, mock_creat
     ])
     mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=123, product_name="ProductB")
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help", order_id=123, product_name="ProductB")
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "CREATED"
 
@@ -94,8 +95,8 @@ def test_active_ticket_unknown_product_new_product_updates(mock_supabase, mock_u
     ])
     mock_update_ticket.return_value = json.dumps({"status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=123, product_name="ProductB")
-    res = TicketLifecycleService.process_issue(ctx, active_ticket_id=101)
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help", order_id=123, product_name="ProductB", active_ticket_id=101)
+    res = TicketLifecycleService.process_issue(ctx)
     
     assert res.action == "UPDATED"
     # Although we don't bind product in the DB schema right now via tool args, it successfully resolves UPDATE
@@ -108,8 +109,8 @@ def test_active_ticket_compatible_issue_no_identifiers_updates(mock_supabase, mo
     ])
     mock_update_ticket.return_value = json.dumps({"status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
-    res = TicketLifecycleService.process_issue(ctx, active_ticket_id=101)
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help", active_ticket_id=101)
+    res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "UPDATED"
 
 
@@ -120,7 +121,7 @@ def test_no_active_ticket_only_matching_type_creates(mock_supabase, mock_create_
     ])
     mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help")
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "CREATED"
 
@@ -128,7 +129,7 @@ def test_no_active_ticket_only_matching_type_creates(mock_supabase, mock_create_
 # Other boundary failures / infrastructure
 def test_lookup_failure_returns_failed(mock_supabase):
     mock_supabase.table().select().eq().neq().execute.side_effect = Exception("DB Down")
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help")
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "FAILED"
 
@@ -137,14 +138,14 @@ def test_update_failure_returns_failed(mock_supabase, mock_update_ticket):
         {"id": 101, "customer_id": 1, "type": "technical_issue", "order_id": 123, "subject": "Issue: Technical Support - ProductB"}
     ])
     mock_update_ticket.return_value = json.dumps({"error": "Failed to update"})
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=123, product_name="ProductB")
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help", order_id=123, product_name="ProductB")
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "FAILED"
 
 def test_create_failure_returns_failed(mock_supabase, mock_create_ticket):
     mock_supabase.table().select().eq().neq().execute.return_value = MagicMock(data=[])
     mock_create_ticket.return_value = json.dumps({"error": "Failed to create"})
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help")
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "FAILED"
 
@@ -157,8 +158,8 @@ def test_cross_customer_not_matched(mock_supabase, mock_create_ticket):
     mock_supabase.table().select().eq.side_effect = mock_eq
     mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help")
-    res = TicketLifecycleService.process_issue(ctx, active_ticket_id=101)
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help", active_ticket_id=101)
+    res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "CREATED"
 
 # 1. technical_support + order 123 existing, warranty_claim + order 123 new -> CREATE unless explicitly aliased
@@ -168,7 +169,7 @@ def test_different_intent_same_order_creates(mock_supabase, mock_create_ticket):
     ])
     mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="warranty_claim", message="Help", order_id=123)
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="warranty_claim", message="Help", order_id=123)
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "CREATED"
 
@@ -179,7 +180,7 @@ def test_same_canonical_intent_same_order_updates(mock_supabase, mock_update_tic
     ])
     mock_update_ticket.return_value = json.dumps({"status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=123)
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help", order_id=123)
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "UPDATED"
 
@@ -190,8 +191,8 @@ def test_active_ticket_new_order_updates_and_returns_new_order(mock_supabase, mo
     ])
     mock_update_ticket.return_value = json.dumps({"status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=456)
-    res = TicketLifecycleService.process_issue(ctx, active_ticket_id=101)
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help", order_id=456, active_ticket_id=101)
+    res = TicketLifecycleService.process_issue(ctx)
     
     assert res.action == "UPDATED"
     assert res.order_id == 456
@@ -203,7 +204,7 @@ def test_intentional_alias_intent_same_order_updates(mock_supabase, mock_update_
     ])
     mock_update_ticket.return_value = json.dumps({"status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="warranty_claim", message="Help", order_id=123)
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="warranty_claim", message="Help", order_id=123)
     res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "UPDATED"
 
@@ -215,6 +216,17 @@ def test_unknown_legacy_intent_same_order_creates(mock_supabase, mock_create_tic
     ])
     mock_create_ticket.return_value = json.dumps({"ticket_id": 102, "status": "success"})
     
-    ctx = IssueContext(customer_id=1, domain="product", intent="technical_support", message="Help", order_id=123)
-    res = TicketLifecycleService.process_issue(ctx, active_ticket_id=None)
+    ctx = TicketContext(customer_id=1, domain=OrchestrationDomain.PRODUCT, intent="technical_support", message="Help", order_id=123)
+    res = TicketLifecycleService.process_issue(ctx)
     assert res.action == "CREATED"
+
+def test_single_active_ticket_input():
+    ctx = TicketContext(
+        customer_id=1, 
+        domain=OrchestrationDomain.PRODUCT, 
+        intent="test", 
+        message="msg", 
+        active_ticket_id=101
+    )
+    with pytest.raises(ValueError, match="active_ticket_id must not be passed separately"):
+        TicketLifecycleService.process_issue(ctx, active_ticket_id=999)

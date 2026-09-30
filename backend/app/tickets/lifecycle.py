@@ -4,9 +4,13 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.tools import supabase, _supabase_retry, create_ticket, update_ticket
-from app.models import TicketType, TicketPriority, TicketStatus
+from app.models import TicketType, TicketPriority, TicketStatus, TicketContext, OrchestrationDomain, Urgency, Sentiment
 
 class IssueContext(BaseModel):
+    """
+    DEPRECATED: Legacy context object for unmigrated domain agents.
+    Use TicketContext instead.
+    """
     customer_id: int
     domain: str
     intent: str
@@ -102,9 +106,9 @@ class TicketLifecycleService:
         return TicketPriority.MEDIUM.value
 
     @classmethod
-    def _get_issue_identity(cls, context: IssueContext) -> IssueIdentity:
+    def _get_issue_identity(cls, context: TicketContext) -> IssueIdentity:
         return IssueIdentity(
-            domain=context.domain,
+            domain=context.domain.value,
             intent=context.intent,
             ticket_type=cls._map_to_ticket_type(context.intent),
             order_id=context.order_id,
@@ -169,7 +173,7 @@ class TicketLifecycleService:
 
     @classmethod
     @_supabase_retry
-    def _find_matching_ticket(cls, context: IssueContext, active_ticket_id: int | None) -> dict | None:
+    def _find_matching_ticket(cls, context: TicketContext) -> dict | None:
         """
         Deterministic candidate matching policy.
         """
@@ -188,8 +192,8 @@ class TicketLifecycleService:
         identity = cls._get_issue_identity(context)
         
         # 1. Active ticket check
-        if active_ticket_id:
-            active_ticket = next((t for t in open_tickets if t["id"] == active_ticket_id), None)
+        if context.active_ticket_id:
+            active_ticket = next((t for t in open_tickets if t["id"] == context.active_ticket_id), None)
             if active_ticket and cls._is_compatible_identity(identity, active_ticket, is_active=True):
                 return active_ticket
                 
@@ -226,16 +230,47 @@ class TicketLifecycleService:
         return None
 
     @classmethod
-    def process_issue(cls, context: IssueContext, active_ticket_id: int | None = None) -> TicketLifecycleResult:
+    def process_issue(cls, context: TicketContext | IssueContext, active_ticket_id: int | None = None) -> TicketLifecycleResult:
         """
         Main entry point. Evaluates context, determines if a ticket is needed,
         and creates/updates accordingly.
         """
+        if isinstance(context, IssueContext):
+            # Legacy adapter
+            try:
+                domain = OrchestrationDomain(context.domain)
+            except ValueError:
+                domain = OrchestrationDomain.GENERAL
+            
+            try:
+                urgency = Urgency(context.urgency)
+            except ValueError:
+                urgency = Urgency.MEDIUM
+                
+            try:
+                sentiment = Sentiment(context.sentiment)
+            except ValueError:
+                sentiment = Sentiment.NEUTRAL
+                
+            context = TicketContext(
+                customer_id=context.customer_id,
+                domain=domain,
+                intent=context.intent,
+                message=context.message,
+                urgency=urgency,
+                sentiment=sentiment,
+                order_id=context.order_id,
+                product_name=context.product_name,
+                active_ticket_id=active_ticket_id
+            )
+        elif active_ticket_id is not None:
+            raise ValueError("active_ticket_id must not be passed separately when using TicketContext")
+
         # 1. Should we create a ticket?
         if context.intent not in cls.ISSUE_INTENTS:
             return TicketLifecycleResult(
                 action="IGNORED",
-                ticket_id=active_ticket_id,
+                ticket_id=context.active_ticket_id,
                 customer_id=context.customer_id,
                 order_id=context.order_id,
                 issue_type=None,
@@ -247,12 +282,12 @@ class TicketLifecycleService:
             
         try:
             # 2. Find existing ticket
-            existing = cls._find_matching_ticket(context, active_ticket_id)
+            existing = cls._find_matching_ticket(context)
             
             if existing:
                 # UPDATE existing
                 ticket_id = existing["id"]
-                new_priority = cls._map_to_priority(context.urgency, context.sentiment)
+                new_priority = cls._map_to_priority(context.urgency.value, context.sentiment.value)
                 
                 # Actual mutation logic for continuation
                 priority_update = new_priority if existing.get("priority") != new_priority and existing.get("priority") not in ("high", "critical") else None
@@ -289,7 +324,7 @@ class TicketLifecycleService:
                     subject += f" - {context.product_name}"
                     
                 ticket_type = cls._map_to_ticket_type(context.intent)
-                priority = cls._map_to_priority(context.urgency, context.sentiment)
+                priority = cls._map_to_priority(context.urgency.value, context.sentiment.value)
                 
                 resp_str = create_ticket(
                     customer_id=context.customer_id,
