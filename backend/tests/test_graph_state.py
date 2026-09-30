@@ -131,74 +131,102 @@ async def test_workflow_state_roundtrip(mock_intent_router, mock_product_llm):
 from app.agents.graph import route_after_classification
 
 def test_workflow_continuation_routing():
-    # Active product workflow waiting for input
+    # 1. Product IN_PROGRESS -> product_node
     state = {
-        "intent": "faq",
+        "intent": "general",
         "route_to": "rag_agent",
         "workflow_state": {
-            "workflow_status": "awaiting_input",
+            "session_id": "test",
             "active_domain": "product",
-            "active_ticket_id": None
+            "product_state": {
+                "domain_status": "in_progress",
+                "active_ticket_id": None
+            }
         }
     }
-    # It should break out because faq is a hard switch
-    assert route_after_classification(state) == "rag_node"
+    assert route_after_classification(state) == "product_node"
     
-    # Active product workflow getting order ID (might be misclassified as general by intent router)
-    state["intent"] = "order_tracking"
+    # 2. Product AWAITING_INPUT -> product_node
+    state["workflow_state"]["product_state"]["domain_status"] = "awaiting_input"
+    assert route_after_classification(state) == "product_node"
+    
+    # 3. Product with active ProductState ticket -> product_node
+    state["workflow_state"]["product_state"]["domain_status"] = "completed"
+    state["workflow_state"]["product_state"]["active_ticket_id"] = 101
+    assert route_after_classification(state) == "product_node"
+    
+    # 4. Product with no active continuation signal -> existing behavior preserved
+    state["workflow_state"]["product_state"]["active_ticket_id"] = None
     state["route_to"] = "db_agent"
-    assert route_after_classification(state) == "product_node"
+    assert route_after_classification(state) == "db_plan_node"
     
-    # Hard switch to escalation
+    # 5. Product + hard domain switch -> does not route to ProductAgent
+    state["workflow_state"]["product_state"]["domain_status"] = "in_progress"
     state["intent"] = "complaint"
     state["route_to"] = "escalation"
     assert route_after_classification(state) == "escalation_node"
     
-    # Completed workflow but with an active ticket (a proven product issue)
-    state = {
-        "intent": "order_tracking",
-        "route_to": "db_agent",
+    # 6 & 7. Order/Payment domain is unaffected (routes based on intent router)
+    order_state = {
+        "intent": "general",
+        "route_to": "rag_agent",
         "workflow_state": {
-            "workflow_status": "completed",
-            "active_domain": "product",
-            "active_ticket_id": 101
+            "session_id": "test",
+            "active_domain": "order",
+            "order_state": {
+                "domain_status": "in_progress"
+            }
         }
     }
-    # Should continue to product_node because of active ticket (continuation signal)
-    assert route_after_classification(state) == "product_node"
+    assert route_after_classification(order_state) == "rag_node"
     
-    # Completed workflow WITHOUT active ticket (no continuation signal)
-    state_no_ticket = {
-        "intent": "order_tracking",
-        "route_to": "db_agent",
+    # 8. Legacy root workflow_status cannot force Product continuation
+    legacy_status_state = {
+        "intent": "general",
+        "route_to": "rag_agent",
         "workflow_state": {
-            "workflow_status": "completed",
+            "session_id": "test",
             "active_domain": "product",
-            "active_ticket_id": None
+            "workflow_status": "in_progress", # Legacy root
+            "product_state": {
+                "domain_status": "completed", # Typed truth overrides
+                "active_ticket_id": None
+            }
         }
     }
-    assert route_after_classification(state_no_ticket) == "db_plan_node"
+    assert route_after_classification(legacy_status_state) == "rag_node"
     
-    # Completed product workflow + billing
-    state["intent"] = "billing"
-    assert route_after_classification(state) == "db_plan_node"
+    # 9. Legacy root active_ticket_id cannot force Product continuation
+    legacy_ticket_state = {
+        "intent": "general",
+        "route_to": "rag_agent",
+        "workflow_state": {
+            "session_id": "test",
+            "active_domain": "product",
+            "active_ticket_id": 999, # Legacy root
+            "product_state": {
+                "domain_status": "completed",
+                "active_ticket_id": None
+            }
+        }
+    }
+    assert route_after_classification(legacy_ticket_state) == "rag_node"
     
-    # Completed product workflow + refund
-    state["intent"] = "refund"
-    assert route_after_classification(state) == "db_plan_node"
+    # 10. Typed ProductState active_ticket_id does force continuation
+    legacy_ticket_state["workflow_state"]["product_state"]["active_ticket_id"] = 999
+    assert route_after_classification(legacy_ticket_state) == "product_node"
     
-    # Completed product workflow + order_cancellation
-    state["intent"] = "order_cancellation"
-    assert route_after_classification(state) == "db_plan_node"
-    
-    # Completed product workflow + complaint
-    state["intent"] = "complaint"
-    state["route_to"] = "escalation"
-    assert route_after_classification(state) == "escalation_node"
-    
-    # Completed product workflow + product follow-up (general)
-    state["intent"] = "general"
-    assert route_after_classification(state) == "product_node"
+    # 12. Malformed workflow_state fails safely without arbitrary legacy-field fallback
+    malformed_state = {
+        "intent": "general",
+        "route_to": "rag_agent",
+        "workflow_state": {
+            # missing session_id = validation error
+            "active_domain": "product",
+            "workflow_status": "in_progress"
+        }
+    }
+    assert route_after_classification(malformed_state) == "rag_node"
 
 @patch("app.llm_factory.get_llm")
 def test_graph_llm_adapter_factory(mock_get_llm):

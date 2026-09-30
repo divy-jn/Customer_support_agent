@@ -419,16 +419,26 @@ def route_after_classification(state: AgentState) -> str:
     # Active workflow continuation
     ws_dict = state.get("workflow_state")
     if ws_dict:
-        status = ws_dict.get("workflow_status")
-        domain = ws_dict.get("active_domain")
-        active_ticket = ws_dict.get("active_ticket_id")
-        
-        # A valid Product continuation signal: either we are explicitly awaiting input, 
-        # or we have an established ticket for this session.
-        if (status in ["awaiting_input", "in_progress"] or active_ticket) and domain == "product":
-            # Unless there's a hard semantic switch to a completely unrelated domain
-            if intent not in ["billing", "refund", "order_cancellation", "account_management", "complaint", "faq"]:
-                return "product_node"
+        try:
+            from app.models import WorkflowState, OrchestrationDomain, DomainWorkflowStatus
+            
+            # Use typed reconstruction to evaluate domain facts without relying on legacy root fields
+            ws = WorkflowState.from_legacy(ws_dict)
+            
+            if ws.active_domain == OrchestrationDomain.PRODUCT and ws.product_state:
+                status = ws.product_state.domain_status
+                active_ticket = ws.product_state.active_ticket_id
+                
+                # A valid Product continuation signal: either we are explicitly awaiting input, 
+                # or we have an established ticket for this session.
+                if status in (DomainWorkflowStatus.AWAITING_INPUT, DomainWorkflowStatus.IN_PROGRESS) or active_ticket:
+                    # Unless there's a hard semantic switch to a completely unrelated domain
+                    if intent not in ["billing", "refund", "order_cancellation", "account_management", "complaint", "faq"]:
+                        return "product_node"
+        except Exception as e:
+            # If the payload is wildly malformed, fail safely and fall through to standard intent routing
+            import logging
+            logging.getLogger(__name__).warning("route_after_classification: invalid workflow_state payload: %s", e)
                 
     if intent in ["product_inquiry", "product_information", "product_features", "product_specs", "product_details", "product_availability", "product_question", "technical_support", "product_comparison", "warranty_claim", "product_warranty"]:
         return "product_node"
