@@ -1,89 +1,58 @@
-# PHASE F.2.7 - Legacy Field Removal Discovery
+# PHASE F.2.7 - Legacy Field Removal Discovery (Reconciled pre-C.3)
 
 ## Overview
 
-This discovery phase audits the legacy flat fields on `WorkflowState` to determine their usage patterns and exact prerequisites for safe deletion. 
+This document reconciles the final audit of the 12 legacy flat fields on `WorkflowState` prior to their physical deletion in Phase F.2.7.3C.3.
 
-While Phase F.2.5 successfully migrated `ProductAgent` to the F.2 `TicketContext` and F.2 domain states, **`ProductAgent` currently still writes back to these legacy root fields** via `_apply_legacy_projection()` before returning the state. These fields are subsequently persisted to Redis by `chat_handler.py`.
+Historically (pre-C.2), these fields served as compatibility boundaries. However, exhaustive runtime auditing of the current codebase confirms that **there are zero remaining runtime readers or writers of these Pydantic attributes.**
 
-**No fields can be safely deleted immediately.** Each legacy field serves as a compatibility boundary for unmigrated components (like `graph.py` and `OrderAgent`). 
+The outbound legacy projection (`to_legacy_projection`) was retired in Phase F.2.7.3C.2. The inbound adapter (`WorkflowState.from_legacy()`) operates purely on raw Python dictionaries when hydrating old payloads, meaning it does not rely on the `WorkflowState` Pydantic class actually possessing these fields.
 
 ---
 
 ## 1. `active_ticket_id`
-
-- **Location:** `WorkflowState.active_ticket_id`
-- **Authoritative Counterpart:** `ProductState.active_ticket_id` (and future `OrderState`/`PaymentState`).
-- **Current Producers:** `chat_handler.py`, F.2 agents (historically via `to_legacy_projection()`, which was retired in C.2).
-- **Current Consumers:** 
-  - `graph.py` (line 424): The LangGraph router `route_after_classification` explicitly checks `ws_dict.get("active_ticket_id")` to maintain domain affinity across turns.
-  - `models.py`: Used in `from_legacy()` to fall back if domain states are absent.
-- **Prerequisites for Removal:**
-  - **F.2.5.6 (Order/Payment Migration):** All agents must manage tickets in their respective typed domain states.
-  - **F.2.8 (Graph Modernization):** `graph.py` MUST be updated to check `domain_state.active_ticket_id` instead of the legacy root field.
+- **Current Runtime Status:** Safe to delete.
+- **Authoritative Counterpart:** `DomainState.active_ticket_id`.
+- **Historical Consumers (Pre-C.2):** `graph.py` router previously checked `ws_dict.get("active_ticket_id")`.
+- **Current Reality:** `graph.py` now reconstructs typed state via `WorkflowState.from_legacy(ws_dict)` and checks `ws.product_state.active_ticket_id`. The root attribute is completely ignored.
 
 ## 2. `workflow_status`
-
-- **Location:** `WorkflowState.workflow_status`
-- **Authoritative Counterpart:** `WorkflowState.global_status` and `ProductState.domain_status`.
-- **Current Producers:** `chat_handler.py` (initialization to "idle"), F.2 agents (via projection).
-- **Current Consumers:**
-  - `graph.py` (line 422): Router checks `ws_dict.get("workflow_status")` against `"awaiting_input"` or `"in_progress"` to enforce routing continuity.
-- **Prerequisites for Removal:**
-  - **F.2.8 (Graph Modernization):** The legacy LangGraph router must transition to F.2 rules, evaluating `global_status` and individual `domain_status` instead of `workflow_status`.
+- **Current Runtime Status:** Safe to delete.
+- **Authoritative Counterpart:** `WorkflowState.global_status` and `DomainState.domain_status`.
+- **Historical Consumers (Pre-C.2):** `graph.py` previously checked `ws_dict.get("workflow_status")`.
+- **Current Reality:** `graph.py` evaluates typed domain statuses (e.g., `ws.product_state.domain_status`). `WorkflowState.workflow_status` is untouched.
 
 ## 3. `semantic_intent`
-
-- **Location:** `WorkflowState.semantic_intent`
-- **Authoritative Counterpart:** LangGraph `AgentState["intent"]` (runtime) and F.2 `TicketContext.intent` (domain boundary).
-- **Current Consumers:**
-  - Largely dormant on `WorkflowState`. `ProductDomainContext` uses `state["intent"]` directly from LangGraph. 
-  - `db_agent` relies on `AgentState["intent"]`.
-- **Prerequisites for Removal:**
-  - Can be removed from `WorkflowState` now that `to_legacy_projection` is deprecated (C.2), but the broader concept relies on F.3 (Semantic Router Replacement) to fully eliminate the legacy string-based intent passing.
+- **Current Runtime Status:** Safe to delete.
+- **Authoritative Counterpart:** LangGraph `AgentState["intent"]`.
+- **Current Reality:** Never read from `WorkflowState`. `from_legacy()` extracts it from the legacy dictionary to aid routing, but it is not needed on the Pydantic model.
 
 ## 4. `order_id`
-
-- **Location:** `WorkflowState.order_id`
+- **Current Runtime Status:** Safe to delete.
 - **Authoritative Counterpart:** `OrderState.order_id`.
-- **Current Consumers:**
-  - **`ProductAgent` explicitly uses it!** (lines 210, 499): `ProductAgent` checks `merged_state.order_id` as a fallback if `order_state.order_id` is missing.
-  - `db_agent` uses its own LLM-extracted `order_id`, NOT the `WorkflowState` root field.
-- **Prerequisites for Removal:**
-  - **F.2.5.6 (Order Migration):** `OrderAgent` must migrate to `OrderState`.
-  - `ProductAgent` MUST drop the root fallback logic, relying strictly on `OrderState`.
+- **Historical Consumers (Pre-C.2):** `ProductAgent` historically checked `merged_state.order_id` as a fallback.
+- **Current Reality:** `ProductAgent` explicitly uses `extracted_order_id` or `merged_state.order_state.order_id`. The root fallback logic was removed.
 
 ## 5. `product_id`, `product_name`, `manufacturer`
-
-- **Location:** `WorkflowState.product_id`, etc.
-- **Authoritative Counterpart:** `ProductState`.
-- **Current Consumers:**
-  - `from_legacy()` relies on these to construct an initial `ProductState` for unmigrated legacy payloads.
-- **Prerequisites for Removal:**
-  - Complete elimination of the `from_legacy()` fallback reconstruction logic once all legacy persisted sessions have naturally expired from Redis.
+- **Current Runtime Status:** Safe to delete.
+- **Authoritative Counterpart:** `ProductState` fields.
+- **Current Reality:** `from_legacy()` extracts these from legacy dictionaries to populate a typed `ProductState`. The Pydantic model itself no longer needs these attributes defined.
 
 ## 6. `skill_name`, `skill_version`, `last_tool`, `last_tool_result`
-
-- **Location:** `WorkflowState.skill_name`, etc.
-- **Authoritative Counterpart:** `ProductState.last_tool`, etc.
-- **Current Consumers:**
-  - `ProductAgent` has successfully migrated to `product_state.last_tool` and `product_state.last_tool_result`.
-- **Prerequisites for Removal:**
-  - **F.2.5.6 (Order/Payment Migration):** `OrderAgent` and `PaymentAgent` must migrate their skill execution trackers to their respective F.2 domain states.
+- **Current Runtime Status:** Safe to delete.
+- **Authoritative Counterpart:** `DomainState.last_tool` and `DomainState.last_tool_result`.
+- **Current Reality:** Completely unused at the root level. ProductAgent and Supervisor strictly interact with typed domain state fields.
 
 ## 7. `pending_input`
-
-- **Location:** `WorkflowState.pending_input`
-- **Authoritative Counterpart:** LangGraph `AgentState["pending_approval"]` and UI interaction boundaries.
-- **Prerequisites for Removal:**
-  - **F.8 (UI Boundary):** Complete migration to the standardized F.8 architectural patterns for interactive input.
+- **Current Runtime Status:** Safe to delete.
+- **Current Reality:** Unused as a root property. Domain agents and the Supervisor rely on `AWAITING_INPUT` domain statuses instead of this string field.
 
 ---
 
 ## Conclusion & Next Steps
 
-This discovery confirms the mandate constraint: **Do NOT assume all of these are removable together.** 
+**Prerequisites for C.3 Deletion:** ALL MET.
 
-Specifically, `workflow_status` and `active_ticket_id` are deeply entangled with the F.1 `graph.py` router logic, while `order_id` and skill-related fields are dependent on migrating the remaining domain agents (F.2.5.6).
+The current codebase strictly relies on the typed `WorkflowState` hierarchy (`ProductState`, `OrderState`, `PaymentState`) and the explicit `from_legacy()` dictionary ingestion boundary. The 12 legacy fields only exist as empty structural remnants.
 
-**Immediate Next Step:** Proceed to F.2.5.5 (Regression and Lifecycle Tests) and F.2.5.6 (OrderAgent and PaymentAgent migration) to unblock the eventual deletion of these legacy fields.
+**Immediate Next Step:** Proceed to Phase F.2.7.3C.3 (Physical Deletion) to remove the 12 fields from `models.py` and finalize the persistence schema modernization.
