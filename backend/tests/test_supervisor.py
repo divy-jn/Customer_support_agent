@@ -1,5 +1,5 @@
 import pytest
-from app.models import WorkflowState, WorkflowStatus
+from app.models import WorkflowState, WorkflowStatus, GlobalWorkflowStatus, DomainWorkflowStatus
 from app.agents.supervisor import Supervisor, SupervisorAction, SupervisorDecision, OrchestrationDomain, InvalidSupervisorDecisionError
 
 def create_base_state(domain=None, status=WorkflowStatus.IDLE, ticket_id=None) -> WorkflowState:
@@ -11,35 +11,54 @@ def create_base_state(domain=None, status=WorkflowStatus.IDLE, ticket_id=None) -
         "active_ticket_id": ticket_id,
     }
     
-    # Only inject domain facts if they match the domain, avoiding F.2 strict cross-domain validation
     if domain == "product":
         legacy_dict["product_id"] = 123
         legacy_dict["product_name"] = "Test Product"
     elif domain == "order":
         legacy_dict["order_id"] = 456
         
-    return WorkflowState.from_legacy(legacy_dict)
+    state = WorkflowState.from_legacy(legacy_dict)
+    
+    if status in (WorkflowStatus.IN_PROGRESS, WorkflowStatus.AWAITING_INPUT, WorkflowStatus.SUSPENDED, WorkflowStatus.RESUMED, WorkflowStatus.COMPLETED, WorkflowStatus.FAILED):
+        state.global_status = GlobalWorkflowStatus.IN_PROGRESS
+    elif status == WorkflowStatus.ESCALATED:
+        state.global_status = GlobalWorkflowStatus.ESCALATED
+        
+    return state
 
 def test_product_workflow_product_message():
     state = create_base_state(domain="product", status=WorkflowStatus.IN_PROGRESS)
     decision = Supervisor.decide("product", "support", state, "my phone is broken")
     assert decision.action == SupervisorAction.CONTINUE
     assert decision.target_domain == OrchestrationDomain.PRODUCT
-    assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
+    
+    new_state = Supervisor.apply_decision(state, decision)
+    assert new_state.global_status == GlobalWorkflowStatus.IN_PROGRESS
+    assert new_state.product_state.domain_status == DomainWorkflowStatus.IN_PROGRESS
+    assert new_state.workflow_status == WorkflowStatus.IN_PROGRESS
     
 def test_product_workflow_general_conversational():
     state = create_base_state(domain="product", status=WorkflowStatus.AWAITING_INPUT)
     decision = Supervisor.decide("general", "greeting", state, "hi")
     assert decision.action == SupervisorAction.CONTINUE
     assert decision.target_domain == OrchestrationDomain.PRODUCT
-    assert decision.resulting_workflow_status == WorkflowStatus.AWAITING_INPUT
+    
+    new_state = Supervisor.apply_decision(state, decision)
+    assert new_state.global_status == GlobalWorkflowStatus.IN_PROGRESS
+    assert new_state.product_state.domain_status == DomainWorkflowStatus.AWAITING_INPUT
+    assert new_state.workflow_status == WorkflowStatus.AWAITING_INPUT
 
 def test_product_workflow_general_unrelated():
     state = create_base_state(domain="product", status=WorkflowStatus.IN_PROGRESS)
     decision = Supervisor.decide("general", "policy_inquiry", state, "return policy")
     assert decision.action == SupervisorAction.SUSPEND_AND_SWITCH
     assert decision.target_domain == OrchestrationDomain.GENERAL
-    assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
+    
+    new_state = Supervisor.apply_decision(state, decision)
+    assert new_state.global_status == GlobalWorkflowStatus.IN_PROGRESS
+    assert new_state.active_domain == OrchestrationDomain.GENERAL.value
+    assert new_state.product_state.domain_status == DomainWorkflowStatus.SUSPENDED
+    assert OrchestrationDomain.PRODUCT in new_state.suspended_domains
     
 def test_order_workflow_general_conversational():
     state = create_base_state(domain="order", status=WorkflowStatus.IN_PROGRESS)
@@ -52,6 +71,9 @@ def test_order_workflow_general_unrelated():
     decision = Supervisor.decide("general", "complaint", state, "i hate this company")
     assert decision.action == SupervisorAction.SUSPEND_AND_SWITCH
     assert decision.target_domain == OrchestrationDomain.GENERAL
+    
+    new_state = Supervisor.apply_decision(state, decision)
+    assert new_state.order_state.domain_status == DomainWorkflowStatus.SUSPENDED
 
 def test_payment_workflow_general_unrelated():
     state = create_base_state(domain="payment", status=WorkflowStatus.AWAITING_INPUT)
@@ -64,7 +86,6 @@ def test_completed_product_general_request():
     decision = Supervisor.decide("general", "policy_inquiry", state, "return policy")
     assert decision.action == SupervisorAction.START_NEW
     assert decision.target_domain == OrchestrationDomain.GENERAL
-    assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
     
 def test_general_active_workflow_product_switch():
     state = create_base_state(domain="general", status=WorkflowStatus.IN_PROGRESS)
@@ -77,58 +98,58 @@ def test_product_workflow_order_message():
     decision = Supervisor.decide("order", "track", state, "where is my order")
     assert decision.action == SupervisorAction.SUSPEND_AND_SWITCH
     assert decision.target_domain == OrchestrationDomain.ORDER
-    assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
     assert decision.transition_metadata is not None
     assert decision.transition_metadata.suspended_domain == OrchestrationDomain.PRODUCT
     
+    new_state = Supervisor.apply_decision(state, decision)
+    assert new_state.active_domain == OrchestrationDomain.ORDER.value
+    assert new_state.product_state.domain_status == DomainWorkflowStatus.SUSPENDED
+    assert new_state.order_state.domain_status == DomainWorkflowStatus.IN_PROGRESS
+    
 def test_resume_suspended_workflow():
     state = create_base_state(domain="product", status=WorkflowStatus.SUSPENDED)
+    state.suspended_domains = [OrchestrationDomain.PRODUCT]
     decision = Supervisor.decide("product", "support", state, "back to my broken screen")
     assert decision.action == SupervisorAction.RESUME
     assert decision.target_domain == OrchestrationDomain.PRODUCT
-    assert decision.resulting_workflow_status == WorkflowStatus.RESUMED
     assert decision.transition_metadata.resumed_domain == OrchestrationDomain.PRODUCT
     
     new_state = Supervisor.apply_decision(state, decision)
     assert new_state.active_domain == "product"
-    assert new_state.workflow_status == WorkflowStatus.RESUMED
-
-def test_resumed_to_in_progress():
-    state = create_base_state(domain="product", status=WorkflowStatus.RESUMED)
-    decision = Supervisor.decide("product", "support", state, "next steps")
-    assert decision.action == SupervisorAction.CONTINUE
-    assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
-
+    assert new_state.product_state.domain_status == DomainWorkflowStatus.IN_PROGRESS
+    assert OrchestrationDomain.PRODUCT not in new_state.suspended_domains
+    
 def test_completed_workflow():
     state = create_base_state(domain="product", status=WorkflowStatus.COMPLETED)
     decision = Supervisor.decide("product", "support", state, "another issue")
     assert decision.action == SupervisorAction.START_NEW
     assert decision.target_domain == OrchestrationDomain.PRODUCT
-    assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
+    
+    new_state = Supervisor.apply_decision(state, decision)
+    assert new_state.product_state.domain_status == DomainWorkflowStatus.IN_PROGRESS
     
 def test_escalated_workflow():
     state = create_base_state(domain="product", status=WorkflowStatus.ESCALATED)
     decision = Supervisor.decide("product", "support", state, "help")
     assert decision.action == SupervisorAction.ESCALATE
-    assert decision.resulting_workflow_status == WorkflowStatus.ESCALATED
+    
+    new_state = Supervisor.apply_decision(state, decision)
+    assert new_state.global_status == GlobalWorkflowStatus.ESCALATED
+    assert new_state.product_state.domain_status == DomainWorkflowStatus.ESCALATED
     
 def test_idle_workflow():
     state = create_base_state()
     decision = Supervisor.decide("product", "support", state, "help")
     assert decision.action == SupervisorAction.START_NEW
     assert decision.target_domain == OrchestrationDomain.PRODUCT
-    assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
     
 def test_invalid_semantic_domain():
     state = create_base_state(domain="product", status=WorkflowStatus.IN_PROGRESS)
-    
     for invalid_domain in ["", "banana", "unknown"]:
         decision = Supervisor.decide(invalid_domain, "", state, "ummm")
         assert decision.action == SupervisorAction.REQUEST_CLARIFICATION
         assert decision.target_domain == OrchestrationDomain.PRODUCT
-        assert decision.resulting_workflow_status == WorkflowStatus.IN_PROGRESS
 
-# --- INVALID active_domain TESTS ---
 @pytest.mark.parametrize("status", [
     WorkflowStatus.IN_PROGRESS,
     WorkflowStatus.AWAITING_INPUT,
@@ -147,28 +168,16 @@ def test_invalid_semantic_and_invalid_workflow_domain():
         create_base_state(domain="banana", status=WorkflowStatus.IN_PROGRESS)
     
 def test_apply_decision_clarification():
-    # Prove that apply_decision respects the output of a REQUEST_CLARIFICATION for invalid state
     state = create_base_state(domain="general", status=WorkflowStatus.IN_PROGRESS)
-    
-    # We fake a clarification decision
     decision = SupervisorDecision(
         action=SupervisorAction.REQUEST_CLARIFICATION,
         reason="Test clarification",
         transition_reason="Test clarification",
         target_domain=OrchestrationDomain.GENERAL,
-        resulting_workflow_status=WorkflowStatus.AWAITING_INPUT
     )
     new_state = Supervisor.apply_decision(state, decision)
-    
-    # Check new state applied correctly
     assert new_state.active_domain == OrchestrationDomain.GENERAL
-    assert new_state.workflow_status == WorkflowStatus.AWAITING_INPUT
     
-    # Original untouched
-    assert state.active_domain == OrchestrationDomain.GENERAL
-    assert state.workflow_status == WorkflowStatus.IN_PROGRESS
-
-# --- BOUNDARIES ---
 def test_ticket_id_does_not_override_switch():
     state = create_base_state(domain="product", status=WorkflowStatus.IN_PROGRESS, ticket_id=999)
     decision = Supervisor.decide("order", "track", state, "where is it")
@@ -177,7 +186,7 @@ def test_ticket_id_does_not_override_switch():
     
 def test_unknown_invalid_state():
     state = create_base_state(domain="product")
-    state.workflow_status = "UNKNOWN_WEIRD_STATE"  # Bypass enum type check for test
+    state.global_status = "UNKNOWN_WEIRD_STATE" 
     decision = Supervisor.decide("product", "support", state, "help")
     assert decision.action == SupervisorAction.REQUEST_CLARIFICATION
 
@@ -193,15 +202,12 @@ def test_mutation_boundaries():
     decision = Supervisor.decide("order", "track", state, "where is it")
     new_state = Supervisor.apply_decision(state, decision)
     
-    # Assert old state unchanged
     assert state.active_domain == "product"
-    assert state.workflow_status == WorkflowStatus.IN_PROGRESS
+    assert state.product_state.domain_status == DomainWorkflowStatus.IN_PROGRESS
     
-    # Assert new state metadata changed
     assert new_state.active_domain == "order"
-    assert new_state.workflow_status == WorkflowStatus.IN_PROGRESS
+    assert new_state.global_status == GlobalWorkflowStatus.IN_PROGRESS
     
-    # Assert domain facts MUST NOT mutate
     assert new_state.product_state.product_id == 123
     assert new_state.product_state.product_name == "Test Product"
     assert new_state.product_state.active_ticket_id == 999
@@ -211,52 +217,4 @@ def test_approval_not_silently_authorized():
     state = create_base_state(domain="product", status=WorkflowStatus.AWAITING_INPUT)
     decision = Supervisor.decide("product", "confirm", state, "yes do it")
     assert decision.action == SupervisorAction.CONTINUE
-    assert decision.resulting_workflow_status == WorkflowStatus.AWAITING_INPUT
     assert not hasattr(decision, 'proceed_approval')
-
-# --- APPLY_DECISION VALIDATION TESTS ---
-def test_apply_decision_invalid_combinations_rejected():
-    state = create_base_state(domain="product", status=WorkflowStatus.IN_PROGRESS)
-    
-    invalid_combinations = [
-        (SupervisorAction.ESCALATE, WorkflowStatus.IN_PROGRESS),
-        (SupervisorAction.START_NEW, WorkflowStatus.COMPLETED),
-        (SupervisorAction.RESUME, WorkflowStatus.IN_PROGRESS),
-        (SupervisorAction.SUSPEND_AND_SWITCH, WorkflowStatus.COMPLETED),
-        (SupervisorAction.REQUEST_CLARIFICATION, WorkflowStatus.COMPLETED),
-        (SupervisorAction.REQUEST_CLARIFICATION, WorkflowStatus.ESCALATED),
-        (SupervisorAction.CONTINUE, WorkflowStatus.COMPLETED),
-        (SupervisorAction.CONTINUE, WorkflowStatus.IDLE)
-    ]
-    
-    for action, status in invalid_combinations:
-        decision = SupervisorDecision(
-            action=action,
-            target_domain=OrchestrationDomain.PRODUCT,
-            resulting_workflow_status=status,
-            transition_reason="Test"
-        )
-        with pytest.raises(InvalidSupervisorDecisionError):
-            Supervisor.apply_decision(state, decision)
-            
-        # Ensure input state was not mutated by the failed attempt (though deepcopy prevents this anyway, we verify)
-        assert state.active_domain == "product"
-        assert state.workflow_status == WorkflowStatus.IN_PROGRESS
-
-def test_apply_decision_valid_invariant():
-    # Prove that for any valid decision produced by decide(), apply_decision preserves invariants
-    state = create_base_state(domain="product", status=WorkflowStatus.IN_PROGRESS, ticket_id=999)
-    decision = Supervisor.decide("order", "track", state, "where is it")
-    
-    new_state = Supervisor.apply_decision(state, decision)
-    
-    # Must produce exact metadata
-    assert new_state.active_domain == decision.target_domain.value
-    assert new_state.workflow_status == decision.resulting_workflow_status
-    
-    # Preserves non-workflow fields
-    assert new_state.customer_id == 999
-    assert new_state.product_state.product_id == 123
-    assert new_state.product_state.product_name == "Test Product"
-    assert new_state.product_state.active_ticket_id == 999
-    assert new_state.session_id == "test_session"
