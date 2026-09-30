@@ -428,6 +428,14 @@ class WorkflowState(BaseModel):
     @classmethod
     def from_legacy(cls, legacy_dict: dict) -> 'WorkflowState':
         """Explicitly documented legacy constructor (F.2.3)."""
+        # F.2.6 Persistence Boundary Adapter:
+        # If the payload is already an F.2 dumped JSON containing domain objects,
+        # use Pydantic's model_validate to deserialize it natively instead of wiping it.
+        if legacy_dict.get("product_state") is not None or \
+           legacy_dict.get("order_state") is not None or \
+           legacy_dict.get("payment_state") is not None:
+            return cls.model_validate(legacy_dict)
+
         session_id = legacy_dict.get("session_id")
         if not session_id:
             raise ValueError("session_id is required")

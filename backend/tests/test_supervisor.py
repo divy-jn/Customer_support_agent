@@ -202,9 +202,9 @@ def test_mutation_boundaries():
     assert new_state.workflow_status == WorkflowStatus.IN_PROGRESS
     
     # Assert domain facts MUST NOT mutate
-    assert new_state.product_id == 123
-    assert new_state.product_name == "Test Product"
-    assert new_state.active_ticket_id == 999
+    assert new_state.product_state.product_id == 123
+    assert new_state.product_state.product_name == "Test Product"
+    assert new_state.product_state.active_ticket_id == 999
     assert new_state.customer_id == 999
 
 def test_approval_not_silently_authorized():
@@ -256,7 +256,7 @@ def test_apply_decision_valid_invariant():
     
     # Preserves non-workflow fields
     assert new_state.customer_id == 999
-    assert new_state.product_id == 123
-    assert new_state.product_name == "Test Product"
-    assert new_state.active_ticket_id == 999
+    assert new_state.product_state.product_id == 123
+    assert new_state.product_state.product_name == "Test Product"
+    assert new_state.product_state.active_ticket_id == 999
     assert new_state.session_id == "test_session"
