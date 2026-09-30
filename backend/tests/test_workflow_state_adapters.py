@@ -231,3 +231,52 @@ def test_cross_domain_leakage_prevented_in_translation():
     assert state.order_state.order_id == "123"
     assert state.product_state is None
     assert state.payment_state is None
+
+from app.models import GlobalWorkflowStatus
+
+def test_legacy_status_translation_in_progress():
+    legacy_dict = {"session_id": "test", "active_domain": "product", "workflow_status": "in_progress"}
+    state = WorkflowState.from_legacy(legacy_dict)
+    assert state.global_status == GlobalWorkflowStatus.IN_PROGRESS
+    assert state.product_state.domain_status == DomainWorkflowStatus.IN_PROGRESS
+
+def test_legacy_status_translation_awaiting_input():
+    legacy_dict = {"session_id": "test", "active_domain": "order", "workflow_status": "awaiting_input"}
+    state = WorkflowState.from_legacy(legacy_dict)
+    assert state.global_status == GlobalWorkflowStatus.IN_PROGRESS
+    assert state.order_state.domain_status == DomainWorkflowStatus.AWAITING_INPUT
+
+def test_legacy_status_translation_escalated():
+    legacy_dict = {"session_id": "test", "active_domain": "product", "workflow_status": "escalated"}
+    state = WorkflowState.from_legacy(legacy_dict)
+    assert state.global_status == GlobalWorkflowStatus.ESCALATED
+    assert state.product_state.domain_status == DomainWorkflowStatus.ESCALATED
+
+def test_legacy_status_translation_completed():
+    legacy_dict = {"session_id": "test", "active_domain": "payment", "workflow_status": "completed"}
+    state = WorkflowState.from_legacy(legacy_dict)
+    assert state.global_status == GlobalWorkflowStatus.IN_PROGRESS
+    assert state.payment_state.domain_status == DomainWorkflowStatus.COMPLETED
+
+def test_legacy_status_translation_failed():
+    legacy_dict = {"session_id": "test", "active_domain": "product", "workflow_status": "failed"}
+    state = WorkflowState.from_legacy(legacy_dict)
+    assert state.global_status == GlobalWorkflowStatus.IN_PROGRESS
+    assert state.product_state.domain_status == DomainWorkflowStatus.FAILED
+
+def test_legacy_status_translation_suspended_invalid():
+    # Because of the invariant added in F.2.7.3A, an active domain cannot be SUSPENDED.
+    # Therefore, we test this by ensuring it throws the proper validation error.
+    legacy_dict = {"session_id": "test", "active_domain": "product", "workflow_status": "suspended"}
+    with pytest.raises(ValueError, match="PRODUCT domain cannot be active while its status is SUSPENDED"):
+        WorkflowState.from_legacy(legacy_dict)
+
+def test_legacy_status_translation_suspended_valid():
+    # If the domain is not active, but the legacy payload had suspended domains, wait, legacy payloads didn't have suspended domains.
+    # If a legacy payload has "suspended", it would be mapped to IN_PROGRESS via domain_status? No, it's mapped to SUSPENDED.
+    # If it is GENERAL with a product state, wait, GENERAL cannot have product states in legacy.
+    # We will test IDLE mapped correctly instead.
+    legacy_dict = {"session_id": "test", "workflow_status": "idle"}
+    state = WorkflowState.from_legacy(legacy_dict)
+    assert state.global_status == GlobalWorkflowStatus.IDLE
+

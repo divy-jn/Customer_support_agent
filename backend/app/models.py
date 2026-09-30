@@ -426,6 +426,21 @@ class WorkflowState(BaseModel):
         return mapping[status]
 
     @classmethod
+    def _map_legacy_global_status(cls, status: str | WorkflowStatus, has_active_domain: bool) -> GlobalWorkflowStatus:
+        if isinstance(status, str):
+            try:
+                status = WorkflowStatus(status)
+            except ValueError:
+                raise ValueError(f"Unknown workflow status: {status}")
+
+        if status == WorkflowStatus.ESCALATED:
+            return GlobalWorkflowStatus.ESCALATED
+        elif status == WorkflowStatus.IDLE and not has_active_domain:
+            return GlobalWorkflowStatus.IDLE
+        else:
+            return GlobalWorkflowStatus.IN_PROGRESS
+
+    @classmethod
     def from_legacy(cls, legacy_dict: dict) -> 'WorkflowState':
         """Explicitly documented legacy constructor (F.2.3)."""
         # F.2.6 Persistence Boundary Adapter:
@@ -564,6 +579,7 @@ class WorkflowState(BaseModel):
             active_ticket_id=None,
             last_tool=None,
             last_tool_result=None,
+            global_status=cls._map_legacy_global_status(legacy_dict.get("workflow_status", WorkflowStatus.IDLE), bool(domain_enum)),
             workflow_status=legacy_dict.get("workflow_status", WorkflowStatus.IDLE),
             pending_input=None,
             turn_count=legacy_dict.get("turn_count", 0),
