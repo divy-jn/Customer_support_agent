@@ -663,6 +663,32 @@ class WorkflowState(BaseModel):
         if len(self.suspended_domains) != len(set(self.suspended_domains)):
             raise ValueError("Duplicate suspended domains detected.")
             
+        # 5. F.2.6 Persistence Contradiction Hardening
+        if self.active_domain in (OrchestrationDomain.GENERAL.value, OrchestrationDomain.ESCALATION.value):
+            if self.product_state or self.order_state or self.payment_state:
+                raise ValueError(f"Domain {self.active_domain} cannot own typed domain states")
+
+        has_root_prod = bool(self.product_id or self.product_name or self.manufacturer)
+        has_root_order = bool(self.order_id)
+
+        if self.active_domain == OrchestrationDomain.PRODUCT.value and has_root_order:
+            raise ValueError("active_domain=product contradicts order ownership facts")
+        if self.active_domain == OrchestrationDomain.ORDER.value and has_root_prod:
+            raise ValueError("active_domain=order contradicts product ownership facts")
+        if self.active_domain == OrchestrationDomain.PAYMENT.value and (has_root_prod or has_root_order):
+            raise ValueError("active_domain=payment contradicts product/order ownership facts")
+
+        if self.active_ticket_id is not None:
+            if self.active_domain == OrchestrationDomain.PRODUCT.value and self.product_state:
+                if self.product_state.active_ticket_id is not None and self.active_ticket_id != self.product_state.active_ticket_id:
+                    raise ValueError("Conflicting legacy root ticket identity with ProductState")
+            if self.active_domain == OrchestrationDomain.ORDER.value and self.order_state:
+                if self.order_state.active_ticket_id is not None and self.active_ticket_id != self.order_state.active_ticket_id:
+                    raise ValueError("Conflicting legacy root ticket identity with OrderState")
+            if self.active_domain == OrchestrationDomain.PAYMENT.value and self.payment_state:
+                if self.payment_state.active_ticket_id is not None and self.active_ticket_id != self.payment_state.active_ticket_id:
+                    raise ValueError("Conflicting legacy root ticket identity with PaymentState")
+            
         return self
 
 
