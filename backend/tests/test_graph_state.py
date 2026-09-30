@@ -68,8 +68,8 @@ async def test_workflow_state_roundtrip(mock_intent_router, mock_product_llm):
     assert result_1["response"] == "I can help with that."
     assert "workflow_state" in result_1
     ws_1 = result_1["workflow_state"]
-    assert ws_1["product_name"] == "SuperPhone X"
-    assert ws_1["order_id"] is None
+    assert ws_1.get("product_state", {}).get("product_name") == "SuperPhone X"
+    assert ws_1.get("order_id") is None
     assert ws_1["turn_count"] == 1
 
     # TURN 2
@@ -94,9 +94,8 @@ async def test_workflow_state_roundtrip(mock_intent_router, mock_product_llm):
     result_2 = await customer_support_graph.ainvoke(state_2)
     
     ws_2 = result_2["workflow_state"]
-    ws_2 = result_2["workflow_state"]
     # Should merge
-    assert ws_2["product_name"] == "SuperPhone X"
+    assert ws_2.get("product_state", {}).get("product_name") == "SuperPhone X"
     assert ws_2["turn_count"] == 2
 
     # TURN 3 - Continuation with manufacturer
@@ -126,7 +125,7 @@ async def test_workflow_state_roundtrip(mock_intent_router, mock_product_llm):
     
     result_3 = await customer_support_graph.ainvoke(state_3)
     ws_3 = result_3["workflow_state"]
-    assert ws_3["manufacturer"] == "Dell"
+    assert ws_3.get("product_state", {}).get("manufacturer") == "Dell"
 
 from app.agents.graph import route_after_classification
 
@@ -346,8 +345,8 @@ async def test_chat_handler_session_persistence():
             assert "workflow_state" in session
             
             # Verify Turn 2 properly reached ProductAgent and merged order_id
-            assert session["workflow_state"]["product_name"] == "SuperPhone"
-            assert session["workflow_state"]["active_ticket_id"] == 999
+            assert session["workflow_state"].get("product_state", {}).get("product_name") == "SuperPhone"
+            assert session["workflow_state"].get("product_state", {}).get("active_ticket_id") == 999
             assert session["workflow_state"]["turn_count"] == 2
 
 

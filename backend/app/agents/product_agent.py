@@ -194,30 +194,24 @@ class ProductAgent:
         merged_state, extracted_order_id = await self._extract_and_merge_state(context)
         merged_state.turn_count += 1
         
+        # Explicit order compatibility boundary: use transient extraction, OR read from OrderState
+        # We explicitly DO NOT fallback to root merged_state.order_id
+        current_order_id = extracted_order_id
+        if not current_order_id and merged_state.order_state and merged_state.order_state.order_id:
+            current_order_id = merged_state.order_state.order_id
+        
         # ── Step 0.5: Central Ticket Lifecycle ──
         if context.customer_id:
             from app.tickets.lifecycle import TicketLifecycleService
             from app.models import TicketContext, Urgency, Sentiment
             
-            # Temporary compatibility projection for legacy fields
-            proj = merged_state.to_legacy_projection()
-            
-            # Explicit order compatibility boundary: use transient extraction, OR read from OrderState, OR fallback to unmigrated root
-            order_id = extracted_order_id
-            if not order_id:
-                if merged_state.order_state and merged_state.order_state.order_id:
-                    order_id = merged_state.order_state.order_id
-                elif merged_state.order_id:
-                    order_id = str(merged_state.order_id)
-            
             parsed_order_id = None
-            if order_id is not None:
+            if current_order_id is not None:
                 try:
-                    parsed_order_id = int(order_id)
+                    parsed_order_id = int(current_order_id)
                 except ValueError:
-                    logger.error("ProductAgent: Invalid order_id format for ticket context: %s", order_id)
+                    logger.error("ProductAgent: Invalid order_id format for ticket context: %s", current_order_id)
                     self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
-                    self._apply_legacy_projection(merged_state)
                     return ProductAgentResponse(
                         response="I apologize, but the provided order ID is invalid. Please try again.",
                         workflow_state=merged_state,
@@ -230,7 +224,6 @@ class ProductAgent:
             except ValueError:
                 logger.error("ProductAgent: Invalid urgency format for ticket context: %s", context.urgency)
                 self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
-                self._apply_legacy_projection(merged_state)
                 return ProductAgentResponse(
                     response="I apologize, but I received an invalid priority setting. Please try again.",
                     workflow_state=merged_state,
@@ -243,7 +236,6 @@ class ProductAgent:
             except ValueError:
                 logger.error("ProductAgent: Invalid sentiment format for ticket context: %s", context.sentiment)
                 self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
-                self._apply_legacy_projection(merged_state)
                 return ProductAgentResponse(
                     response="I apologize, but I received an invalid feedback setting. Please try again.",
                     workflow_state=merged_state,
@@ -267,7 +259,6 @@ class ProductAgent:
             if ticket_res.action == "FAILED":
                 logger.error("ProductAgent: Ticket creation failed: %s", ticket_res.reason)
                 self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
-                self._apply_legacy_projection(merged_state)
                 return ProductAgentResponse(
                     response="I apologize, but I encountered an internal issue registering your request. Please try again or contact support.",
                     workflow_state=merged_state,
@@ -290,7 +281,6 @@ class ProductAgent:
                 context.semantic_intent,
             )
             self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
-            self._apply_legacy_projection(merged_state)
             return ProductAgentResponse(
                 response=(
                     "I'm sorry, I don't have the specific expertise to handle "
@@ -311,7 +301,6 @@ class ProductAgent:
         )
         if input_result.status != SkillExecutionStatus.SUCCESS:
             self._set_domain_status(merged_state, DomainWorkflowStatus.AWAITING_INPUT)
-            self._apply_legacy_projection(merged_state)
             return ProductAgentResponse(
                 response="I need more information to help you with that product question.",
                 workflow_state=merged_state,
@@ -322,15 +311,13 @@ class ProductAgent:
             )
 
         self._set_domain_status(merged_state, DomainWorkflowStatus.IN_PROGRESS)
-        merged_state.skill_name = skill.name
-        merged_state.skill_version = skill.metadata.version
 
         # ── Step 3: ReAct Tool Calling Loop ──
         MAX_ITERATIONS = 5
         iteration = 0
         
         system_prompt = self._build_system_prompt(skill)
-        user_prompt = self._build_user_prompt(context, merged_state)
+        user_prompt = self._build_user_prompt(context, merged_state, current_order_id)
         
         # We maintain a conversation transcript for the LLM
         conversation_history = user_prompt
@@ -343,7 +330,6 @@ class ProductAgent:
             except Exception as e:
                 logger.error("ProductAgent: LLM invocation failed: %s", type(e).__name__)
                 self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
-                self._apply_legacy_projection(merged_state)
                 return ProductAgentResponse(
                     response=(
                         "I apologize, but I'm experiencing a technical issue. "
@@ -396,7 +382,7 @@ class ProductAgent:
                         tool_result_str = f"TOOL EXECUTOR ERROR ({exec_result.status.value}): {exec_result.message}"
                         
                     # Save to workflow state
-                    entity_ref = str(merged_state.order_id) if merged_state.order_id else (merged_state.product_state.product_name or None)
+                    entity_ref = str(current_order_id) if current_order_id else (merged_state.product_state.product_name or None)
                     result_data = json.loads(tool_result_str) if tool_result_str.startswith("{") or tool_result_str.startswith("[") else {"result": tool_result_str}
                     merged_state.product_state.last_tool = tool_name
                     merged_state.product_state.last_tool_result = ToolResultEnvelope(
@@ -416,7 +402,6 @@ class ProductAgent:
                 # No tool call detected, this is the final response.
                 latency_ms = int((time.time() - start_time) * 1000)
                 self._set_domain_status(merged_state, DomainWorkflowStatus.COMPLETED)
-                self._apply_legacy_projection(merged_state)
                 return ProductAgentResponse(
                     response=llm_response,
                     workflow_state=merged_state,
@@ -435,7 +420,6 @@ class ProductAgent:
         # ── Step 4: Max iterations exceeded ──
         logger.warning("ProductAgent: Max tool iterations exceeded for skill=%s", skill.name)
         self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
-        self._apply_legacy_projection(merged_state)
         return ProductAgentResponse(
             response="I apologize, but I'm having trouble retrieving the requested information right now. Please try again later.",
             workflow_state=merged_state,
@@ -443,16 +427,6 @@ class ProductAgent:
             skill_version=skill.metadata.version,
             execution_status="max_iterations_exceeded",
         )
-
-    def _apply_legacy_projection(self, state: WorkflowState) -> None:
-        """
-        Temporary compatibility projection for unmigrated legacy consumers.
-        Applies the typed domain facts to the flat root fields before returning.
-        """
-        proj = state.to_legacy_projection()
-        for k, v in proj.items():
-            if hasattr(state, k):
-                setattr(state, k, v)
 
     def _set_domain_status(self, state: WorkflowState, new_status: DomainWorkflowStatus) -> None:
         """
@@ -485,6 +459,7 @@ class ProductAgent:
         self,
         context: ProductDomainContext,
         state: WorkflowState,
+        current_order_id: Optional[str] = None,
     ) -> str:
         """Build the user prompt with bounded context and workflow state."""
         parts = []
@@ -496,7 +471,7 @@ class ProductAgent:
             
         # Inject extracted state so the LLM doesn't have to guess or reread the whole transcript
         state_parts = []
-        if state.order_id: state_parts.append(f"Verified Order ID: {state.order_id}")
+        if current_order_id: state_parts.append(f"Verified Order ID: {current_order_id}")
         if state.product_state.product_name: state_parts.append(f"Target Product: {state.product_state.product_name}")
         if state.product_state.manufacturer: state_parts.append(f"Target Manufacturer: {state.product_state.manufacturer}")
         if state.product_state.last_tool_result:
