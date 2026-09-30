@@ -184,32 +184,7 @@ def test_malformed_persistence_rejects_escalation_with_domain_states():
             'order_state': {'domain_status': 'in_progress'}
         })
 
-def test_malformed_persistence_rejects_product_with_contradictory_order_facts():
-    with pytest.raises(ValueError, match='active_domain=product contradicts order ownership facts'):
-        WorkflowState.model_validate({
-            'session_id': 'test',
-            'active_domain': 'product',
-            'order_id': 123,
-            'product_state': {'domain_status': 'in_progress'}
-        })
 
-def test_malformed_persistence_rejects_payment_with_contradictory_product_facts():
-    with pytest.raises(ValueError, match='active_domain=payment contradicts product/order ownership facts'):
-        WorkflowState.model_validate({
-            'session_id': 'test',
-            'active_domain': 'payment',
-            'product_id': 123,
-            'payment_state': {'domain_status': 'in_progress'}
-        })
-
-def test_malformed_persistence_rejects_conflicting_root_ticket_identity():
-    with pytest.raises(ValueError, match='Conflicting legacy root ticket identity with ProductState'):
-        WorkflowState.model_validate({
-            'session_id': 'test',
-            'active_domain': 'product',
-            'active_ticket_id': 999,
-            'product_state': {'domain_status': 'in_progress', 'active_ticket_id': 123}
-        })
 
 
 def test_supervisor_transition_product_to_general_persistence():

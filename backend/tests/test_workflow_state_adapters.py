@@ -50,8 +50,8 @@ def test_from_legacy_behaves_deterministically():
     
     assert state.product_state.active_ticket_id == 701
     assert state.product_state.product_name == "Phone"
-    assert state.active_ticket_id is None # Legacy root field should be empty
-    assert state.product_name is None # Legacy root field should be empty
+    assert not hasattr(state, "active_ticket_id") # Legacy root field should not exist
+    assert not hasattr(state, "product_name") # Legacy root field should not exist
 
 import json
 from app.models import WorkflowStatus
@@ -69,9 +69,9 @@ def test_historical_order_payload_loads_into_orderstate():
     assert state.order_state.last_tool == "track_order"
     assert state.order_state.last_tool_result.result == "delivered"
     
-    assert state.order_id is None
-    assert state.last_tool is None
-    assert state.last_tool_result is None
+    assert not hasattr(state, "order_id")
+    assert not hasattr(state, "last_tool")
+    assert not hasattr(state, "last_tool_result")
 
 def test_historical_payment_payload_loads_into_paymentstate():
     legacy_dict = {
@@ -83,7 +83,7 @@ def test_historical_payment_payload_loads_into_paymentstate():
     state = WorkflowState.from_legacy(legacy_dict)
     assert state.payment_state.active_ticket_id == 55
     assert state.payment_state.last_tool == "process_refund"
-    assert state.active_ticket_id is None
+    assert not hasattr(state, "active_ticket_id")
 
 def test_workflow_status_is_correctly_translated():
     legacy_dict = {
@@ -93,7 +93,7 @@ def test_workflow_status_is_correctly_translated():
     }
     state = WorkflowState.from_legacy(legacy_dict)
     assert state.product_state.domain_status == DomainWorkflowStatus.COMPLETED
-    assert state.workflow_status == WorkflowStatus.COMPLETED
+
 
 def test_contradictory_facts_fail():
     legacy_dict = {
@@ -125,8 +125,8 @@ def test_old_payload_roundtrips_preserves_typed_state():
     
     assert new_state.product_state.product_name == "Phone"
     assert new_state.product_state.last_tool == "search"
-    assert new_state.product_name is None
-    assert new_state.last_tool is None
+    assert not hasattr(new_state, "product_name")
+    assert not hasattr(new_state, "last_tool")
 
 def test_already_typed_f2_payload_uses_native_deserialization():
     typed_dict = {

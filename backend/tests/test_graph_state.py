@@ -272,7 +272,7 @@ async def test_product_agent_extraction():
     state, extracted_order_id = await agent._extract_and_merge_state(ctx)
     assert extracted_order_id == "1234"
     assert state.order_state is None
-    assert state.order_id is None
+    assert not hasattr(state, "order_id")
 
     # E. hallucinated order ID not present in message -> rejected
     mock_llm_adapter.invoke.return_value = '{"product_name": null, "order_id": {"value": 9999, "source": "USER_EXPLICIT"}, "manufacturer": null}'

@@ -379,27 +379,7 @@ class WorkflowState(BaseModel):
     order_state: OrderState | None = None
     payment_state: PaymentState | None = None
 
-    # ─── Legacy Semantic Context (Retained for Compatibility) ───
-    semantic_intent: str | None = None
-    skill_name: str | None = None
-    skill_version: str | None = None
-    
-    # ─── Legacy Extracted Entities (Retained for Compatibility) ───
-    product_id: int | None = None
-    product_name: str | None = Field(None, max_length=255)
-    order_id: int | None = None
-    manufacturer: str | None = Field(None, max_length=255)
-    
-    # ─── Legacy Ticketing (Retained for Compatibility) ───
-    active_ticket_id: int | None = None
-    
-    # ─── Legacy Execution Tracking (Retained for Compatibility) ───
-    last_tool: str | None = Field(None, max_length=255)
-    last_tool_result: ToolResultEnvelope | None = None
-    
     # ─── Shared Lifecycle ───
-    workflow_status: WorkflowStatus = WorkflowStatus.IDLE  # Legacy
-    pending_input: str | None = Field(None, max_length=1024)
     turn_count: int = 0
     updated_at: datetime | None = None
 
@@ -578,19 +558,7 @@ class WorkflowState(BaseModel):
             product_state=product_state,
             order_state=order_state,
             payment_state=payment_state,
-            semantic_intent=None,
-            skill_name=None,
-            skill_version=None,
-            product_id=None,
-            product_name=None,
-            order_id=None,
-            manufacturer=None,
-            active_ticket_id=None,
-            last_tool=None,
-            last_tool_result=None,
             global_status=cls._map_legacy_global_status(legacy_dict.get("workflow_status", WorkflowStatus.IDLE), bool(domain_enum)),
-            workflow_status=legacy_dict.get("workflow_status", WorkflowStatus.IDLE),
-            pending_input=None,
             turn_count=legacy_dict.get("turn_count", 0),
             updated_at=legacy_dict.get("updated_at")
         )
@@ -670,27 +638,6 @@ class WorkflowState(BaseModel):
             if self.payment_state and OrchestrationDomain.PAYMENT not in self.suspended_domains:
                 raise ValueError(f"Domain {self.active_domain} cannot own active typed domain state (PAYMENT)")
 
-        has_root_prod = bool(self.product_id or self.product_name or self.manufacturer)
-        has_root_order = bool(self.order_id)
-
-        if self.active_domain == OrchestrationDomain.PRODUCT.value and has_root_order:
-            raise ValueError("active_domain=product contradicts order ownership facts")
-        if self.active_domain == OrchestrationDomain.ORDER.value and has_root_prod:
-            raise ValueError("active_domain=order contradicts product ownership facts")
-        if self.active_domain == OrchestrationDomain.PAYMENT.value and (has_root_prod or has_root_order):
-            raise ValueError("active_domain=payment contradicts product/order ownership facts")
-
-        if self.active_ticket_id is not None:
-            if self.active_domain == OrchestrationDomain.PRODUCT.value and self.product_state:
-                if self.product_state.active_ticket_id is not None and self.active_ticket_id != self.product_state.active_ticket_id:
-                    raise ValueError("Conflicting legacy root ticket identity with ProductState")
-            if self.active_domain == OrchestrationDomain.ORDER.value and self.order_state:
-                if self.order_state.active_ticket_id is not None and self.active_ticket_id != self.order_state.active_ticket_id:
-                    raise ValueError("Conflicting legacy root ticket identity with OrderState")
-            if self.active_domain == OrchestrationDomain.PAYMENT.value and self.payment_state:
-                if self.payment_state.active_ticket_id is not None and self.active_ticket_id != self.payment_state.active_ticket_id:
-                    raise ValueError("Conflicting legacy root ticket identity with PaymentState")
-            
         return self
 
 

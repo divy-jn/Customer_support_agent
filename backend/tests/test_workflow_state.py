@@ -10,6 +10,18 @@ from app.models import (
     DomainWorkflowStatus
 )
 
+def test_model_shape_legacy_fields_absent():
+    """Prove the 12 deprecated fields are physically absent from WorkflowState."""
+    fields = WorkflowState.model_fields
+    legacy_fields = [
+        "semantic_intent", "skill_name", "skill_version", 
+        "product_id", "product_name", "order_id", "manufacturer", 
+        "active_ticket_id", "last_tool", "last_tool_result", 
+        "workflow_status", "pending_input"
+    ]
+    for field in legacy_fields:
+        assert field not in fields, f"Legacy field {field} is still present on WorkflowState"
+
 def test_valid_construction():
     """Test valid construction with F.2 fields."""
     state = WorkflowState(

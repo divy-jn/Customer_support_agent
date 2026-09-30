@@ -429,45 +429,6 @@ def test_supervisor_never_reads_workflow_status():
 
 
 # ──────────────────────────────────────────────
-#  11. Supervisor never writes workflow_status
-# ──────────────────────────────────────────────
-
-def test_supervisor_never_writes_workflow_status():
-    """apply_decision must not mutate workflow_status on the returned state."""
-    state = _base(
-        active="product",
-        global_status=GlobalWorkflowStatus.IN_PROGRESS,
-        product_status=DomainWorkflowStatus.IN_PROGRESS,
-    )
-    original_ws = state.workflow_status
-    d = Supervisor.decide("order", "track", state, "order please")
-    new_state = Supervisor.apply_decision(state, d)
-    # workflow_status must be unchanged (default or whatever it was)
-    assert new_state.workflow_status == original_ws
-
-
-# ──────────────────────────────────────────────
-#  12. contradictory legacy workflow_status cannot override typed state
-# ──────────────────────────────────────────────
-
-def test_contradictory_legacy_status_does_not_override_typed():
-    """Even if workflow_status says COMPLETED, typed domain_status is authoritative."""
-    from app.models import WorkflowStatus
-    state = _base(
-        active="product",
-        global_status=GlobalWorkflowStatus.IN_PROGRESS,
-        product_status=DomainWorkflowStatus.IN_PROGRESS,
-    )
-    # Force contradictory legacy field
-    state.workflow_status = WorkflowStatus.COMPLETED
-
-    d = Supervisor.decide("product", "support", state, "still fixing phone")
-    # Typed state says IN_PROGRESS → CONTINUE, regardless of legacy
-    assert d.action == SupervisorAction.CONTINUE
-    assert d.target_domain == OrchestrationDomain.PRODUCT
-
-
-# ──────────────────────────────────────────────
 #  13. original WorkflowState remains unchanged after apply_decision()
 # ──────────────────────────────────────────────
 
