@@ -18,42 +18,9 @@ from app.email_service import send_escalation_email
 from app.tools import lookup_customer
 from app.guardrails import validate_input, validate_output, get_rejection_message
 
-# Conditional Redis import — falls back to in-memory if not installed
-try:
-    from upstash_redis.asyncio import Redis as UpstashRedis
-    _redis_available = True
-except ImportError:
-    _redis_available = False
+from app.persistence.session import session_store
 
 logger = logging.getLogger(__name__)
-
-# Initialize Upstash Redis if configured AND available
-redis_client = None
-if _redis_available and settings.upstash_redis_url and settings.upstash_redis_token:
-    redis_client = UpstashRedis(url=settings.upstash_redis_url, token=settings.upstash_redis_token)
-else:
-    if not _redis_available:
-        logger.warning("upstash-redis not installed. Using in-memory session store.")
-    else:
-        logger.warning("Upstash Redis not configured. Using in-memory store.")
-
-class SessionStore(dict):
-    async def get_session(self, session_id: str) -> dict | None:
-        if redis_client:
-            data = await redis_client.get(f"session:{session_id}")
-            if data:
-                return json.loads(data) if isinstance(data, str) else data
-            return None
-        else:
-            return self.get(session_id)
-
-    async def save_session(self, session_id: str, session: dict):
-        if redis_client:
-            await redis_client.set(f"session:{session_id}", json.dumps(session), ex=86400)
-        else:
-            self[session_id] = session
-
-session_store = SessionStore()
 
 
 async def _get_session(session_id: str, authenticated_customer_id: int | None = None) -> dict:
@@ -73,6 +40,7 @@ async def _get_session(session_id: str, authenticated_customer_id: int | None = 
     new_session = {
         "session_id": session_id,
         "customer_id": authenticated_customer_id,
+        "_session_revision": 1,
         "mode": "ai",
         "conversation_history": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -88,28 +56,47 @@ async def _get_session(session_id: str, authenticated_customer_id: int | None = 
     return new_session
 
 
+
+async def _mutate_session(session_id: str, mutator_fn, allow_retry: bool = True, customer_id: int | None = None) -> dict:
+    from app.persistence.session import SaveResult
+    MAX_CAS_RETRIES = 3
+    retries = MAX_CAS_RETRIES if allow_retry else 1
+    
+    for attempt in range(retries):
+        session = await _get_session(session_id, customer_id)
+        expected_revision = session.get("_session_revision", 1)
+        
+        should_save = mutator_fn(session)
+        if not should_save:
+            return session
+            
+        result = await session_store.save_session_conditional(session_id, session, expected_revision)
+        
+        if result == SaveResult.SUCCESS:
+            return session
+        elif result == SaveResult.MISSING:
+            logger.error("Session missing during CAS mutation", extra={"session_id": session_id})
+            raise RuntimeError(f"Session {session_id} missing")
+            
+        logger.warning(
+            f"CAS conflict on session {session_id}, attempt {attempt+1}/{retries}", 
+            extra={
+                "session_id": session_id,
+                "expected_revision": expected_revision,
+                "retry_count": attempt + 1
+            }
+        )
+                      
+    logger.error("CAS conflict exhausted retries or retry disabled", extra={"session_id": session_id, "retry_count": retries})
+    raise RuntimeError("Concurrency conflict: stale session data could not be saved safely.")
+
 async def _save_session(session_id: str, session: dict):
     """Save session back to Redis (or memory)."""
     await session_store.save_session(session_id, session)
 
 async def get_all_active_sessions() -> list:
     """Retrieve all active sessions from Redis or memory."""
-    if redis_client:
-        try:
-            keys = await redis_client.keys("session:*")
-            sessions = []
-            if keys:
-                values = await redis_client.mget(*keys)
-                for val in values:
-                    if val:
-                        session = json.loads(val) if isinstance(val, str) else val
-                        sessions.append(session)
-            return sessions
-        except Exception as e:
-            logger.error(f"Failed to fetch sessions from Redis: {e}")
-            return []
-    else:
-        return list(session_store.values())
+    return await session_store.get_all_active_sessions()
 
 
 async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None, authenticated_customer_id: int | None = None):
@@ -203,17 +190,16 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
             # Use sanitized message (PII redacted for logging)
             sanitized_message = guard_result.sanitized_text
 
-            session = await _get_session(session_id, customer_id)
-
-            # Append customer message to history (sanitized)
-            session["conversation_history"].append({
-                "role": "customer",
-                "content": message,  # Keep original for LLM processing
-                "sanitized": sanitized_message,  # Sanitized for logging
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "pii_detected": guard_result.pii_detected,
-            })
-            await _save_session(session_id, session)
+            def _append_customer(s):
+                s["conversation_history"].append({
+                    "role": "customer",
+                    "content": message,
+                    "sanitized": sanitized_message,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "pii_detected": guard_result.pii_detected,
+                })
+                return True
+            session = await _mutate_session(session_id, _append_customer, allow_retry=True, customer_id=customer_id)
 
             # Broadcast to monitoring agents
             await manager.broadcast_to_agents({
@@ -263,12 +249,14 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     output_guard = validate_output(raw_response)
                     response_text = output_guard.sanitized_text
                     
-                    session["conversation_history"].append({
-                        "role": "agent", "content": response_text,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    })
-                    session.pop("pending_approval", None)
-                    await _save_session(session_id, session)
+                    def _approve_execute(s):
+                        s["conversation_history"].append({
+                            "role": "agent", "content": response_text,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        })
+                        s.pop("pending_approval", None)
+                        return True
+                    session = await _mutate_session(session_id, _approve_execute, allow_retry=True)
                     
                     await manager.send_personal_message({
                         "type": "agent_response",
@@ -291,13 +279,15 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
             
             elif pending and message.lower().strip() in ("no", "nope", "nah", "cancel", "don't", "dont", "stop", "never mind"):
                 # Customer rejected the pending action
-                session.pop("pending_approval", None)
-                session["conversation_history"].append({
-                    "role": "agent",
-                    "content": "No problem! I've cancelled that action. Is there anything else I can help with?",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
-                await _save_session(session_id, session)
+                def _approve_reject(s):
+                    s.pop("pending_approval", None)
+                    s["conversation_history"].append({
+                        "role": "agent",
+                        "content": "No problem! I've cancelled that action. Is there anything else I can help with?",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    return True
+                session = await _mutate_session(session_id, _approve_reject, allow_retry=True)
                 await manager.send_personal_message({
                     "type": "agent_response",
                     "message": "No problem! I've cancelled that action. Is there anything else I can help with?",
@@ -546,15 +536,16 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                     continue
 
                 # Append to history
-                session = await _get_session(session_id)
-                session["conversation_history"].append({
-                    "role": "agent",
-                    "content": agent_message,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "human_agent": True,
-                    "agent_name": agent_name,
-                })
-                await _save_session(session_id, session)
+                def _agent_message(s):
+                    s["conversation_history"].append({
+                        "role": "agent",
+                        "content": agent_message,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "human_agent": True,
+                        "agent_name": agent_name,
+                    })
+                    return True
+                session = await _mutate_session(session_id, _agent_message, allow_retry=True)
 
                 # Send to customer
                 await manager.send_personal_message({
@@ -567,11 +558,13 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
 
             elif msg_type == "takeover":
                 # Agent is taking over the conversation
-                session = await _get_session(session_id)
-                if session.get("mode") != "human":
-                    session["mode"] = "human"
-                    await _save_session(session_id, session)
-                    
+                def _takeover(s):
+                    if s.get("mode") != "human":
+                        s["mode"] = "human"
+                        return True
+                    return False
+                session = await _mutate_session(session_id, _takeover, allow_retry=True)
+                if session and session.get("mode") == "human":
                     await manager.send_personal_message({
                         "type": "mode_change",
                         "mode": "human",
@@ -581,11 +574,13 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
 
             elif msg_type == "release":
                 # Agent is returning the conversation to the AI
-                session = await _get_session(session_id)
-                if session.get("mode") != "ai":
-                    session["mode"] = "ai"
-                    await _save_session(session_id, session)
-                    
+                def _release(s):
+                    if s.get("mode") != "ai":
+                        s["mode"] = "ai"
+                        return True
+                    return False
+                session = await _mutate_session(session_id, _release, allow_retry=True)
+                if session and session.get("mode") == "ai":
                     await manager.send_personal_message({
                         "type": "mode_change",
                         "mode": "ai",
@@ -598,18 +593,24 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
         logger.info(f"Agent disconnected from session: {session_id}")
         
         # Safely return session to AI mode if it was abandoned in human mode
-        session = await _get_session(session_id)
         # Check if there are still any other agents connected to this session
         has_other_agents = bool(manager.agent_connections.get(session_id))
         
-        if session and session.get("mode") == "human" and not has_other_agents:
-            session["mode"] = "ai"
-            await _save_session(session_id, session)
+        def _abandon(s):
+            if s and s.get("mode") == "human" and not has_other_agents:
+                s["mode"] = "ai"
+                return True
+            return False
             
-            # Notify customer that AI has resumed
-            await manager.send_personal_message({
-                "type": "mode_change",
-                "mode": "ai",
-                "agent_name": "AI Assistant",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }, session_id)
+        try:
+            session = await _mutate_session(session_id, _abandon, allow_retry=True)
+            if session and session.get("mode") == "ai" and not has_other_agents:
+                # Notify customer that AI has resumed
+                await manager.send_personal_message({
+                    "type": "mode_change",
+                    "mode": "ai",
+                    "agent_name": "AI Assistant",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }, session_id)
+        except Exception as e:
+            logger.error(f"Failed to abandon human mode for session {session_id}: {e}")

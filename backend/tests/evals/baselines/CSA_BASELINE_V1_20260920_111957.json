@@ -1,0 +1,357 @@
+{
+  "dataset_version": "1.0.0",
+  "commit_identity": "HEAD",
+  "model_provider": "nemotron-3-super",
+  "evaluation_timestamp": "2026-09-20T05:49:57.551288+00:00",
+  "baseline_state": "PARTIAL",
+  "results": [
+    {
+      "example_id": "order_tracking_with_id",
+      "status": "FAIL",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "order_tracking_missing_id",
+      "status": "FAIL",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "cancel_active_order",
+      "status": "FAIL",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "multi_turn_refund",
+      "status": "FAIL",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "rag_return_policy",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "angry_escalation",
+      "status": "FAIL",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "status": "SKIPPED",
+      "error": "Unit guardrails skipped in E2E baseline runner"
+    },
+    {
+      "example_id": "synthetic_case_0",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_1",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_2",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_3",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_4",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_5",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_6",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_7",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_8",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_9",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_10",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_11",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "status": "SKIPPED",
+      "error": "Unit guardrails skipped in E2E baseline runner"
+    },
+    {
+      "example_id": "synthetic_case_13",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_14",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_15",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_16",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_17",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_18",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_19",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_20",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_21",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_22",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_23",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_24",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_25",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_26",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_27",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "status": "SKIPPED",
+      "error": "Unit guardrails skipped in E2E baseline runner"
+    },
+    {
+      "example_id": "synthetic_case_29",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_30",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_31",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_32",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_33",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_34",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_35",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_36",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    },
+    {
+      "example_id": "synthetic_case_37",
+      "status": "PASS",
+      "predicted_intent": "general",
+      "selected_agent": "rag_agent",
+      "final_response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+      "error": null
+    }
+  ]
+}

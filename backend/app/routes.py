@@ -29,7 +29,7 @@ from app.tools import (
     get_system_info, list_knowledge_base_docs, get_knowledge_base_doc,
 )
 from app.models import TicketCreate, TicketUpdate, TicketResponse, TicketStatus
-from app.websocket.chat_handler import session_store
+from app.persistence.session import session_store
 from app.email_service import send_ticket_created_email, send_resolution_email
 
 router = APIRouter()
