@@ -236,21 +236,13 @@ class TicketLifecycleService:
         and creates/updates accordingly.
         """
         if isinstance(context, IssueContext):
-            # Legacy adapter
+            # Legacy adapter: fail closed on invalid enum values
             try:
                 domain = OrchestrationDomain(context.domain)
-            except ValueError:
-                domain = OrchestrationDomain.GENERAL
-            
-            try:
                 urgency = Urgency(context.urgency)
-            except ValueError:
-                urgency = Urgency.MEDIUM
-                
-            try:
                 sentiment = Sentiment(context.sentiment)
-            except ValueError:
-                sentiment = Sentiment.NEUTRAL
+            except ValueError as e:
+                raise ValueError(f"Invalid legacy enum value: {e}")
                 
             context = TicketContext(
                 customer_id=context.customer_id,
