@@ -559,13 +559,22 @@ class WorkflowState(BaseModel):
             # Cross-domain ticket leakage or ticket without domain context
             raise ValueError("active_ticket_id present but domain is ambiguous or general.")
 
+        suspended_domains = []
+        final_active_domain = domain_enum.value if domain_enum else None
+        
+        # F.2.7.3C.1 explicit migration for legacy suspended workflows
+        if domain_status == DomainWorkflowStatus.SUSPENDED and domain_enum in (OrchestrationDomain.PRODUCT, OrchestrationDomain.ORDER, OrchestrationDomain.PAYMENT):
+            suspended_domains.append(domain_enum)
+            final_active_domain = OrchestrationDomain.GENERAL.value
+
         # Initialize base state, translating domains and erasing unsupported/migrated legacy root fields
         state = cls(
             session_id=session_id,
             schema_version=1,
             state_revision=legacy_dict.get("state_revision", 1),
             customer_id=legacy_dict.get("customer_id"),
-            active_domain=domain_enum.value if domain_enum else None,
+            active_domain=final_active_domain,
+            suspended_domains=suspended_domains,
             product_state=product_state,
             order_state=order_state,
             payment_state=payment_state,
