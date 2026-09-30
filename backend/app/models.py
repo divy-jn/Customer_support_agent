@@ -429,6 +429,17 @@ class WorkflowState(BaseModel):
         if legacy_dict.get("product_state") is not None or \
            legacy_dict.get("order_state") is not None or \
            legacy_dict.get("payment_state") is not None:
+            
+            legacy_keys = {
+                "semantic_intent", "skill_name", "skill_version",
+                "product_id", "product_name", "order_id", "manufacturer",
+                "active_ticket_id", "last_tool", "last_tool_result",
+                "workflow_status", "pending_input"
+            }
+            mixed_keys = [k for k in legacy_keys if k in legacy_dict]
+            if mixed_keys:
+                raise ValueError(f"Mixed typed/legacy payload detected. Deprecated keys present: {mixed_keys}")
+                
             return cls.model_validate(legacy_dict)
 
         session_id = legacy_dict.get("session_id")

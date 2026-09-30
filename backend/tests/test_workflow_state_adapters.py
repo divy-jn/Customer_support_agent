@@ -128,19 +128,7 @@ def test_old_payload_roundtrips_preserves_typed_state():
     assert not hasattr(new_state, "product_name")
     assert not hasattr(new_state, "last_tool")
 
-def test_already_typed_f2_payload_uses_native_deserialization():
-    typed_dict = {
-        "session_id": "test",
-        "product_state": {
-            "product_name": "Phone",
-            "domain_status": "in_progress"
-        },
-        "order_id": 999  # Legacy root field to test it doesn't leak into typed state
-    }
-    state = WorkflowState.from_legacy(typed_dict)
-    assert state.product_state.product_name == "Phone"
-    assert state.order_state is None # Does not implicitly create OrderState from root order_id because it used model_validate directly
-    
+
 def test_cross_domain_leakage_prevented_in_translation():
     legacy_dict = {
         "session_id": "test",
@@ -281,3 +269,67 @@ def test_legacy_status_translation_idle():
     legacy_dict = {"session_id": "test", "workflow_status": "idle"}
     state = WorkflowState.from_legacy(legacy_dict)
     assert state.global_status == GlobalWorkflowStatus.IDLE
+
+def test_mixed_payload_product_with_order_id_fails():
+    with pytest.raises(ValueError, match="Mixed typed/legacy payload detected"):
+        WorkflowState.from_legacy({
+            "session_id": "test",
+            "active_domain": "product",
+            "product_state": {"domain_status": "in_progress"},
+            "order_id": 123
+        })
+
+def test_mixed_payload_payment_with_product_id_fails():
+    with pytest.raises(ValueError, match="Mixed typed/legacy payload detected"):
+        WorkflowState.from_legacy({
+            "session_id": "test",
+            "active_domain": "payment",
+            "payment_state": {"domain_status": "in_progress"},
+            "product_id": 123
+        })
+
+def test_mixed_payload_product_with_active_ticket_id_fails():
+    with pytest.raises(ValueError, match="Mixed typed/legacy payload detected"):
+        WorkflowState.from_legacy({
+            "session_id": "test",
+            "active_domain": "product",
+            "product_state": {"domain_status": "in_progress"},
+            "active_ticket_id": 999
+        })
+
+def test_mixed_payload_product_with_legacy_suspended_fails():
+    with pytest.raises(ValueError, match="Mixed typed/legacy payload detected"):
+        WorkflowState.from_legacy({
+            "session_id": "test",
+            "active_domain": "product",
+            "product_state": {"domain_status": "in_progress"},
+            "workflow_status": "suspended"
+        })
+
+def test_mixed_payload_order_with_legacy_last_tool_fails():
+    with pytest.raises(ValueError, match="Mixed typed/legacy payload detected"):
+        WorkflowState.from_legacy({
+            "session_id": "test",
+            "active_domain": "order",
+            "order_state": {"domain_status": "in_progress"},
+            "last_tool": "track_order"
+        })
+
+def test_mixed_payload_product_with_legacy_product_name_fails():
+    with pytest.raises(ValueError, match="Mixed typed/legacy payload detected"):
+        WorkflowState.from_legacy({
+            "session_id": "test",
+            "active_domain": "product",
+            "product_state": {"domain_status": "in_progress"},
+            "product_name": "Phone"
+        })
+
+def test_clean_modern_payload_succeeds():
+    state = WorkflowState.from_legacy({
+        "session_id": "test",
+        "product_state": {
+            "product_name": "Phone",
+            "domain_status": "in_progress"
+        }
+    })
+    assert state.product_state.product_name == "Phone"

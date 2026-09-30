@@ -212,6 +212,7 @@ def test_workflow_continuation_routing():
     assert route_after_classification(legacy_ticket_state) == "rag_node"
     
     # 10. Typed ProductState active_ticket_id does force continuation
+    del legacy_ticket_state["workflow_state"]["active_ticket_id"]
     legacy_ticket_state["workflow_state"]["product_state"]["active_ticket_id"] = 999
     assert route_after_classification(legacy_ticket_state) == "product_node"
     
