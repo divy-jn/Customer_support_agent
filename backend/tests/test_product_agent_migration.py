@@ -65,10 +65,10 @@ class TestProductAgentF24Migration:
         received_issue_ctx = None
         original_process_issue = TicketLifecycleService.process_issue
         
-        def mock_process_issue(issue_ctx, active_ticket_id):
+        def mock_process_issue(ticket_ctx):
             nonlocal received_issue_ctx
-            received_issue_ctx = issue_ctx
-            return original_process_issue(issue_ctx, active_ticket_id)
+            received_issue_ctx = ticket_ctx
+            return original_process_issue(ticket_ctx)
             
         monkeypatch.setattr(TicketLifecycleService, "process_issue", mock_process_issue)
 

@@ -196,9 +196,10 @@ class ProductAgent:
         
         # ── Step 0.5: Central Ticket Lifecycle ──
         if context.customer_id:
-            from app.tickets.lifecycle import TicketLifecycleService, IssueContext
+            from app.tickets.lifecycle import TicketLifecycleService
+            from app.models import TicketContext, Urgency, Sentiment
             
-            # Temporary compatibility projection for legacy TicketLifecycleService
+            # Temporary compatibility projection for legacy fields
             proj = merged_state.to_legacy_projection()
             
             # Explicit order compatibility boundary: use transient extraction, OR read from OrderState, OR fallback to unmigrated root
@@ -208,19 +209,53 @@ class ProductAgent:
                     order_id = merged_state.order_state.order_id
                 elif merged_state.order_id:
                     order_id = str(merged_state.order_id)
+            
+            parsed_order_id = None
+            if order_id is not None:
+                try:
+                    parsed_order_id = int(order_id)
+                except ValueError:
+                    parsed_order_id = None
+                    
+            try:
+                urgency = Urgency(context.urgency)
+            except ValueError:
+                urgency = Urgency.MEDIUM
                 
-            issue_ctx = IssueContext(
+            try:
+                sentiment = Sentiment(context.sentiment)
+            except ValueError:
+                sentiment = Sentiment.NEUTRAL
+                
+            ticket_ctx = TicketContext(
                 customer_id=context.customer_id,
-                domain="product",
+                domain=OrchestrationDomain.PRODUCT,
                 intent=context.semantic_intent,
                 message=context.customer_message,
-                order_id=order_id,
-                product_name=proj.get("product_name"),
-                urgency=context.urgency,
-                sentiment=context.sentiment
+                order_id=parsed_order_id,
+                product_name=merged_state.product_state.product_name,
+                urgency=urgency,
+                sentiment=sentiment,
+                active_ticket_id=merged_state.product_state.active_ticket_id
             )
-            ticket_res = TicketLifecycleService.process_issue(issue_ctx, merged_state.product_state.active_ticket_id)
-            if ticket_res.ticket_id:
+            ticket_res = TicketLifecycleService.process_issue(ticket_ctx)
+            
+            if ticket_res.action == "FAILED":
+                logger.error("ProductAgent: Ticket creation failed: %s", ticket_res.reason)
+                self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
+                self._apply_legacy_projection(merged_state)
+                return ProductAgentResponse(
+                    response="I apologize, but I encountered an internal issue registering your request. Please try again or contact support.",
+                    workflow_state=merged_state,
+                    execution_status="ticket_registration_failed",
+                    metadata={
+                        "intent": context.semantic_intent,
+                        "latency_ms": int((time.time() - start_time) * 1000),
+                        "failure_reason": ticket_res.reason
+                    }
+                )
+            
+            if ticket_res.action in ("CREATED", "UPDATED") and ticket_res.ticket_id:
                 merged_state.product_state.active_ticket_id = ticket_res.ticket_id
                 
         # ── Step 1: Resolve skill ──
