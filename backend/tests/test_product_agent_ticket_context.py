@@ -160,7 +160,6 @@ async def test_transient_order_context(mock_process, product_agent):
     # But OrderState was not mutated/created
     assert res.workflow_state.order_state is None
     # the root order_id should be mutated by extraction but only for compatibility
-    # actually it shouldn't be written back to root if it is transient extraction unless to_legacy_projection does it
     # the test is simply that order_state is unchanged.
 
 @pytest.mark.asyncio

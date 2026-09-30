@@ -108,17 +108,6 @@ def test_cross_domain_isolation_survives_round_trip():
     assert restored.product_state.active_ticket_id == 701
     assert restored.order_state.active_ticket_id == 702
 
-def test_legacy_projection_remains_deterministic_after_round_trip():
-    state = WorkflowState(session_id="test")
-    state.product_state = ProductState(active_ticket_id=701, product_name="Phone")
-    state.order_state = OrderState(active_ticket_id=702)
-    state.active_domain = OrchestrationDomain.PRODUCT.value
-    dumped = json.loads(state.model_dump_json())
-    restored = WorkflowState.from_legacy(dumped)
-    proj = restored.to_legacy_projection()
-    assert proj["active_ticket_id"] == 701
-    assert proj["product_name"] == "Phone"
-    assert proj.get("order_id") is None
 
 def test_malformed_persisted_state_fails_closed():
     with pytest.raises(ValueError):
@@ -148,35 +137,36 @@ def test_persistence_round_trip_does_not_silently_increment_state_revision():
     restored = WorkflowState.from_legacy(dumped)
     assert restored.state_revision == 4
 
-def test_product_ticket_does_not_leak_into_order_projection_after_round_trip():
+def test_product_ticket_does_not_leak_into_order_state_after_round_trip():
     state = WorkflowState(session_id="test")
     state.product_state = ProductState(active_ticket_id=701)
     state.order_state = OrderState(active_ticket_id=702)
     state.active_domain = OrchestrationDomain.ORDER.value
     dumped = json.loads(state.model_dump_json())
     restored = WorkflowState.from_legacy(dumped)
-    proj = restored.to_legacy_projection()
-    assert proj["active_ticket_id"] == 702
+    assert restored.order_state.active_ticket_id == 702
+    assert restored.product_state.active_ticket_id == 701
     
-def test_order_ticket_does_not_leak_into_product_projection_after_round_trip():
+def test_order_ticket_does_not_leak_into_product_state_after_round_trip():
     state = WorkflowState(session_id="test")
     state.product_state = ProductState(active_ticket_id=701)
     state.order_state = OrderState(active_ticket_id=702)
     state.active_domain = OrchestrationDomain.PRODUCT.value
     dumped = json.loads(state.model_dump_json())
     restored = WorkflowState.from_legacy(dumped)
-    proj = restored.to_legacy_projection()
-    assert proj["active_ticket_id"] == 701
+    assert restored.product_state.active_ticket_id == 701
+    assert restored.order_state.active_ticket_id == 702
 
-def test_payment_ticket_does_not_leak_into_product_projection_after_round_trip():
+def test_payment_ticket_does_not_leak_into_product_state_after_round_trip():
     state = WorkflowState(session_id="test")
     state.product_state = ProductState(active_ticket_id=701)
     state.payment_state = PaymentState(active_ticket_id=703)
     state.active_domain = OrchestrationDomain.PRODUCT.value
     dumped = json.loads(state.model_dump_json())
     restored = WorkflowState.from_legacy(dumped)
-    proj = restored.to_legacy_projection()
-    assert proj["active_ticket_id"] == 701
+    assert restored.product_state.active_ticket_id == 701
+    assert restored.payment_state.active_ticket_id == 703
+
 
 def test_malformed_persistence_rejects_general_with_domain_states():
     with pytest.raises(ValueError, match=r'Domain general cannot own active typed domain state \(PRODUCT\)'):

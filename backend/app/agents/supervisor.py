@@ -55,8 +55,8 @@ class Supervisor:
     - The Supervisor operates exclusively on F.2 typed fields: ``global_status``,
       ``active_domain``, ``suspended_domains``, and per-domain ``domain_status``.
     - Legacy status fields are neither read nor written by this class.
-      Legacy compatibility is maintained at the adapter/projection boundary only
-      (see ``WorkflowState.to_legacy_projection``).
+      Legacy compatibility is maintained at the inbound adapter boundary only
+      (see ``WorkflowState.from_legacy``).
     - ``decide()`` checks ``suspended_domains`` *before* the generic
       active-domain switch logic so that returning to a previously suspended
       domain produces a RESUME rather than SUSPEND_AND_SWITCH.

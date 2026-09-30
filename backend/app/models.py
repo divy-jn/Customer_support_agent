@@ -597,63 +597,7 @@ class WorkflowState(BaseModel):
 
         return state
 
-    def to_legacy_projection(self) -> dict:
-        """Explicitly documented legacy projection (F.2.3)."""
-        d = {
-            "session_id": self.session_id,
-            "customer_id": self.customer_id,
-            "schema_version": self.schema_version,
-            "state_revision": self.state_revision,
-            "active_domain": self.active_domain,
-            "semantic_intent": self.semantic_intent,
-            "skill_name": self.skill_name,
-            "skill_version": self.skill_version,
-            "last_tool": self.last_tool,
-            "workflow_status": self.workflow_status.value if isinstance(self.workflow_status, WorkflowStatus) else self.workflow_status,
-            "pending_input": self.pending_input,
-            "turn_count": self.turn_count,
-        }
-        
-        if self.last_tool_result:
-            if isinstance(self.last_tool_result, ToolResultEnvelope):
-                d["last_tool_result"] = self.last_tool_result.model_dump()
-            elif isinstance(self.last_tool_result, dict):
-                d["last_tool_result"] = self.last_tool_result
-            else:
-                d["last_tool_result"] = str(self.last_tool_result)
-        else:
-            d["last_tool_result"] = None
 
-        if self.updated_at:
-            if isinstance(self.updated_at, datetime):
-                d["updated_at"] = self.updated_at.isoformat()
-            else:
-                d["updated_at"] = self.updated_at
-        else:
-            d["updated_at"] = None
-
-        # Explicitly control cross-domain data leakage by projecting only active domain facts
-        d["active_ticket_id"] = None
-        d["product_id"] = None
-        d["product_name"] = None
-        d["order_id"] = None
-        d["manufacturer"] = None
-
-        if self.active_domain == OrchestrationDomain.PRODUCT.value and self.product_state:
-            d["active_ticket_id"] = self.product_state.active_ticket_id
-            d["product_id"] = self.product_state.product_id
-            d["product_name"] = self.product_state.product_name
-            d["manufacturer"] = self.product_state.manufacturer
-        elif self.active_domain == OrchestrationDomain.ORDER.value and self.order_state:
-            d["active_ticket_id"] = self.order_state.active_ticket_id
-            try:
-                d["order_id"] = int(self.order_state.order_id) if self.order_state.order_id else None
-            except (ValueError, TypeError):
-                d["order_id"] = None
-        elif self.active_domain == OrchestrationDomain.PAYMENT.value and self.payment_state:
-            d["active_ticket_id"] = self.payment_state.active_ticket_id
-
-        return d
 
     @model_validator(mode='after')
     def _validate_f2_schema_invariants(self) -> 'WorkflowState':
