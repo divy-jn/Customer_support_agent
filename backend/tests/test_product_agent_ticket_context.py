@@ -159,8 +159,8 @@ async def test_transient_order_context(mock_process, product_agent):
     
     # But OrderState was not mutated/created
     assert res.workflow_state.order_state is None
-    # the root order_id should be mutated by extraction but only for compatibility
-    # the test is simply that order_state is unchanged.
+    # Transient extracted order context does not mutate WorkflowState.order_state.
+    # The test simply verifies that order_state is unchanged.
 
 @pytest.mark.asyncio
 @patch("app.tickets.lifecycle.TicketLifecycleService.process_issue")

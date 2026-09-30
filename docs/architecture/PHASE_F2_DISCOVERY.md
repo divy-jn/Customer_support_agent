@@ -51,12 +51,11 @@ There is no `workflow_instance_id` array; a domain state is either active, suspe
 ## 10. Migration Strategy
 We use explicit boundary adapters, explicitly avoiding "magic" `@property` getters:
 - `WorkflowState.from_legacy(...)`: Inflates flat legacy state into typed DomainStates.
-- `WorkflowState.to_legacy_projection(...)`: Projects typed DomainStates back to a flat structure for compatibility with unmigrated components.
 
 ## 11. Implementation Slices
 - **F.2.1**: Schema models only (Pydantic definitions, enums, limits).
 - **F.2.2**: Validation + versioning (`schema_version`, `state_revision`, invalid state matrix).
-- **F.2.3**: Explicit legacy adapters (`from_legacy`, `to_legacy_projection`).
+- **F.2.3**: Explicit legacy adapter (`from_legacy`).
 - **F.2.4**: Product state migration (migrate existing Product workflow to the adapter).
 - **F.2.5**: Ticket context migration (align `TicketLifecycleService`).
 - **F.2.6**: Persistence compatibility verification (JSONB serialization, optimistic locking prep).

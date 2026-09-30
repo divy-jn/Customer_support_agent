@@ -14,7 +14,7 @@ While Phase F.2.5 successfully migrated `ProductAgent` to the F.2 `TicketContext
 
 - **Location:** `WorkflowState.active_ticket_id`
 - **Authoritative Counterpart:** `ProductState.active_ticket_id` (and future `OrderState`/`PaymentState`).
-- **Current Producers:** `chat_handler.py`, F.2 agents (via `to_legacy_projection()`).
+- **Current Producers:** `chat_handler.py`, F.2 agents (historically via `to_legacy_projection()`, which was retired in C.2).
 - **Current Consumers:** 
   - `graph.py` (line 424): The LangGraph router `route_after_classification` explicitly checks `ws_dict.get("active_ticket_id")` to maintain domain affinity across turns.
   - `models.py`: Used in `from_legacy()` to fall back if domain states are absent.
@@ -40,7 +40,7 @@ While Phase F.2.5 successfully migrated `ProductAgent` to the F.2 `TicketContext
   - Largely dormant on `WorkflowState`. `ProductDomainContext` uses `state["intent"]` directly from LangGraph. 
   - `db_agent` relies on `AgentState["intent"]`.
 - **Prerequisites for Removal:**
-  - Can be removed from `WorkflowState` once `to_legacy_projection` is deprecated, but the broader concept relies on F.3 (Semantic Router Replacement) to fully eliminate the legacy string-based intent passing.
+  - Can be removed from `WorkflowState` now that `to_legacy_projection` is deprecated (C.2), but the broader concept relies on F.3 (Semantic Router Replacement) to fully eliminate the legacy string-based intent passing.
 
 ## 4. `order_id`
 

@@ -24,7 +24,7 @@ We will restructure `WorkflowState` into a strongly typed architecture represent
 
 3. **Explicit Migration & Compatibility**:
    - We explicitly reject implicit `@property` compatibility adapters.
-   - We will implement explicit serialization functions: `WorkflowState.from_legacy()` and `WorkflowState.to_legacy_projection()` to ensure transparent and testable boundaries during the migration phase.
+   - We will implement explicit serialization functions: `WorkflowState.from_legacy()` (and historically `WorkflowState.to_legacy_projection()`, which was later retired in Phase F.2.7.3C.2) to ensure transparent and testable boundaries during the migration phase.
 
 4. **Validation & Boundaries (Fail-Closed Matrix)**:
    - Impossible states (e.g. `active_domain == PRODUCT` but `product_state == None`) will be rejected by rigorous Pydantic validators, favoring fail-closed over silent normalization.

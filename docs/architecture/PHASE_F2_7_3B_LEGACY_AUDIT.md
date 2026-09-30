@@ -72,7 +72,9 @@ Scanned explicitly for dynamic fetches (`["workflow_status"]`, `.get("product_id
 ## 5. Architectural Decision
 All twelve legacy fields have **ZERO runtime consumers**.
 
-They strictly exist as **Category B** definitions (Persistence / Serialization Compatibility Boundary) heavily intertwined with `WorkflowState.from_legacy()` and `to_legacy_projection()`. 
+They strictly exist as **Category B** definitions (Persistence / Serialization Compatibility Boundary) historically intertwined with `WorkflowState.from_legacy()` and `to_legacy_projection()`. 
+
+> **UPDATE (Phase F.2.7.3C.2):** Because this audit confirmed zero runtime consumers, `to_legacy_projection()` was successfully retired in Phase C.2. The outbound projection is now completely removed.
 
 Because F.2.7.3A validated seamless round-tripping for older databases containing F.2.6 schemas, blindly deleting these fields now would break validation schemas when loading older persistence blobs unless a dynamic `model_validator(mode='before')` absorbs them seamlessly.
 
@@ -80,5 +82,5 @@ Because F.2.7.3A validated seamless round-tripping for older databases containin
 To minimize compatibility risk, we recommend the following migration slices:
 
 1. **Slice 1 (The Payload Cleaners):** Introduce a pre-validator on `WorkflowState` to absorb unmapped legacy fields gracefully without explicitly tracking them in Pydantic models. Ensure tests cover deserialization of pure legacy F.2.6 payloads into strictly F.2.7 states.
-2. **Slice 2 (Remove Deprecated Logic):** Remove `to_legacy_projection()` entirely (as no new outgoing legacy projections are technically required if clients tolerate F.2.7 layout).
+2. **Slice 2 (Remove Deprecated Logic):** *[COMPLETED]* Remove `to_legacy_projection()` entirely (as no new outgoing legacy projections are technically required if clients tolerate F.2.7 layout).
 3. **Slice 3 (Field Deletion):** Physically remove the 12 fields from `WorkflowState` properties. Remove `from_legacy()` logic now fully covered by the root pre-validator.

@@ -75,7 +75,7 @@ Closed tickets are not reusable for new issue matching.
 ## 5. `active_ticket_id` Strategy
 
 - `ProductState.active_ticket_id`, `OrderState.active_ticket_id`, and `PaymentState.active_ticket_id` are the **authoritative** source of truth for their respective domain workflows.
-- `WorkflowState.active_ticket_id` remains strictly as a **legacy compatibility field**. It must not be used as an alternative authoritative source. Explicit adapters (`to_legacy_projection`) will populate it only for unmigrated consumers. 
+- `WorkflowState.active_ticket_id` remains strictly as a **legacy compatibility field**. It must not be used as an alternative authoritative source. Historically, explicit adapters (`to_legacy_projection`, retired in C.2) populated it only for unmigrated consumers. 
 
 ## 5. Migration Sequence
 
@@ -84,7 +84,7 @@ The migration will be executed in the following strict, incremental slices:
 1. **F.2.5.1: Typed TicketContext Contract**: Define the `TicketContext` model in `models.py`.
 2. **F.2.5.2: TicketLifecycleService Migration**: Update `TicketLifecycleService` to accept `TicketContext` instead of `IssueContext`.
 3. **F.2.5.3: ProductAgent Migration**: Update `ProductAgent` to construct and pass `TicketContext`, rigorously isolating transient facts (e.g. `order_id`) from domain state mutation.
-4. **F.2.5.4: Legacy Compatibility Projection**: Ensure `WorkflowState.to_legacy_projection()` correctly handles `active_ticket_id` without corrupting domain bounds.
+4. **F.2.5.4: Legacy Compatibility Projection**: Ensure `WorkflowState.to_legacy_projection()` correctly handles `active_ticket_id` without corrupting domain bounds (Note: `to_legacy_projection` was subsequently retired in C.2).
 5. **F.2.5.5: Regression and Lifecycle Tests**: Execute the test matrix and assert isolation boundaries.
 6. **F.2.5.6: Order/Payment Preparation**: Scaffold the domain agent implementations for the remaining verticals based on the finalized F.2.5 contract.
 

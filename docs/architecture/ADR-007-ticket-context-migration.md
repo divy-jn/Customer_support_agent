@@ -24,7 +24,7 @@ Furthermore, the existing `IssueContext` is too broad, serving as an unstructure
    We will strictly preserve `ProductState.active_ticket_id`, `OrderState.active_ticket_id`, and `PaymentState.active_ticket_id`. The Domain Agent is responsible for receiving the result from `TicketLifecycleService` and persisting the ticket ID into its *own* state.
 
 3. **Legacy Root Compatibility Only**
-   `WorkflowState.active_ticket_id` will remain exclusively as a legacy compatibility field. It will not be an alternative authoritative source of truth. Explicit adapters (`to_legacy_projection`) will project domain ticket IDs into it only for unmigrated consumers.
+   `WorkflowState.active_ticket_id` will remain exclusively as a legacy compatibility field. It will not be an alternative authoritative source of truth. Historically, explicit adapters (`to_legacy_projection`) projected domain ticket IDs into it for unmigrated consumers, but this outbound projection was retired in Phase F.2.7.3C.2.
 
 4. **Ticket Timing Preserved**
    Issue Registration (creating/updating the ticket) must occur *before* skill validation and tool execution. This ensures that even if a tool crashes or input validation fails (e.g., AWAITING_INPUT), the customer's issue is safely tracked as a ticket in the database.

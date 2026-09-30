@@ -2,18 +2,18 @@
 
 > **NOTE:** This schema represents the implemented F.2 multi-domain workflow state.
 
-## Legacy Compatibility (F.2.3 Adapters)
+## Legacy Compatibility (Inbound Adapter)
 
-To safely bridge the existing legacy runtime (which passes a flat, untyped `dict` around) with the F.2 `WorkflowState`, two explicit adapters are implemented in `models.py`:
+To safely bridge the existing legacy runtime (which passes a flat, untyped `dict` around) with the F.2 `WorkflowState`, an explicit inbound adapter is implemented in `models.py`:
 - `WorkflowState.from_legacy(legacy_dict)`
-- `WorkflowState.to_legacy_projection()`
+
+There is NO outbound legacy projection. Normal persistence uses the typed `WorkflowState` serialization, and there is no supported `WorkflowState` -> legacy flat dictionary adapter.
 
 ### Fail-Closed Behavior & Intentional Omissions
-The adapters strictly enforce domain isolation:
+The adapter strictly enforces domain isolation:
 - **Unknown Status:** Any unsupported legacy `workflow_status` (e.g., `"garbage"`) fails closed immediately, rejecting silent normalization.
 - **Contradictory Domain Facts:** If legacy state presents conflicting facts across boundaries (e.g., `active_domain="product"` alongside an `order_id`), it is firmly rejected. The adapter never silently discards meaningful domain facts; inputs must be clean.
 - **GENERAL & ESCALATION Isolation:** The `GENERAL` and `ESCALATION` domains are explicitly prevented from inheriting `product_id`, `order_id`, or `active_ticket_id` via legacy dictionaries, guaranteeing they do not unsafely hold cross-domain metadata where no domain state can structurally represent it.
-- **Cross-Domain Data Leakage Prevention:** In `to_legacy_projection()`, only the *active domain's* properties are flatly projected. Unassociated domain properties are deterministically nulled out, avoiding accidental state sharing into untyped boundaries.
 
 ```python
 from datetime import datetime
@@ -108,10 +108,6 @@ class WorkflowState(BaseModel):
     @classmethod
     def from_legacy(cls, legacy_dict: dict) -> 'WorkflowState':
         """Explicitly inflate flat legacy state into typed DomainStates. (F.2.3)"""
-        pass
-        
-    def to_legacy_projection(self) -> dict:
-        """Project typed DomainStates back to a flat dictionary for legacy compatibility. (F.2.3)"""
         pass
 
     # Fail-closed validators
