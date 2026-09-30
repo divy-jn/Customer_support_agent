@@ -46,9 +46,9 @@ def test_active_ticket_ids_survive_round_trip():
     assert restored.payment_state.active_ticket_id == 703
 
 def test_suspended_domains_survive_round_trip():
-    state = WorkflowState(session_id="test")
-    state.product_state = ProductState()
-    state.order_state = OrderState()
+    state = WorkflowState(session_id="test", active_domain=OrchestrationDomain.GENERAL.value)
+    state.product_state = ProductState(domain_status=DomainWorkflowStatus.SUSPENDED)
+    state.order_state = OrderState(domain_status=DomainWorkflowStatus.SUSPENDED)
     state.suspended_domains = [OrchestrationDomain.PRODUCT, OrchestrationDomain.ORDER]
     dumped = json.loads(state.model_dump_json())
     restored = WorkflowState.from_legacy(dumped)
@@ -179,7 +179,7 @@ def test_payment_ticket_does_not_leak_into_product_projection_after_round_trip()
     assert proj["active_ticket_id"] == 701
 
 def test_malformed_persistence_rejects_general_with_domain_states():
-    with pytest.raises(ValueError, match='Domain general cannot own typed domain states'):
+    with pytest.raises(ValueError, match=r'Domain general cannot own active typed domain state \(PRODUCT\)'):
         WorkflowState.model_validate({
             'session_id': 'test',
             'active_domain': 'general',
@@ -187,7 +187,7 @@ def test_malformed_persistence_rejects_general_with_domain_states():
         })
 
 def test_malformed_persistence_rejects_escalation_with_domain_states():
-    with pytest.raises(ValueError, match='Domain escalation cannot own typed domain states'):
+    with pytest.raises(ValueError, match=r'Domain escalation cannot own active typed domain state \(ORDER\)'):
         WorkflowState.model_validate({
             'session_id': 'test',
             'active_domain': 'escalation',
@@ -221,3 +221,73 @@ def test_malformed_persistence_rejects_conflicting_root_ticket_identity():
             'product_state': {'domain_status': 'in_progress', 'active_ticket_id': 123}
         })
 
+
+def test_supervisor_transition_product_to_general_persistence():
+    """I. PRODUCT -> GENERAL transition from Supervisor can be persisted/reloaded."""
+    from app.agents.supervisor import Supervisor
+    from app.models import GlobalWorkflowStatus
+    
+    # 1. Start with PRODUCT active
+    state = WorkflowState(
+        session_id="test",
+        active_domain=OrchestrationDomain.PRODUCT,
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        product_state=ProductState(domain_status=DomainWorkflowStatus.IN_PROGRESS)
+    )
+    
+    # 2. Supervisor transition to GENERAL
+    decision = Supervisor.decide(
+        "general",
+        "unrelated_query",
+        state,
+        "how are you?"
+    )
+    new_state = Supervisor.apply_decision(state, decision)
+    
+    assert new_state.active_domain == OrchestrationDomain.GENERAL.value
+    assert OrchestrationDomain.PRODUCT in new_state.suspended_domains
+    
+    # 3. Persistence round trip
+    serialized = new_state.model_dump_json()
+    reloaded = WorkflowState.model_validate_json(serialized)
+    
+    assert reloaded.active_domain == OrchestrationDomain.GENERAL
+    assert OrchestrationDomain.PRODUCT in reloaded.suspended_domains
+    assert reloaded.product_state.domain_status == DomainWorkflowStatus.SUSPENDED
+
+def test_supervisor_transition_resume_persistence():
+    """J. PRODUCT -> ORDER -> PRODUCT RESUME can be persisted/reloaded."""
+    from app.agents.supervisor import Supervisor
+    from app.models import GlobalWorkflowStatus
+    
+    # 1. Start with PRODUCT suspended, ORDER active
+    state = WorkflowState(
+        session_id="test",
+        active_domain=OrchestrationDomain.ORDER,
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        suspended_domains=[OrchestrationDomain.PRODUCT],
+        product_state=ProductState(domain_status=DomainWorkflowStatus.SUSPENDED),
+        order_state=OrderState(domain_status=DomainWorkflowStatus.IN_PROGRESS)
+    )
+    
+    # 2. Supervisor transition back to PRODUCT
+    decision = Supervisor.decide(
+        "product",
+        "product_question",
+        state,
+        "wait back to my phone"
+    )
+    new_state = Supervisor.apply_decision(state, decision)
+    
+    assert new_state.active_domain == OrchestrationDomain.PRODUCT.value
+    assert OrchestrationDomain.ORDER in new_state.suspended_domains
+    assert OrchestrationDomain.PRODUCT not in new_state.suspended_domains
+    
+    # 3. Persistence round trip
+    serialized = new_state.model_dump_json()
+    reloaded = WorkflowState.model_validate_json(serialized)
+    
+    assert reloaded.active_domain == OrchestrationDomain.PRODUCT
+    assert OrchestrationDomain.ORDER in reloaded.suspended_domains
+    assert reloaded.order_state.domain_status == DomainWorkflowStatus.SUSPENDED
+    assert reloaded.product_state.domain_status == DomainWorkflowStatus.IN_PROGRESS

@@ -86,7 +86,7 @@ def test_duplicate_suspended_domains():
             session_id="s1",
             schema_version=1,
             suspended_domains=[OrchestrationDomain.PRODUCT, OrchestrationDomain.PRODUCT],
-            product_state=ProductState()
+            product_state=ProductState(domain_status=DomainWorkflowStatus.SUSPENDED)
         )
     assert "Duplicate suspended domains detected" in str(exc_info.value)
 
@@ -217,3 +217,102 @@ def test_supported_active_domains_accept():
         payment_state=PaymentState(transaction_id="txn_2")
     )
     assert state2.active_domain == OrchestrationDomain.PAYMENT
+
+def test_general_active_with_suspended_product():
+    """A. GENERAL active + suspended PRODUCT is valid."""
+    state = WorkflowState(
+        session_id="s1",
+        active_domain=OrchestrationDomain.GENERAL,
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        suspended_domains=[OrchestrationDomain.PRODUCT],
+        product_state=ProductState(domain_status=DomainWorkflowStatus.SUSPENDED)
+    )
+    assert state.active_domain == OrchestrationDomain.GENERAL
+    assert OrchestrationDomain.PRODUCT in state.suspended_domains
+
+def test_general_active_with_suspended_order():
+    """B. GENERAL active + suspended ORDER is valid."""
+    state = WorkflowState(
+        session_id="s1",
+        active_domain=OrchestrationDomain.GENERAL,
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        suspended_domains=[OrchestrationDomain.ORDER],
+        order_state=OrderState(domain_status=DomainWorkflowStatus.SUSPENDED)
+    )
+    assert state.active_domain == OrchestrationDomain.GENERAL
+    assert OrchestrationDomain.ORDER in state.suspended_domains
+
+def test_general_active_with_suspended_payment():
+    """C. GENERAL active + suspended PAYMENT is valid."""
+    state = WorkflowState(
+        session_id="s1",
+        active_domain=OrchestrationDomain.GENERAL,
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        suspended_domains=[OrchestrationDomain.PAYMENT],
+        payment_state=PaymentState(domain_status=DomainWorkflowStatus.SUSPENDED)
+    )
+    assert state.active_domain == OrchestrationDomain.GENERAL
+    assert OrchestrationDomain.PAYMENT in state.suspended_domains
+
+def test_general_suspended_states_serialization_roundtrip():
+    """D. serialize -> model_validate round-trip succeeds for those states."""
+    state = WorkflowState(
+        session_id="s1",
+        active_domain=OrchestrationDomain.GENERAL,
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        suspended_domains=[OrchestrationDomain.PRODUCT, OrchestrationDomain.ORDER],
+        product_state=ProductState(domain_status=DomainWorkflowStatus.SUSPENDED),
+        order_state=OrderState(domain_status=DomainWorkflowStatus.SUSPENDED)
+    )
+    serialized = state.model_dump_json()
+    deserialized = WorkflowState.model_validate_json(serialized)
+    assert deserialized.active_domain == OrchestrationDomain.GENERAL
+    assert OrchestrationDomain.PRODUCT in deserialized.suspended_domains
+    assert OrchestrationDomain.ORDER in deserialized.suspended_domains
+    assert deserialized.product_state.domain_status == DomainWorkflowStatus.SUSPENDED
+    assert deserialized.order_state.domain_status == DomainWorkflowStatus.SUSPENDED
+
+def test_suspended_product_with_in_progress_fails():
+    """E. suspended_domains containing PRODUCT while product_state is IN_PROGRESS fails."""
+    with pytest.raises(ValidationError, match="PRODUCT is suspended but domain_status is not SUSPENDED"):
+        WorkflowState(
+            session_id="s1",
+            active_domain=OrchestrationDomain.GENERAL,
+            suspended_domains=[OrchestrationDomain.PRODUCT],
+            product_state=ProductState(domain_status=DomainWorkflowStatus.IN_PROGRESS)
+        )
+
+def test_active_domain_product_in_suspended_fails():
+    """F. active_domain PRODUCT while PRODUCT is also in suspended_domains fails."""
+    with pytest.raises(ValidationError, match="Domain product cannot be both active and suspended"):
+        WorkflowState(
+            session_id="s1",
+            active_domain=OrchestrationDomain.PRODUCT,
+            suspended_domains=[OrchestrationDomain.PRODUCT],
+            product_state=ProductState(domain_status=DomainWorkflowStatus.SUSPENDED)
+        )
+
+def test_active_domain_order_while_suspended_fails():
+    """G. active_domain ORDER while ORDER state is SUSPENDED fails."""
+    with pytest.raises(ValidationError, match="ORDER domain cannot be active while its status is SUSPENDED"):
+        WorkflowState(
+            session_id="s1",
+            active_domain=OrchestrationDomain.ORDER,
+            order_state=OrderState(domain_status=DomainWorkflowStatus.SUSPENDED)
+        )
+
+def test_unrelated_typed_suspended_domains_preserved():
+    """H. unrelated typed suspended domains remain preserved across round-trip."""
+    state = WorkflowState(
+        session_id="s1",
+        active_domain=OrchestrationDomain.ORDER,
+        global_status=GlobalWorkflowStatus.IN_PROGRESS,
+        suspended_domains=[OrchestrationDomain.PRODUCT],
+        order_state=OrderState(domain_status=DomainWorkflowStatus.IN_PROGRESS),
+        product_state=ProductState(domain_status=DomainWorkflowStatus.SUSPENDED)
+    )
+    serialized = state.model_dump_json()
+    deserialized = WorkflowState.model_validate_json(serialized)
+    assert deserialized.active_domain == OrchestrationDomain.ORDER
+    assert OrchestrationDomain.PRODUCT in deserialized.suspended_domains
+    assert deserialized.product_state.domain_status == DomainWorkflowStatus.SUSPENDED

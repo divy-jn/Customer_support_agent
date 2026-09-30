@@ -204,7 +204,10 @@ class Supervisor:
                         action=SupervisorAction.RESUME,
                         target_domain=target_domain,
                         transition_reason="Resuming previously suspended domain.",
-                        transition_metadata=TransitionMetadata(resumed_domain=target_domain)
+                        transition_metadata=TransitionMetadata(
+                            resumed_domain=target_domain,
+                            suspended_domain=active_enum if active_is_suspendable else None
+                        )
                     )
                 if active_is_suspendable:
                     return SupervisorDecision(
@@ -304,9 +307,9 @@ class Supervisor:
                 raise InvalidSupervisorDecisionError(
                     f"resumed_domain is set but action is {decision.action.value}, not RESUME"
                 )
-            if decision.action not in (SupervisorAction.SUSPEND_AND_SWITCH,) and meta.suspended_domain:
+            if decision.action not in (SupervisorAction.SUSPEND_AND_SWITCH, SupervisorAction.RESUME) and meta.suspended_domain:
                 raise InvalidSupervisorDecisionError(
-                    f"suspended_domain is set but action is {decision.action.value}, not SUSPEND_AND_SWITCH"
+                    f"suspended_domain is set but action is {decision.action.value}, not SUSPEND_AND_SWITCH or RESUME"
                 )
 
     @staticmethod
@@ -390,6 +393,17 @@ class Supervisor:
                 new_state.order_state.domain_status = DomainWorkflowStatus.IN_PROGRESS
             elif res_domain == OrchestrationDomain.PAYMENT and new_state.payment_state:
                 new_state.payment_state.domain_status = DomainWorkflowStatus.IN_PROGRESS
+
+            sus_domain = decision.transition_metadata.suspended_domain
+            if sus_domain:
+                if sus_domain == OrchestrationDomain.PRODUCT and new_state.product_state:
+                    new_state.product_state.domain_status = DomainWorkflowStatus.SUSPENDED
+                elif sus_domain == OrchestrationDomain.ORDER and new_state.order_state:
+                    new_state.order_state.domain_status = DomainWorkflowStatus.SUSPENDED
+                elif sus_domain == OrchestrationDomain.PAYMENT and new_state.payment_state:
+                    new_state.payment_state.domain_status = DomainWorkflowStatus.SUSPENDED
+                if sus_domain not in new_state.suspended_domains:
+                    new_state.suspended_domains.append(sus_domain)
 
             new_state.active_domain = decision.target_domain.value
             new_state.global_status = GlobalWorkflowStatus.IN_PROGRESS

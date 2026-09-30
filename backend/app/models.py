@@ -652,21 +652,45 @@ class WorkflowState(BaseModel):
             raise ValueError("suspended_domains cannot exceed 3 items.")
             
         for d in self.suspended_domains:
-            if d == OrchestrationDomain.PRODUCT and not self.product_state:
-                raise ValueError("PRODUCT is suspended but state is missing.")
-            if d == OrchestrationDomain.ORDER and not self.order_state:
-                raise ValueError("ORDER is suspended but state is missing.")
-            if d == OrchestrationDomain.PAYMENT and not self.payment_state:
-                raise ValueError("PAYMENT is suspended but state is missing.")
+            if d == OrchestrationDomain.PRODUCT:
+                if not self.product_state:
+                    raise ValueError("PRODUCT is suspended but state is missing.")
+                if self.product_state.domain_status != DomainWorkflowStatus.SUSPENDED:
+                    raise ValueError("PRODUCT is suspended but domain_status is not SUSPENDED.")
+            if d == OrchestrationDomain.ORDER:
+                if not self.order_state:
+                    raise ValueError("ORDER is suspended but state is missing.")
+                if self.order_state.domain_status != DomainWorkflowStatus.SUSPENDED:
+                    raise ValueError("ORDER is suspended but domain_status is not SUSPENDED.")
+            if d == OrchestrationDomain.PAYMENT:
+                if not self.payment_state:
+                    raise ValueError("PAYMENT is suspended but state is missing.")
+                if self.payment_state.domain_status != DomainWorkflowStatus.SUSPENDED:
+                    raise ValueError("PAYMENT is suspended but domain_status is not SUSPENDED.")
+            
+            if self.active_domain == d.value:
+                raise ValueError(f"Domain {d.value} cannot be both active and suspended.")
                 
         # Validate duplicates in suspended domains
         if len(self.suspended_domains) != len(set(self.suspended_domains)):
             raise ValueError("Duplicate suspended domains detected.")
             
+        # Ensure active typed domains are not SUSPENDED
+        if self.active_domain == OrchestrationDomain.PRODUCT.value and self.product_state and self.product_state.domain_status == DomainWorkflowStatus.SUSPENDED:
+            raise ValueError("PRODUCT domain cannot be active while its status is SUSPENDED.")
+        if self.active_domain == OrchestrationDomain.ORDER.value and self.order_state and self.order_state.domain_status == DomainWorkflowStatus.SUSPENDED:
+            raise ValueError("ORDER domain cannot be active while its status is SUSPENDED.")
+        if self.active_domain == OrchestrationDomain.PAYMENT.value and self.payment_state and self.payment_state.domain_status == DomainWorkflowStatus.SUSPENDED:
+            raise ValueError("PAYMENT domain cannot be active while its status is SUSPENDED.")
+            
         # 5. F.2.6 Persistence Contradiction Hardening
         if self.active_domain in (OrchestrationDomain.GENERAL.value, OrchestrationDomain.ESCALATION.value):
-            if self.product_state or self.order_state or self.payment_state:
-                raise ValueError(f"Domain {self.active_domain} cannot own typed domain states")
+            if self.product_state and OrchestrationDomain.PRODUCT not in self.suspended_domains:
+                raise ValueError(f"Domain {self.active_domain} cannot own active typed domain state (PRODUCT)")
+            if self.order_state and OrchestrationDomain.ORDER not in self.suspended_domains:
+                raise ValueError(f"Domain {self.active_domain} cannot own active typed domain state (ORDER)")
+            if self.payment_state and OrchestrationDomain.PAYMENT not in self.suspended_domains:
+                raise ValueError(f"Domain {self.active_domain} cannot own active typed domain state (PAYMENT)")
 
         has_root_prod = bool(self.product_id or self.product_name or self.manufacturer)
         has_root_order = bool(self.order_id)
