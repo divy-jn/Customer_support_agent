@@ -512,30 +512,39 @@ class WorkflowState(BaseModel):
         order_state = None
         payment_state = None
 
+        last_tool = legacy_dict.get("last_tool")
+        last_tool_result = legacy_dict.get("last_tool_result")
+
         if domain_enum == OrchestrationDomain.PRODUCT:
             product_state = ProductState(
                 domain_status=domain_status,
                 active_ticket_id=active_ticket_id,
                 product_id=legacy_dict.get("product_id"),
                 product_name=legacy_dict.get("product_name"),
-                manufacturer=legacy_dict.get("manufacturer")
+                manufacturer=legacy_dict.get("manufacturer"),
+                last_tool=last_tool,
+                last_tool_result=last_tool_result
             )
         elif domain_enum == OrchestrationDomain.ORDER:
             order_state = OrderState(
                 domain_status=domain_status,
                 active_ticket_id=active_ticket_id,
-                order_id=str(legacy_dict.get("order_id")) if legacy_dict.get("order_id") is not None else None
+                order_id=str(legacy_dict.get("order_id")) if legacy_dict.get("order_id") is not None else None,
+                last_tool=last_tool,
+                last_tool_result=last_tool_result
             )
         elif domain_enum == OrchestrationDomain.PAYMENT:
             payment_state = PaymentState(
                 domain_status=domain_status,
-                active_ticket_id=active_ticket_id
+                active_ticket_id=active_ticket_id,
+                last_tool=last_tool,
+                last_tool_result=last_tool_result
             )
         elif active_ticket_id is not None:
             # Cross-domain ticket leakage or ticket without domain context
             raise ValueError("active_ticket_id present but domain is ambiguous or general.")
 
-        # Initialize base state with legacy fields preserved at root
+        # Initialize base state, translating domains and erasing unsupported/migrated legacy root fields
         state = cls(
             session_id=session_id,
             schema_version=1,
@@ -545,18 +554,18 @@ class WorkflowState(BaseModel):
             product_state=product_state,
             order_state=order_state,
             payment_state=payment_state,
-            semantic_intent=legacy_dict.get("semantic_intent"),
-            skill_name=legacy_dict.get("skill_name"),
-            skill_version=legacy_dict.get("skill_version"),
+            semantic_intent=None,
+            skill_name=None,
+            skill_version=None,
             product_id=None,
             product_name=None,
             order_id=None,
             manufacturer=None,
             active_ticket_id=None,
-            last_tool=legacy_dict.get("last_tool"),
-            last_tool_result=legacy_dict.get("last_tool_result"),
+            last_tool=None,
+            last_tool_result=None,
             workflow_status=legacy_dict.get("workflow_status", WorkflowStatus.IDLE),
-            pending_input=legacy_dict.get("pending_input"),
+            pending_input=None,
             turn_count=legacy_dict.get("turn_count", 0),
             updated_at=legacy_dict.get("updated_at")
         )
