@@ -51,6 +51,15 @@ redis.call('SET', KEYS[1], ARGV[2], 'EX', tonumber(ARGV[3]))
 return 0 -- SUCCESS
 """
 
+CREATE_LUA_SCRIPT = """
+local exists = redis.call('EXISTS', KEYS[1])
+if exists == 1 then
+    return 2 -- CONFLICT
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]))
+return 0 -- SUCCESS
+"""
+
 class SessionStore(dict):
     def __init__(self):
         super().__init__()
@@ -77,6 +86,25 @@ class SessionStore(dict):
             async with self._lock:
                 import copy
                 self[session_id] = copy.deepcopy(session)
+
+    async def create_session_if_absent(self, session_id: str, session: dict) -> SaveResult:
+        """Create session if it does not already exist."""
+        if redis_client:
+            payload = json.dumps(session)
+            result = await redis_client.eval(
+                CREATE_LUA_SCRIPT,
+                keys=[f"session:{session_id}"],
+                args=[payload, 86400]
+            )
+            return SaveResult(result)
+        else:
+            async with self._lock:
+                if session_id in self:
+                    return SaveResult.CONFLICT
+                import copy
+                self[session_id] = copy.deepcopy(session)
+                return SaveResult.SUCCESS
+
 
     async def save_session_conditional(self, session_id: str, session: dict, expected_revision: int) -> SaveResult:
         """

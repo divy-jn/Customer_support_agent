@@ -17,6 +17,36 @@ def memory_store():
         yield store
 
 @pytest.mark.asyncio
+async def test_create_if_absent_succeeds_when_key_absent(memory_store):
+    res = await memory_store.create_session_if_absent("test", {"val": 1})
+    assert res == SaveResult.SUCCESS
+    
+    session = await memory_store.get_session("test")
+    assert session["val"] == 1
+
+@pytest.mark.asyncio
+async def test_create_if_absent_rejects_when_key_exists(memory_store):
+    await memory_store.create_session_if_absent("test", {"val": 1})
+    
+    res = await memory_store.create_session_if_absent("test", {"val": 2})
+    assert res == SaveResult.CONFLICT
+    
+    session = await memory_store.get_session("test")
+    assert session["val"] == 1
+
+@pytest.mark.asyncio
+async def test_create_if_absent_redis_lua(mock_redis):
+    store = SessionStore()
+    mock_redis.eval.return_value = 0 # SUCCESS
+    
+    res = await store.create_session_if_absent("test", {"val": 1})
+    
+    assert res == SaveResult.SUCCESS
+    mock_redis.eval.assert_called_once()
+    args = mock_redis.eval.call_args[1]
+    assert 86400 in args["args"]
+
+@pytest.mark.asyncio
 async def test_cas_succeeds_when_expected_revision_matches(memory_store):
     session_id = "test-session"
     session_data = {"val": "A", "_session_revision": 1}

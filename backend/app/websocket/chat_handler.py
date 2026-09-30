@@ -23,60 +23,10 @@ from app.persistence.session import session_store
 logger = logging.getLogger(__name__)
 
 
-async def _get_session(session_id: str, authenticated_customer_id: int | None = None) -> dict:
-    """Retrieve an existing session or initialize a new one with the authenticated customer_id."""
-    session = await session_store.get_session(session_id)
-    if session:
-        # Enforce session ownership
-        if authenticated_customer_id is not None:
-            if session.get("customer_id") is not None and session.get("customer_id") != authenticated_customer_id:
-                raise ValueError(f"Session {session_id} belongs to a different customer.")
-            if session.get("customer_id") is None:
-                from app.persistence.session import SaveResult
-                for attempt in range(3):
-                    expected_revision = session.get("_session_revision", 1)
-                    session["customer_id"] = authenticated_customer_id
-                    result = await session_store.save_session_conditional(session_id, session, expected_revision)
-                    if result == SaveResult.SUCCESS:
-                        break
-                    elif result == SaveResult.MISSING:
-                        raise ValueError(f"Session {session_id} went missing during init.")
-                    session = await session_store.get_session(session_id)
-                    if not session:
-                        raise ValueError(f"Session {session_id} went missing during init.")
-                else:
-                    raise RuntimeError("Concurrency conflict initializing customer_id")
-        return session
-
-    # Initialize new session bounded to the authenticated customer
-    new_session = {
-        "session_id": session_id,
-        "customer_id": authenticated_customer_id,
-        "_session_revision": 1,
-        "mode": "ai",
-        "conversation_history": [],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "escalated": False,
-        "pending_approval": None,
-        "workflow_state": {
-            "session_id": session_id,
-            "customer_id": authenticated_customer_id,
-            "turn_count": 0
-        }
-    }
-    # Intentionally unconditional: new session creation with safe unique ID fallback
-    await session_store.save_session(session_id, new_session)
-    return new_session
-
-
-
-async def _mutate_session(session_id: str, mutator_fn, allow_retry: bool = True, customer_id: int | None = None) -> tuple[dict, bool]:
+async def _execute_cas(session_id: str, loader_fn, mutator_fn, retries: int) -> tuple[dict, bool]:
     from app.persistence.session import SaveResult
-    MAX_CAS_RETRIES = 3
-    retries = MAX_CAS_RETRIES if allow_retry else 1
-    
     for attempt in range(retries):
-        session = await _get_session(session_id, customer_id)
+        session = await loader_fn()
         expected_revision = session.get("_session_revision", 1)
         
         should_save = mutator_fn(session)
@@ -103,7 +53,73 @@ async def _mutate_session(session_id: str, mutator_fn, allow_retry: bool = True,
     logger.error("CAS conflict exhausted retries or retry disabled", extra={"session_id": session_id, "retry_count": retries})
     raise RuntimeError("Concurrency conflict: stale session data could not be saved safely.")
 
-    raise RuntimeError("Concurrency conflict: stale session data could not be saved safely.")
+
+async def _get_session(session_id: str, authenticated_customer_id: int | None = None) -> dict:
+    """Retrieve an existing session or initialize a new one with the authenticated customer_id."""
+    session = await session_store.get_session(session_id)
+    if not session:
+        # Initialize new session bounded to the authenticated customer
+        new_session = {
+            "session_id": session_id,
+            "customer_id": authenticated_customer_id,
+            "_session_revision": 1,
+            "mode": "ai",
+            "conversation_history": [],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "pending_approval": None,
+            "workflow_state": {
+                "active_domain": "SYSTEM",
+                "state_revision": 1,
+                "session_id": session_id,
+                "customer_id": authenticated_customer_id,
+                "turn_count": 0
+            }
+        }
+        from app.persistence.session import SaveResult
+        res = await session_store.create_session_if_absent(session_id, new_session)
+        if res == SaveResult.SUCCESS:
+            return new_session
+        
+        # If it failed to create, it was created concurrently. Fall through to load it.
+        session = await session_store.get_session(session_id)
+        if not session:
+            raise RuntimeError("Session creation race but session is missing")
+
+    # Enforce session ownership
+    if authenticated_customer_id is not None:
+        if session.get("customer_id") is not None and session.get("customer_id") != authenticated_customer_id:
+            raise ValueError(f"Session {session_id} belongs to a different customer.")
+        if session.get("customer_id") is None:
+            async def _load_raw():
+                s = await session_store.get_session(session_id)
+                if not s:
+                    raise RuntimeError(f"Session {session_id} missing")
+                # OWNERSHIP REVALIDATION AFTER RELOAD
+                if s.get("customer_id") is not None and s.get("customer_id") != authenticated_customer_id:
+                    raise ValueError(f"Session {session_id} belongs to a different customer.")
+                return s
+                
+            def _init_customer(s):
+                if s.get("customer_id") is not None:
+                    return False
+                s["customer_id"] = authenticated_customer_id
+                return True
+                
+            session, _ = await _execute_cas(session_id, _load_raw, _init_customer, 3)
+            
+    return session
+
+
+
+async def _mutate_session(session_id: str, mutator_fn, allow_retry: bool = True, customer_id: int | None = None) -> tuple[dict, bool]:
+    MAX_CAS_RETRIES = 3
+    retries = MAX_CAS_RETRIES if allow_retry else 1
+    
+    async def _load_fn():
+        return await _get_session(session_id, customer_id)
+        
+    return await _execute_cas(session_id, _load_fn, mutator_fn, retries)
+
 
 async def get_all_active_sessions() -> list:
     """Retrieve all active sessions from Redis or memory."""
