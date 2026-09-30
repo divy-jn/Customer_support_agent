@@ -114,3 +114,19 @@ async def test_agent_disconnect_human_with_other_agents(mock_session_store, mock
     assert not was_changed
     assert session["mode"] == "human"
     mock_session_store.save_session_conditional.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_new_session_workflow_state_valid(mock_session_store):
+    from app.models import WorkflowState
+    
+    mock_session_store.get_session.return_value = None
+    mock_session_store.create_session_if_absent.return_value = SaveResult.SUCCESS
+    
+    session = await _get_session("session_123", 456)
+    
+    assert session["workflow_state"]["active_domain"] is None
+    
+    state = WorkflowState.from_legacy(session)
+    assert state.session_id == "session_123"
+    assert state.customer_id == 456
+    assert state.active_domain is None

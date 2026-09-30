@@ -68,7 +68,7 @@ async def _get_session(session_id: str, authenticated_customer_id: int | None = 
             "created_at": datetime.now(timezone.utc).isoformat(),
             "pending_approval": None,
             "workflow_state": {
-                "active_domain": "SYSTEM",
+                "active_domain": None,
                 "state_revision": 1,
                 "session_id": session_id,
                 "customer_id": authenticated_customer_id,
