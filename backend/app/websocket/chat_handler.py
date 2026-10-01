@@ -184,9 +184,15 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
             try:
                 data = json.loads(raw)
                 message = data.get("message", "").strip()
+                client_request_id = data.get("client_request_id")
                 # Ignore customer_id in JSON payload, use authenticated_customer_id
             except json.JSONDecodeError:
                 message = raw.strip()
+                client_request_id = None
+                
+            if not client_request_id:
+                import uuid
+                client_request_id = str(uuid.uuid4())
 
             customer_id = authenticated_customer_id
 
@@ -336,6 +342,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     "customer_id": customer_id,
                     "customer_name": session.get("customer_name"),
                     "session_id": session_id,
+                    "client_request_id": client_request_id,
                     "message": message,
                     "conversation_history": session["conversation_history"],
                     "intent": "",

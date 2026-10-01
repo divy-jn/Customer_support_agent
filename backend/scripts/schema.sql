@@ -88,3 +88,180 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.tickets TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.conversations TO service_role;
 
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
+-- Create Idempotency Table
+CREATE TABLE IF NOT EXISTS idempotency_records (
+    customer_id BIGINT NOT NULL,
+    client_request_id UUID NOT NULL,
+    operation_type TEXT NOT NULL,
+    canonical_target TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    terminal_result JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (customer_id, client_request_id)
+);
+
+ALTER TABLE public.idempotency_records ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.idempotency_records FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.idempotency_records TO service_role;
+
+-- Generic RPC to execute idempotent operations
+CREATE OR REPLACE FUNCTION execute_idempotent_operation(
+    p_customer_id BIGINT,
+    p_client_request_id UUID,
+    p_operation_type TEXT,
+    p_canonical_target TEXT,
+    p_payload_hash TEXT,
+    p_payload JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_existing_type TEXT;
+    v_existing_target TEXT;
+    v_existing_hash TEXT;
+    v_existing_result JSONB;
+    v_result JSONB;
+    
+    -- Variables for specific operations
+    v_ticket_id BIGINT;
+    v_order_status TEXT;
+    v_order_customer_id BIGINT;
+    v_existing_desc TEXT;
+    v_timestamp TEXT;
+    v_ticket_owner BIGINT;
+BEGIN
+    -- 1. Concurrency control: attempt to select existing record with lock
+    SELECT operation_type, canonical_target, payload_hash, terminal_result
+    INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
+    FROM idempotency_records
+    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
+    FOR UPDATE;
+
+    IF FOUND THEN
+        -- Conflict check
+        IF v_existing_type != p_operation_type OR v_existing_target != p_canonical_target OR v_existing_hash != p_payload_hash THEN
+            RETURN jsonb_build_object(
+                'error', 'IdempotencyConflict',
+                'message', 'This request ID was already used for a different operation.',
+                'previous_result', v_existing_result
+            );
+        END IF;
+        -- Exact retry: return cached result
+        RETURN v_existing_result;
+    END IF;
+
+    -- 2. Insert to establish operation and claim the request_id.
+    -- If a concurrent transaction already inserted it, this throws unique_violation.
+    BEGIN
+        INSERT INTO idempotency_records (
+            customer_id, client_request_id, operation_type, canonical_target, payload_hash
+        ) VALUES (
+            p_customer_id, p_client_request_id, p_operation_type, p_canonical_target, p_payload_hash
+        );
+    EXCEPTION WHEN unique_violation THEN
+        -- Block until the winning concurrent transaction commits or rolls back
+        SELECT operation_type, canonical_target, payload_hash, terminal_result
+        INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
+        FROM idempotency_records
+        WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
+        FOR UPDATE;
+        
+        IF v_existing_type != p_operation_type OR v_existing_target != p_canonical_target OR v_existing_hash != p_payload_hash THEN
+            RETURN jsonb_build_object(
+                'error', 'IdempotencyConflict',
+                'message', 'This request ID was already used for a different operation.',
+                'previous_result', v_existing_result
+            );
+        END IF;
+        RETURN v_existing_result;
+    END;
+
+    -- 3. Execute business logic based on operation_type
+    IF p_operation_type = 'create_ticket' THEN
+        INSERT INTO tickets (
+            customer_id, subject, description, type, status, priority, channel, order_id
+        ) VALUES (
+            p_customer_id,
+            p_payload->>'subject',
+            p_payload->>'description',
+            p_payload->>'type',
+            p_payload->>'status',
+            p_payload->>'priority',
+            p_payload->>'channel',
+            (p_payload->>'order_id')::BIGINT
+        ) RETURNING id INTO v_ticket_id;
+        
+        v_result := jsonb_build_object(
+            'status', 'success',
+            'message', 'Ticket #' || v_ticket_id || ' created successfully',
+            'ticket_id', v_ticket_id
+        );
+
+    ELSIF p_operation_type = 'update_ticket' THEN
+        v_ticket_id := p_canonical_target::BIGINT;
+        
+        -- Check ownership and existence
+        SELECT customer_id, description INTO v_ticket_owner, v_existing_desc
+        FROM tickets WHERE id = v_ticket_id;
+        
+        IF NOT FOUND OR v_ticket_owner != p_customer_id THEN
+            v_result := jsonb_build_object('error', 'Ticket #' || v_ticket_id || ' not found or does not belong to you');
+        ELSE
+            -- We only support description_append, priority, order_id here as per python logic
+            IF p_payload ? 'description_append' THEN
+                -- Format timestamp like python did: YYYY-MM-DD HH:MM:SS UTC
+                v_timestamp := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS "UTC"');
+                v_existing_desc := COALESCE(v_existing_desc, '') || E'\n\n--- Update (' || v_timestamp || E') ---\n' || (p_payload->>'description_append');
+            END IF;
+            
+            UPDATE tickets SET 
+                description = v_existing_desc,
+                priority = COALESCE(p_payload->>'priority', priority),
+                order_id = COALESCE((p_payload->>'order_id')::BIGINT, order_id),
+                updated_at = now()
+            WHERE id = v_ticket_id;
+            
+            v_result := jsonb_build_object('status', 'success', 'message', 'Ticket #' || v_ticket_id || ' updated');
+        END IF;
+
+    ELSIF p_operation_type = 'cancel_order' THEN
+        -- canonical_target is order_id
+        SELECT status, customer_id INTO v_order_status, v_order_customer_id
+        FROM orders WHERE id = p_canonical_target::BIGINT;
+        
+        IF NOT FOUND OR v_order_customer_id != p_customer_id THEN
+            v_result := jsonb_build_object('error', 'Order #' || p_canonical_target || ' not found or does not belong to you');
+        ELSIF v_order_status != 'active' THEN
+            v_result := jsonb_build_object('error', 'Cannot cancel order #' || p_canonical_target || '. Current status: ' || v_order_status || '. Only active orders can be cancelled.');
+        ELSE
+            UPDATE orders SET status = 'cancelled' WHERE id = p_canonical_target::BIGINT;
+            v_result := jsonb_build_object('status', 'success', 'message', 'Order #' || p_canonical_target || ' has been cancelled');
+        END IF;
+
+    ELSIF p_operation_type = 'process_refund' THEN
+        SELECT status, customer_id INTO v_order_status, v_order_customer_id
+        FROM orders WHERE id = p_canonical_target::BIGINT;
+        
+        IF NOT FOUND OR v_order_customer_id != p_customer_id THEN
+            v_result := jsonb_build_object('error', 'Order #' || p_canonical_target || ' not found or does not belong to you');
+        ELSIF v_order_status NOT IN ('cancelled', 'delivered') THEN
+            v_result := jsonb_build_object('error', 'Cannot refund order #' || p_canonical_target || '. Current status: ' || v_order_status || '. Order must be cancelled or delivered.');
+        ELSE
+            UPDATE orders SET status = 'refunded' WHERE id = p_canonical_target::BIGINT;
+            v_result := jsonb_build_object('status', 'success', 'message', 'Refund initiated for order #' || p_canonical_target || '. The refund will be processed within 5-7 business days.');
+        END IF;
+    ELSE
+        v_result := jsonb_build_object('error', 'Unknown operation type: ' || p_operation_type);
+    END IF;
+
+    -- 4. Save the terminal result
+    UPDATE idempotency_records 
+    SET terminal_result = v_result
+    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id;
+
+    RETURN v_result;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION execute_idempotent_operation FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION execute_idempotent_operation TO service_role;

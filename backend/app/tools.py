@@ -156,6 +156,7 @@ def create_ticket(
     priority: str = "medium",
     channel: str = "chat",
     order_id: int | None = None,
+    client_request_id: str | None = None,
 ) -> str:
     """Create a new support ticket for a customer."""
     try:
@@ -173,7 +174,6 @@ def create_ticket(
             return json.dumps({"error": f"Invalid priority, must be one of: {[e.value for e in TicketPriority]}"})
 
         data = {
-            "customer_id": customer_id,
             "subject": subject,
             "description": description,
             "type": type_enum.value,
@@ -183,15 +183,37 @@ def create_ticket(
         }
         if order_id:
             data["order_id"] = order_id
-        response = supabase.table("tickets").insert(data).execute()
+            
+        if not client_request_id:
+            return json.dumps({"error": "client_request_id is required for mutating operations"})
+            
+        import hashlib
+        payload_hash = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+        
+        rpc_params = {
+            "p_customer_id": customer_id,
+            "p_client_request_id": client_request_id,
+            "p_operation_type": "create_ticket",
+            "p_canonical_target": "new",
+            "p_payload_hash": payload_hash,
+            "p_payload": data
+        }
+        
+        response = supabase.rpc("execute_idempotent_operation", rpc_params).execute()
+        
         if not response.data:
-            return json.dumps({"error": "Failed to create ticket"})
-        ticket_id = response.data[0]["id"]
-        return json.dumps({
-            "status": "success",
-            "message": f"Ticket #{ticket_id} created successfully",
-            "ticket_id": ticket_id,
-        })
+            return json.dumps({"error": "Failed to create ticket: RPC returned no data"})
+            
+        result = response.data
+        if "error" in result:
+            if result.get("error") == "IdempotencyConflict":
+                # Must throw IdempotencyConflictException to force LLM to reconcile
+                # But since Python tools return string, we can just return the JSON with the error
+                # The prompt says: "reject with explicit conflict".
+                pass
+            return json.dumps(result)
+            
+        return json.dumps(result)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -208,6 +230,7 @@ def update_ticket(
     customer_id: int | None = None,
     description_append: str | None = None,
     order_id: int | None = None,
+    client_request_id: str | None = None,
 ) -> str:
     """Update a ticket's status, priority, resolution, or assigned agent."""
     try:
@@ -254,14 +277,40 @@ def update_ticket(
             timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
             updates["description"] = f"{existing_desc}\n\n--- Update ({timestamp}) ---\n{description_append}"
 
-        if not updates:
+        if not updates and not description_append and not order_id:
             return json.dumps({"error": "No fields to update"})
+            
+        payload = {}
+        if status: payload["status"] = updates.get("status")
+        if priority: payload["priority"] = updates.get("priority")
+        if resolution: payload["resolution"] = resolution
+        if assigned_agent: payload["assigned_agent"] = assigned_agent
+        if satisfaction_rating is not None: payload["satisfaction_rating"] = satisfaction_rating
+        if order_id is not None: payload["order_id"] = order_id
+        if description_append: payload["description_append"] = description_append
+
+        if not client_request_id:
+            return json.dumps({"error": "client_request_id is required for mutating operations"})
+            
+        import hashlib
+        payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         
-        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-        response = supabase.table("tickets").update(updates).eq("id", ticket_id).execute()
+        rpc_params = {
+            "p_customer_id": customer_id,
+            "p_client_request_id": client_request_id,
+            "p_operation_type": "update_ticket",
+            "p_canonical_target": str(ticket_id),
+            "p_payload_hash": payload_hash,
+            "p_payload": payload
+        }
+        
+        response = supabase.rpc("execute_idempotent_operation", rpc_params).execute()
+        
         if not response.data:
-            return json.dumps({"error": f"Ticket #{ticket_id} not found or update failed"})
-        return json.dumps({"status": "success", "message": f"Ticket #{ticket_id} updated"})
+            return json.dumps({"error": f"Ticket #{ticket_id} not found or update failed: RPC returned no data"})
+            
+        result = response.data
+        return json.dumps(result)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -315,9 +364,12 @@ def track_order(order_id: int, customer_id: int | None = None) -> str:
 
 @track_tool_call("cancel_order")
 @_supabase_retry
-def cancel_order(order_id: int, customer_id: int | None = None) -> str:
+def cancel_order(order_id: int, customer_id: int | None = None, client_request_id: str | None = None) -> str:
     """Cancel an active order. Only orders with status 'active' can be cancelled."""
     try:
+        if not client_request_id:
+            return json.dumps({"error": "client_request_id is required for mutating operations"})
+            
         _validate_positive_int(order_id, "order_id")
         response = supabase.table("orders").select("status, customer_id").eq("id", order_id).execute()
         if not response.data:
@@ -331,17 +383,41 @@ def cancel_order(order_id: int, customer_id: int | None = None) -> str:
             return json.dumps({
                 "error": f"Cannot cancel order #{order_id}. Current status: {response.data[0]['status']}. Only active orders can be cancelled."
             })
-        supabase.table("orders").update({"status": "cancelled"}).eq("id", order_id).execute()
-        return json.dumps({"status": "success", "message": f"Order #{order_id} has been cancelled"})
+        payload = {"status": "cancelled"}
+            
+        import hashlib
+        payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        
+        rpc_params = {
+            "p_customer_id": customer_id,
+            "p_client_request_id": client_request_id,
+            "p_operation_type": "cancel_order",
+            "p_canonical_target": str(order_id),
+            "p_payload_hash": payload_hash,
+            "p_payload": payload
+        }
+        
+        rpc_resp = supabase.rpc("execute_idempotent_operation", rpc_params).execute()
+        
+        if not rpc_resp.data:
+            return json.dumps({"error": f"Failed to cancel order #{order_id}: RPC returned no data"})
+            
+        result = rpc_resp.data
+        if "error" not in result:
+            result["message"] = f"Order #{order_id} has been cancelled"
+        return json.dumps(result)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 
 @track_tool_call("process_refund")
 @_supabase_retry
-def process_refund(order_id: int, customer_id: int | None = None) -> str:
+def process_refund(order_id: int, customer_id: int | None = None, client_request_id: str | None = None) -> str:
     """Initiate a refund for an order. Must be cancelled or delivered."""
     try:
+        if not client_request_id:
+            return json.dumps({"error": "client_request_id is required for mutating operations"})
+            
         _validate_positive_int(order_id, "order_id")
         response = supabase.table("orders").select("status, customer_id").eq("id", order_id).execute()
         if not response.data:
@@ -355,11 +431,29 @@ def process_refund(order_id: int, customer_id: int | None = None) -> str:
             return json.dumps({
                 "error": f"Cannot refund order #{order_id}. Current status: {response.data[0]['status']}. Order must be cancelled or delivered."
             })
-        supabase.table("orders").update({"status": "refunded"}).eq("id", order_id).execute()
-        return json.dumps({
-            "status": "success",
-            "message": f"Refund initiated for order #{order_id}. The refund will be processed within 5-7 business days."
-        })
+        payload = {"status": "refunded"}
+            
+        import hashlib
+        payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        
+        rpc_params = {
+            "p_customer_id": customer_id,
+            "p_client_request_id": client_request_id,
+            "p_operation_type": "process_refund",
+            "p_canonical_target": str(order_id),
+            "p_payload_hash": payload_hash,
+            "p_payload": payload
+        }
+        
+        rpc_resp = supabase.rpc("execute_idempotent_operation", rpc_params).execute()
+        
+        if not rpc_resp.data:
+            return json.dumps({"error": f"Failed to refund order #{order_id}: RPC returned no data"})
+            
+        result = rpc_resp.data
+        if "error" not in result:
+            result["message"] = f"Refund initiated for order #{order_id}. The refund will be processed within 5-7 business days."
+        return json.dumps(result)
     except Exception as e:
         return json.dumps({"error": str(e)})
 

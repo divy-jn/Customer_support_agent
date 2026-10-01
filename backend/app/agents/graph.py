@@ -75,6 +75,7 @@ class AgentState(TypedDict):
     customer_id: int | None
     customer_name: str | None
     session_id: str | None
+    client_request_id: str | None
     message: str
     conversation_history: list[dict]
     
@@ -210,7 +211,7 @@ async def rag_node(state: AgentState) -> dict:
 async def product_node(state: AgentState) -> dict:
     """Node: Product Domain Agent."""
     def bound_executor(tool_name: str, kwargs: dict):
-        return _execute_tool(tool_name, kwargs, state.get("customer_id"))
+        return _execute_tool(tool_name, kwargs, state.get("customer_id"), state.get("client_request_id"))
         
     runtime = SkillRuntime(bound_executor)
     agent = ProductAgent(product_resolver, runtime, product_llm_adapter)
@@ -275,7 +276,7 @@ async def db_plan_node(state: AgentState) -> dict:
         }
     
     # Low-risk action — execute immediately
-    tool_results = await asyncio.to_thread(_execute_tool, action, params, state.get("customer_id"))
+    tool_results = await asyncio.to_thread(_execute_tool, action, params, state.get("customer_id"), state.get("client_request_id"))
     
     result = await db_agent.generate_response(
         message=state["message"],
@@ -312,7 +313,7 @@ async def db_execute_node(state: AgentState) -> dict:
     # Execute the approved action
     action = pending["action"]
     params = pending["params"]
-    tool_results = await asyncio.to_thread(_execute_tool, action, params, state.get("customer_id"))
+    tool_results = await asyncio.to_thread(_execute_tool, action, params, state.get("customer_id"), state.get("client_request_id"))
     
     result = await db_agent.generate_response(
         message=state["message"],
@@ -330,7 +331,7 @@ async def db_execute_node(state: AgentState) -> dict:
     }
 
 
-def _execute_tool(action: str, params: dict, authenticated_customer_id: int | None) -> str:
+def _execute_tool(action: str, params: dict, authenticated_customer_id: int | None, client_request_id: str | None = None) -> str:
     """Execute a database tool by name, injecting the authenticated customer_id securely."""
     try:
         # Security Boundary: Force the customer_id for all customer-scoped actions
@@ -338,6 +339,8 @@ def _execute_tool(action: str, params: dict, authenticated_customer_id: int | No
         if action in ["get_customer_history", "track_order", "cancel_order", "process_refund", "get_ticket", "create_ticket", "update_ticket"]:
             if authenticated_customer_id:
                 params["customer_id"] = authenticated_customer_id
+            if client_request_id and action in ["create_ticket", "update_ticket", "cancel_order", "process_refund"]:
+                params["client_request_id"] = client_request_id
             
         if action == "lookup_customer":
             return lookup_customer(**params)
