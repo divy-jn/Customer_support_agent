@@ -121,7 +121,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Startup checks failed: {e}")
 
+    # Start the outbox worker (Slice 3.3)
+    try:
+        from app.outbox.lifecycle import start_outbox_worker
+        await start_outbox_worker()
+    except Exception as e:
+        logger.error(f"Outbox worker failed to start: {e}")
+
     yield
+
+    # Stop the outbox worker
+    try:
+        from app.outbox.lifecycle import stop_outbox_worker
+        await stop_outbox_worker()
+    except Exception as e:
+        logger.error(f"Outbox worker failed to stop cleanly: {e}")
+
     logger.info("=== Customer Support AI Server Stopped ===")
 
 

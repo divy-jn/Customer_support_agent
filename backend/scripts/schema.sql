@@ -265,3 +265,84 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION execute_idempotent_operation FROM public, anon, authenticated;
 GRANT EXECUTE ON FUNCTION execute_idempotent_operation TO service_role;
+
+
+-- 7. Outbox Schema for Email Notifications (Slice 3.2)
+CREATE TABLE IF NOT EXISTS outbox_events (
+    event_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    logical_identity_hash TEXT UNIQUE NOT NULL,
+    source_event_id TEXT NOT NULL,
+    notification_type TEXT NOT NULL,
+    recipient_identity TEXT NOT NULL,
+    recipient_address TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    attempt_count INT NOT NULL DEFAULT 0,
+    claim_token UUID,
+    claimed_at TIMESTAMP WITH TIME ZONE,
+    next_attempt_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_error TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    sent_at TIMESTAMP WITH TIME ZONE,
+    
+    CONSTRAINT valid_status CHECK (status IN ('PENDING', 'PROCESSING', 'SENT', 'RETRYABLE', 'FAILED'))
+);
+
+-- Index for worker polling
+CREATE INDEX IF NOT EXISTS idx_outbox_events_poll 
+ON outbox_events(status, next_attempt_at) 
+WHERE status IN ('PENDING', 'RETRYABLE');
+
+ALTER TABLE public.outbox_events ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.outbox_events FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.outbox_events TO service_role;
+
+-- Enqueue Function
+CREATE OR REPLACE FUNCTION enqueue_outbox_event(
+    p_logical_identity_hash TEXT,
+    p_source_event_id TEXT,
+    p_notification_type TEXT,
+    p_recipient_identity TEXT,
+    p_recipient_address TEXT,
+    p_payload JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_event_id UUID;
+    v_status TEXT;
+BEGIN
+    INSERT INTO outbox_events (
+        logical_identity_hash, source_event_id, notification_type, 
+        recipient_identity, recipient_address, payload, status
+    ) VALUES (
+        p_logical_identity_hash, p_source_event_id, p_notification_type, 
+        p_recipient_identity, p_recipient_address, p_payload, 'PENDING'
+    )
+    ON CONFLICT (logical_identity_hash) DO NOTHING
+    RETURNING event_id INTO v_event_id;
+
+    IF v_event_id IS NULL THEN
+        -- It was a duplicate
+        SELECT event_id, status INTO v_event_id, v_status
+        FROM outbox_events
+        WHERE logical_identity_hash = p_logical_identity_hash;
+
+        RETURN jsonb_build_object(
+            'status', 'duplicate',
+            'event_id', v_event_id,
+            'current_status', v_status
+        );
+    ELSE
+        RETURN jsonb_build_object(
+            'status', 'enqueued',
+            'event_id', v_event_id,
+            'current_status', 'PENDING'
+        );
+    END IF;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION enqueue_outbox_event FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION enqueue_outbox_event TO service_role;
+

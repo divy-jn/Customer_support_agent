@@ -58,8 +58,8 @@ def send_email(to: str, subject: str, body: str, is_html: bool = True) -> str:
         message["From"] = settings.from_email or settings.gmail_address
         message["Subject"] = subject
 
-        # Connect to Gmail SMTP server
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        # Connect to Gmail SMTP server with explicit timeout (must be < lease threshold)
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=60) as server:
             server.login(settings.gmail_address, settings.gmail_app_password)
             server.send_message(message)
 
