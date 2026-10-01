@@ -1,11 +1,16 @@
 import json
+import os
 import pytest
 import uuid
 import psycopg2
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-conn_string = "dbname='postgres' user='postgres' host='localhost' port='5433' password='postgres'"
+TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD")
+if not TEST_DB_PASSWORD:
+    raise ValueError("TEST_DB_PASSWORD environment variable is required to run real idempotency integration tests. Provide it in the local Docker environment.")
+
+conn_string = f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
 
 def exec_rpc(operation_type, canonical_target, payload, customer_id=1, client_request_id=None):
     if not client_request_id:
