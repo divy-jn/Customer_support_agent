@@ -123,8 +123,9 @@ async def lifespan(app: FastAPI):
 
     # Start the outbox worker (Slice 3.3)
     try:
-        from app.outbox.lifecycle import start_outbox_worker
+        from app.outbox.lifecycle import start_outbox_worker, start_reconciliation_scheduler
         await start_outbox_worker()
+        await start_reconciliation_scheduler()
     except Exception as e:
         logger.error(f"Outbox worker failed to start: {e}")
 
@@ -132,7 +133,8 @@ async def lifespan(app: FastAPI):
 
     # Stop the outbox worker
     try:
-        from app.outbox.lifecycle import stop_outbox_worker
+        from app.outbox.lifecycle import stop_outbox_worker, stop_reconciliation_scheduler
+        await stop_reconciliation_scheduler()
         await stop_outbox_worker()
     except Exception as e:
         logger.error(f"Outbox worker failed to stop cleanly: {e}")

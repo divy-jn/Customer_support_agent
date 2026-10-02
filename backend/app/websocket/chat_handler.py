@@ -9,7 +9,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect, status
 
 from app.config import settings
 from app.websocket.connection import manager
@@ -134,6 +134,18 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
     if not session_id:
         session_id = str(uuid.uuid4())
 
+    if authenticated_customer_id is not None:
+        try:
+            from app.tools import supabase
+            res = await asyncio.to_thread(supabase.table("conversations").select("customer_id").eq("session_id", session_id).execute)
+            if res.data and res.data[0].get("customer_id") is not None:
+                if res.data[0]["customer_id"] != authenticated_customer_id:
+                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=f"Session {session_id} belongs to a different customer.")
+                    return
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to verify persistent session ownership: {e}")
+
     await manager.connect_customer(websocket, session_id)
 
     try:
@@ -191,8 +203,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 client_request_id = None
                 
             if not client_request_id:
-                import uuid
-                client_request_id = str(uuid.uuid4())
+                pass # Do NOT silently convert an omitted request ID into a new operation
 
             customer_id = authenticated_customer_id
 
@@ -242,6 +253,46 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 "message": message,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }, session_id)
+
+            # ── 1. Durable state is authoritative BEFORE routing ──
+            try:
+                from app.persistence.escalation import ensure_durable_escalation_state
+                from app.models import EscalationLifecycleStatus
+                
+                if customer_id is None:
+                    durable_status = EscalationLifecycleStatus.NONE
+                else:
+                    durable_status = await asyncio.to_thread(
+                        ensure_durable_escalation_state,
+                        session_id,
+                        customer_id
+                    )
+                
+                expected_mode = "human" if durable_status == EscalationLifecycleStatus.ACTIVE else "ai"
+                
+                if session.get("mode") != expected_mode:
+                    logger.warning(
+                        f"Stale Redis mode detected for {session_id}. "
+                        f"Postgres: {durable_status.value}, Redis: {session.get('mode')}. "
+                        f"Repairing Redis to {expected_mode}."
+                    )
+                    
+                    def _repair_mode(s):
+                        if s.get("mode") != expected_mode:
+                            s["mode"] = expected_mode
+                            return True
+                        return False
+                        
+                    session, _ = await _mutate_session(session_id, _repair_mode, allow_retry=True, customer_id=customer_id)
+            except Exception as e:
+                logger.error(f"Failed to load durable escalation state for session {session_id}: {e}")
+                await manager.send_personal_message({
+                    "type": "error",
+                    "message": "I'm experiencing a technical issue verifying session state. Please try again.",
+                    "agent_name": "System",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }, session_id)
+                continue
 
             # If human agent has taken over, do NOT run ANY AI logic
             if session.get("mode") == "human":
@@ -449,42 +500,67 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     **response_payload,
                 }, session_id)
 
-                # If escalated, notify all connected dashboard agents
-                if is_escalated:
-                    escalation_msg = {
-                        "type": "escalation_alert",
-                        "session_id": session_id,
-                        "customer_id": customer_id,
-                        "sentiment": result.get("sentiment", "negative"),
-                        "urgency": result.get("urgency", "high"),
-                        "last_message": message,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }
-                    # Send escalation alert to ALL dashboard agents so they can pick it up
-                    await manager.broadcast_to_all_agents(escalation_msg)
-
-                    # Send escalation email
-                    try:
-                        customer_email = None
-                        customer_name = "Unknown Customer"
-                        if customer_id:
-                            cust_res = lookup_customer(str(customer_id))
-                            cust_data = json.loads(cust_res)
-                            if isinstance(cust_data, list) and cust_data:
-                                customer_email = cust_data[0].get("email")
-                                customer_name = cust_data[0].get("name", customer_name)
+                # If escalated, trigger transactional EscalationService
+                if is_escalated and customer_id is not None:
+                    from app.escalation.service import EscalationService, EscalationRequest, IdempotencyConflict
+                    
+                    ticket_id = None
+                    ws_state = result.get("workflow_state", {})
+                    if ws_state.get("active_domain") == "product" and ws_state.get("product_state"):
+                        ticket_id = ws_state["product_state"].get("active_ticket_id")
+                    elif ws_state.get("active_domain") == "order" and ws_state.get("order_state"):
+                        ticket_id = ws_state["order_state"].get("active_ticket_id")
+                    elif ws_state.get("active_domain") == "payment" and ws_state.get("payment_state"):
+                        ticket_id = ws_state["payment_state"].get("active_ticket_id")
                         
-                        await asyncio.to_thread(
-                            send_escalation_email,
-                            customer_email=customer_email,
-                            customer_name=customer_name,
-                            session_id=session_id,
-                            sentiment=result.get("sentiment", "negative"),
-                            urgency=result.get("urgency", "high"),
-                            last_message=message,
-                        )
+                    if not client_request_id:
+                        logger.error(f"Missing client_request_id for escalation in session {session_id}")
+                        await manager.send_personal_message({
+                            "type": "error",
+                            "message": "Missing client_request_id. Cannot perform escalation.",
+                            "agent_name": "System",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }, session_id)
+                        continue
+                        
+                    esc_req = EscalationRequest(
+                        customer_id=customer_id,
+                        session_id=session_id,
+                        client_request_id=uuid.UUID(client_request_id),
+                        ticket_id=ticket_id,
+                        sentiment=result.get("sentiment", "negative"),
+                        urgency=result.get("urgency", "high"),
+                        last_message=message,
+                        customer_notification_required=True
+                    )
+                    
+                    try:
+                        esc_res = await asyncio.to_thread(EscalationService.escalate_session, esc_req)
+                        
+                        if esc_res.is_success or getattr(esc_res, 'status', None) == "bypassed":
+                            def _escalate_mode(s):
+                                if s.get("mode") != "human":
+                                    s["mode"] = "human"
+                                    return True
+                                return False
+                            session, _ = await _mutate_session(session_id, _escalate_mode, allow_retry=True, customer_id=customer_id)
+                            
+                        # Send escalation alert to ALL dashboard agents so they can pick it up
+                        escalation_msg = {
+                            "type": "escalation_alert",
+                            "session_id": session_id,
+                            "customer_id": customer_id,
+                            "sentiment": result.get("sentiment", "negative"),
+                            "urgency": result.get("urgency", "high"),
+                            "last_message": message,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                        await manager.broadcast_to_all_agents(escalation_msg)
+                        
+                    except IdempotencyConflict as ic:
+                        logger.warning(f"Idempotency conflict on escalation for session {session_id}: {ic}")
                     except Exception as e:
-                        logger.error(f"Failed to send escalation email for session {session_id}: {e}")
+                        logger.error(f"Failed to execute escalation service for session {session_id}: {e}")
 
             except Exception as e:
                 logger.error(f"LangGraph error for session {session_id}: {e}")
@@ -623,43 +699,48 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
 
             elif msg_type == "release":
                 # Agent is returning the conversation to the AI
-                def _release(s):
-                    if s.get("mode") != "ai":
-                        s["mode"] = "ai"
-                        return True
-                    return False
-                session, was_changed = await _mutate_session(session_id, _release, allow_retry=True)
-                if was_changed and session and session.get("mode") == "ai":
-                    await manager.send_personal_message({
-                        "type": "mode_change",
-                        "mode": "ai",
-                        "agent_name": data.get("agent_name", "AI Assistant"),
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }, session_id)
+                client_request_id_str = data.get("client_request_id")
+                if not client_request_id_str:
+                    logger.error("Missing client_request_id for release.")
+                    continue
+                
+                customer_id = session.get("customer_id")
+                if not customer_id:
+                    logger.error("No customer_id associated with session.")
+                    continue
+                    
+                from app.escalation.service import EscalationService, ReleaseRequest, IdempotencyConflict
+                
+                try:
+                    req = ReleaseRequest(
+                        customer_id=customer_id,
+                        session_id=session_id,
+                        client_request_id=uuid.UUID(client_request_id_str)
+                    )
+                    res = EscalationService.release_session(req)
+                    
+                    if res.status == "success":
+                        def _release(s):
+                            if s.get("mode") != "ai":
+                                s["mode"] = "ai"
+                                return True
+                            return False
+                        session, was_changed = await _mutate_session(session_id, _release, allow_retry=True)
+                        if was_changed and session and session.get("mode") == "ai":
+                            await manager.send_personal_message({
+                                "type": "mode_change",
+                                "mode": "ai",
+                                "agent_name": data.get("agent_name", "AI Assistant"),
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            }, session_id)
+                    else:
+                        logger.error(f"Release failed: {res.error}")
+                        
+                except IdempotencyConflict as ic:
+                    logger.warning(f"Idempotency conflict on release: {ic}")
+                except Exception as e:
+                    logger.error(f"Exception during release: {e}")
 
     except WebSocketDisconnect:
         manager.disconnect_agent(websocket, session_id)
         logger.info(f"Agent disconnected from session: {session_id}")
-        
-        # Safely return session to AI mode if it was abandoned in human mode
-        # Check if there are still any other agents connected to this session
-        has_other_agents = bool(manager.agent_connections.get(session_id))
-        
-        def _abandon(s):
-            if s and s.get("mode") == "human" and not has_other_agents:
-                s["mode"] = "ai"
-                return True
-            return False
-            
-        try:
-            session, was_changed = await _mutate_session(session_id, _abandon, allow_retry=True)
-            if was_changed and session and session.get("mode") == "ai" and not has_other_agents:
-                # Notify customer that AI has resumed
-                await manager.send_personal_message({
-                    "type": "mode_change",
-                    "mode": "ai",
-                    "agent_name": "AI Assistant",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }, session_id)
-        except Exception as e:
-            logger.error(f"Failed to abandon human mode for session {session_id}: {e}")

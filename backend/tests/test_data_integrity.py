@@ -49,32 +49,50 @@ class TestGeneratorInvariants:
 class TestToolContracts:
     @patch("app.tools.supabase")
     def test_update_ticket_sets_updated_at(self, mock_supabase):
-        mock_execute = MagicMock()
-        mock_execute.execute.return_value = MagicMock(data=[{"id": 1}])
-        mock_supabase.table().update().eq().execute = mock_execute.execute
-        
-        # Test basic update
-        res = json.loads(update_ticket(ticket_id=1, resolution="Fixed"))
+        # Mock the ownership/description lookup: table("tickets").select(...).eq(...).execute()
+        mock_select_result = MagicMock()
+        mock_select_result.data = [{"customer_id": None, "description": "Original description"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = mock_select_result
+
+        # Mock the RPC response: supabase.rpc("execute_ticket_mutation_with_outbox", ...).execute()
+        rpc_result = MagicMock()
+        rpc_result.data = {"status": "success", "ticket_id": 1, "updated_at": "2026-10-01T00:00:00Z"}
+        mock_supabase.rpc.return_value.execute.return_value = rpc_result
+
+        res = json.loads(update_ticket(ticket_id=1, resolution="Fixed", client_request_id="test-req"))
         assert res.get("status") == "success"
-        
-        # Verify updated_at was in the payload
-        update_payload = mock_supabase.table().update.call_args[0][0]
-        assert "resolution" in update_payload
-        assert "updated_at" in update_payload
-        
+
+        # Verify the RPC was called with the correct function and payload
+        rpc_call_args = mock_supabase.rpc.call_args
+        assert rpc_call_args[0][0] == "execute_ticket_mutation_with_outbox"
+        rpc_params = rpc_call_args[0][1]
+        assert rpc_params["p_payload"]["resolution"] == "Fixed"
+        assert rpc_params["p_client_request_id"] == "test-req"
+        assert rpc_params["p_operation_type"] == "update_ticket"
+        assert rpc_params["p_canonical_target"] == "1"
+
     @patch("app.tools.supabase")
     def test_update_ticket_closed_sets_closed_at(self, mock_supabase):
-        mock_execute = MagicMock()
-        mock_execute.execute.return_value = MagicMock(data=[{"id": 1}])
-        mock_supabase.table().update().eq().execute = mock_execute.execute
-        
-        res = json.loads(update_ticket(ticket_id=1, status="closed"))
+        # Mock the ownership/description lookup
+        mock_select_result = MagicMock()
+        mock_select_result.data = [{"customer_id": None, "description": "Original description"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = mock_select_result
+
+        # Mock the RPC response
+        rpc_result = MagicMock()
+        rpc_result.data = {"status": "success", "ticket_id": 1, "updated_at": "2026-10-01T00:00:00Z", "closed_at": "2026-10-01T00:00:00Z"}
+        mock_supabase.rpc.return_value.execute.return_value = rpc_result
+
+        res = json.loads(update_ticket(ticket_id=1, status="closed", client_request_id="test-req"))
         assert res.get("status") == "success"
-        
-        update_payload = mock_supabase.table().update.call_args[0][0]
-        assert update_payload["status"] == "closed"
-        assert "closed_at" in update_payload
-        assert "updated_at" in update_payload
+
+        # Verify RPC payload includes the closed status
+        rpc_call_args = mock_supabase.rpc.call_args
+        assert rpc_call_args[0][0] == "execute_ticket_mutation_with_outbox"
+        rpc_params = rpc_call_args[0][1]
+        assert rpc_params["p_payload"]["status"] == "closed"
+        # Verify outbox notification params are set for ticket closure
+        assert rpc_params["p_outbox_notification_type"] == "TICKET_RESOLVED"
 
     @patch("app.tools.supabase")
     def test_cancel_order_rejects_non_active(self, mock_supabase):
@@ -83,7 +101,7 @@ class TestToolContracts:
         mock_select.select().eq().execute.return_value = MagicMock(data=[{"id": 1, "status": "shipped"}])
         mock_supabase.table().select().eq().execute = mock_select.select().eq().execute
         
-        res = json.loads(cancel_order(order_id=1))
+        res = json.loads(cancel_order(order_id=1, client_request_id="test-req"))
         assert "error" in res
         assert "shipped" in res["error"].lower() or "cannot be cancelled" in res["error"].lower()
 
@@ -94,6 +112,6 @@ class TestToolContracts:
         mock_select.select().eq().execute.return_value = MagicMock(data=[{"id": 1, "status": "active"}])
         mock_supabase.table().select().eq().execute = mock_select.select().eq().execute
         
-        res = json.loads(process_refund(order_id=1))
+        res = json.loads(process_refund(order_id=1, client_request_id="test-req"))
         assert "error" in res
         assert "active" in res["error"].lower() or "cannot process refund" in res["error"].lower()

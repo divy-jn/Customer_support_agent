@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 from app.agents.graph import customer_support_graph, AgentState, product_llm_adapter
 from app.models import WorkflowState, WorkflowStatus
 from app.agents.product_agent import ProductDomainContext, ProductAgent, ProductSkillResolver
@@ -286,7 +286,10 @@ async def test_product_agent_extraction():
     assert state.product_state.product_name == "SuperPhone"
 
 @pytest.mark.asyncio
-async def test_chat_handler_session_persistence():
+@patch("app.persistence.escalation.ensure_durable_escalation_state", new_callable=MagicMock)
+async def test_chat_handler_session_persistence(mock_get_session_state):
+    from app.models import EscalationLifecycleStatus
+    mock_get_session_state.return_value = EscalationLifecycleStatus.NONE
     # Mock WebSocket
     mock_ws = AsyncMock(spec=WebSocket)
     # Give it exactly two messages to simulate two turns

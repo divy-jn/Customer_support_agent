@@ -359,24 +359,68 @@ def update_ticket(
 
 
 @track_tool_call("send_ticket_email_to_customer")
+@_supabase_retry
 def send_ticket_email_to_customer(
     customer_email: str,
     customer_name: str,
     ticket_id: int,
     subject: str,
     message_content: str,
+    customer_id: int | None = None,
+    client_request_id: str | None = None,
 ) -> str:
     """Send an email to the customer with an update regarding their ticket."""
     try:
-        from app.email_service import send_custom_ticket_email
         _validate_positive_int(ticket_id, "ticket_id")
-        result = send_custom_ticket_email(
-            customer_email=customer_email,
-            customer_name=customer_name,
-            ticket_id=ticket_id,
-            subject=subject,
-            message_content=message_content
+        
+        if customer_id is None:
+            return json.dumps({"error": "Customer ID is required for sending emails"})
+        if not client_request_id:
+            return json.dumps({"error": "client_request_id is required for mutating operations"})
+            
+        payload = {
+            "template": "CUSTOM_TICKET_EMAIL",
+            "customer_id": customer_id,
+            "ticket_id": ticket_id,
+            "subject": subject,
+            "message_content": message_content,
+            "recipient_email": customer_email
+        }
+        
+        import hashlib
+        payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        
+        from app.notification_identity import SourceEventIdentity, LogicalNotificationIdentity, NotificationType, RecipientIdentity
+        source_event = SourceEventIdentity.from_custom_email(customer_id, client_request_id)
+        recipient = RecipientIdentity.customer(customer_id)
+        logical_identity = LogicalNotificationIdentity(
+            source_event=source_event,
+            notification_type=NotificationType.CUSTOM_EMAIL,
+            recipient=recipient
         )
+            
+        rpc_params = {
+            "p_customer_id": customer_id,
+            "p_client_request_id": client_request_id,
+            "p_ticket_id": ticket_id,
+            "p_recipient_email": customer_email,
+            "p_payload": payload,
+            "p_payload_hash": payload_hash,
+            "p_outbox_logical_identity_hash": logical_identity.get_hash(),
+            "p_outbox_source_event_id": source_event.source_event_id,
+            "p_outbox_notification_type": NotificationType.CUSTOM_EMAIL.value,
+            "p_outbox_recipient_identity": recipient.principal
+        }
+        
+        response = supabase.rpc("enqueue_custom_email_outbox_event", rpc_params).execute()
+        
+        if not response.data:
+            return json.dumps({"error": f"Failed to enqueue custom email for ticket #{ticket_id}: RPC returned no data"})
+            
+        result = response.data
+        if "error" in result:
+            pass # Pass through the error, such as IdempotencyConflict
+            
         return json.dumps(result)
     except Exception as e:
         return json.dumps({"error": str(e)})

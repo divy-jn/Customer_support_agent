@@ -336,10 +336,10 @@ def _execute_tool(action: str, params: dict, authenticated_customer_id: int | No
     try:
         # Security Boundary: Force the customer_id for all customer-scoped actions
         # This completely overwrites any customer_id the LLM tried to pass
-        if action in ["get_customer_history", "track_order", "cancel_order", "process_refund", "get_ticket", "create_ticket", "update_ticket"]:
+        if action in ["get_customer_history", "track_order", "cancel_order", "process_refund", "get_ticket", "create_ticket", "update_ticket", "send_ticket_email_to_customer"]:
             if authenticated_customer_id:
                 params["customer_id"] = authenticated_customer_id
-            if client_request_id and action in ["create_ticket", "update_ticket", "cancel_order", "process_refund"]:
+            if client_request_id and action in ["create_ticket", "update_ticket", "cancel_order", "process_refund", "send_ticket_email_to_customer"]:
                 params["client_request_id"] = client_request_id
             
         if action == "lookup_customer":

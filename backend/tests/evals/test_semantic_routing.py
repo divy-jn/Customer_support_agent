@@ -75,6 +75,7 @@ EVAL_CASES = [
     }
 ]
 
+@pytest.mark.llm_eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", EVAL_CASES, ids=lambda c: c["id"])
 async def test_semantic_routing_eval(case):

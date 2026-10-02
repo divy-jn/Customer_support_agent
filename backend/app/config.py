@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     # --- Knowledge Base ---
     knowledge_base_dir: str = "./knowledge_base"
 
+    # --- Outbox Reconciliation (Slice 3.7.4) ---
+    reconciliation_enabled: bool = Field(default=True, alias="RECONCILIATION_ENABLED")
+    reconciliation_interval_seconds: int = Field(default=3600, alias="RECONCILIATION_INTERVAL_SECONDS")
+    reconciliation_startup_pages: int = Field(default=5, alias="RECONCILIATION_STARTUP_PAGES")
+    reconciliation_horizon_days: float = Field(default=7.0, alias="RECONCILIATION_HORIZON_DAYS")
+    reconciliation_batch_size: int = Field(default=100, alias="RECONCILIATION_BATCH_SIZE")
+
     # --- Email ---
     gmail_address: str = Field(default="jdivy7151@gmail.com", alias="GMAIL_ADDRESS")
     gmail_app_password: str = Field(default="", alias="GMAIL_APP_PASSWORD")

@@ -10,7 +10,7 @@ import sys
 import smtplib
 from email.message import EmailMessage
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 # Add backend to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))

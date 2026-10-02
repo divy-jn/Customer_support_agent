@@ -547,3 +547,445 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION execute_ticket_mutation_with_outbox FROM public, anon, authenticated;
 GRANT EXECUTE ON FUNCTION execute_ticket_mutation_with_outbox TO service_role;
+
+-- 9. Durable Escalation State (Slice 3.5)
+CREATE TABLE IF NOT EXISTS session_escalation_state (
+    session_id TEXT PRIMARY KEY,
+    customer_id BIGINT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'NONE',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT valid_status CHECK (status IN ('NONE', 'ACTIVE', 'RELEASED'))
+);
+
+ALTER TABLE public.session_escalation_state ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.session_escalation_state FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.session_escalation_state TO service_role;
+
+-- 10. Escalation Events (Slice 3.5.2)
+CREATE TABLE IF NOT EXISTS escalation_events (
+    escalation_event_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES session_escalation_state(session_id),
+    customer_id BIGINT NOT NULL REFERENCES customers(id),
+    ticket_id BIGINT REFERENCES tickets(id) ON DELETE SET NULL,
+    client_request_id UUID NOT NULL,
+    payload_hash TEXT NOT NULL,
+    sentiment TEXT,
+    urgency TEXT,
+    last_message TEXT,
+    customer_notification_required BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+ALTER TABLE public.escalation_events ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.escalation_events FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.escalation_events TO service_role;
+
+
+-- 11. Escalation Transaction RPC (Slice 3.5.2)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE OR REPLACE FUNCTION execute_escalation_transition(
+    p_customer_id BIGINT,
+    p_client_request_id UUID,
+    p_session_id TEXT,
+    p_payload_hash TEXT,
+    p_payload JSONB,
+    p_escalation_event_id UUID
+) RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_existing_type TEXT;
+    v_existing_target TEXT;
+    v_existing_hash TEXT;
+    v_existing_result JSONB;
+    
+    v_state_customer_id BIGINT;
+    v_current_status TEXT;
+    
+    v_result JSONB;
+    v_cust_email TEXT;
+    v_cust_name TEXT;
+    v_support_email TEXT := 'support@example.com'; -- fallback/template logic
+    
+    v_support_identity_string TEXT;
+    v_support_outbox_hash TEXT;
+    
+    v_customer_identity_string TEXT;
+    v_customer_outbox_hash TEXT;
+BEGIN
+    -- 1. Lock the single durable escalation-state row
+    SELECT customer_id, status INTO v_state_customer_id, v_current_status
+    FROM session_escalation_state
+    WHERE session_id = p_session_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('error', 'Session state not initialized for ' || p_session_id);
+    END IF;
+
+    -- 2. Authorization
+    IF v_state_customer_id != p_customer_id THEN
+        RETURN jsonb_build_object('error', 'Session belongs to a different customer.');
+    END IF;
+
+    -- 3. Request Idempotency Validation (escalate_session)
+    SELECT operation_type, canonical_target, payload_hash, terminal_result
+    INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
+    FROM idempotency_records
+    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
+    FOR UPDATE;
+
+    IF FOUND THEN
+        IF v_existing_type != 'escalate_session' OR v_existing_target != p_session_id OR v_existing_hash != p_payload_hash THEN
+            RETURN jsonb_build_object(
+                'error', 'IdempotencyConflict',
+                'message', 'Request ID already used for a different operation/payload.',
+                'previous_result', v_existing_result
+            );
+        END IF;
+        -- EXACT REPLAY
+        RETURN v_existing_result;
+    END IF;
+
+    -- Insert Idempotency Record
+    BEGIN
+        INSERT INTO idempotency_records (
+            customer_id, client_request_id, operation_type, canonical_target, payload_hash
+        ) VALUES (
+            p_customer_id, p_client_request_id, 'escalate_session', p_session_id, p_payload_hash
+        );
+    EXCEPTION WHEN unique_violation THEN
+        SELECT operation_type, canonical_target, payload_hash, terminal_result
+        INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
+        FROM idempotency_records
+        WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
+        FOR UPDATE;
+        
+        IF v_existing_type != 'escalate_session' OR v_existing_target != p_session_id OR v_existing_hash != p_payload_hash THEN
+            RETURN jsonb_build_object('error', 'IdempotencyConflict', 'previous_result', v_existing_result);
+        END IF;
+        RETURN v_existing_result;
+    END;
+
+    -- 4. Lifecycle transition validation
+    IF v_current_status = 'ACTIVE' THEN
+        -- Bypassed
+        v_result := jsonb_build_object(
+            'status', 'bypassed',
+            'message', 'Session is already ACTIVE. Escalation bypassed.',
+            'session_id', p_session_id
+        );
+    ELSIF v_current_status = 'NONE' OR v_current_status = 'RELEASED' THEN
+        -- E1 or E2: Insert Event
+        INSERT INTO escalation_events (
+            escalation_event_id, session_id, customer_id, ticket_id, client_request_id, payload_hash,
+            sentiment, urgency, last_message, customer_notification_required
+        ) VALUES (
+            p_escalation_event_id,
+            p_session_id,
+            p_customer_id,
+            (p_payload->>'ticket_id')::BIGINT,
+            p_client_request_id,
+            p_payload_hash,
+            p_payload->>'sentiment',
+            p_payload->>'urgency',
+            p_payload->>'last_message',
+            (p_payload->>'customer_notification_required')::BOOLEAN
+        );
+
+        -- Update State
+        UPDATE session_escalation_state
+        SET status = 'ACTIVE', updated_at = NOW()
+        WHERE session_id = p_session_id;
+
+        -- Generate authoritative Slice 3.1 LogicalNotificationIdentity hashes internally
+        v_support_identity_string := '["v1","escalation:' || p_escalation_event_id::TEXT || '","ESCALATION_TEAM","support-team:default"]';
+        v_support_outbox_hash := encode(digest(v_support_identity_string, 'sha256'), 'hex');
+
+        -- Outbox Support Notification
+        PERFORM enqueue_outbox_event(
+            v_support_outbox_hash,
+            p_escalation_event_id::TEXT,
+            'ESCALATION_TEAM',
+            'support_team',
+            v_support_email,
+            jsonb_build_object(
+                'session_id', p_session_id,
+                'sentiment', p_payload->>'sentiment',
+                'urgency', p_payload->>'urgency',
+                'ticket_id', p_payload->>'ticket_id',
+                'customer_id', p_customer_id
+            )
+        );
+
+        -- Conditionally Enqueue Customer Outbox Notification
+        IF (p_payload->>'customer_notification_required')::BOOLEAN THEN
+            v_customer_identity_string := '["v1","escalation:' || p_escalation_event_id::TEXT || '","ESCALATION_CUSTOMER","customer:' || p_customer_id::TEXT || '"]';
+            v_customer_outbox_hash := encode(digest(v_customer_identity_string, 'sha256'), 'hex');
+
+            SELECT email, name INTO v_cust_email, v_cust_name FROM customers WHERE id = p_customer_id;
+            PERFORM enqueue_outbox_event(
+                v_customer_outbox_hash,
+                p_escalation_event_id::TEXT,
+                'ESCALATION_CUSTOMER',
+                'customer:' || p_customer_id,
+                v_cust_email,
+                jsonb_build_object(
+                    'session_id', p_session_id,
+                    'customer_name', v_cust_name
+                )
+            );
+        END IF;
+
+        v_result := jsonb_build_object(
+            'status', 'success',
+            'message', 'Escalation triggered successfully.',
+            'escalation_event_id', p_escalation_event_id,
+            'session_id', p_session_id
+        );
+    ELSE
+        v_result := jsonb_build_object('error', 'Unknown status: ' || v_current_status);
+    END IF;
+
+    -- 5. Save Terminal Result
+    IF NOT (v_result ? 'error') THEN
+        UPDATE idempotency_records 
+        SET terminal_result = v_result
+        WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id;
+    END IF;
+
+    RETURN v_result;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION execute_escalation_transition FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION execute_escalation_transition TO service_role;
+
+-- 12. Durable Release Transaction RPC (Slice 3.5.4)
+CREATE OR REPLACE FUNCTION execute_release_transition(
+    p_customer_id BIGINT,
+    p_client_request_id UUID,
+    p_session_id TEXT,
+    p_payload_hash TEXT,
+    p_payload JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_existing_type TEXT;
+    v_existing_target TEXT;
+    v_existing_hash TEXT;
+    v_existing_result JSONB;
+    
+    v_state_customer_id BIGINT;
+    v_current_status TEXT;
+    v_result JSONB;
+BEGIN
+    -- 1. Lock the single durable escalation-state row
+    SELECT customer_id, status INTO v_state_customer_id, v_current_status
+    FROM session_escalation_state
+    WHERE session_id = p_session_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('error', 'Session state not initialized for ' || p_session_id);
+    END IF;
+
+    -- 2. Authorization
+    IF v_state_customer_id != p_customer_id THEN
+        RETURN jsonb_build_object('error', 'Session belongs to a different customer.');
+    END IF;
+
+    -- 3. Idempotency Validation (release_session)
+    SELECT operation_type, canonical_target, payload_hash, terminal_result
+    INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
+    FROM idempotency_records
+    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
+    FOR UPDATE;
+
+    IF FOUND THEN
+        IF v_existing_type != 'release_session' OR v_existing_target != p_session_id OR v_existing_hash != p_payload_hash THEN
+            RETURN jsonb_build_object(
+                'error', 'IdempotencyConflict',
+                'message', 'Request ID already used for a different operation/payload.',
+                'previous_result', v_existing_result
+            );
+        END IF;
+        -- EXACT REPLAY
+        RETURN v_existing_result;
+    END IF;
+
+    -- Insert Idempotency Record
+    BEGIN
+        INSERT INTO idempotency_records (
+            customer_id, client_request_id, operation_type, canonical_target, payload_hash
+        ) VALUES (
+            p_customer_id, p_client_request_id, 'release_session', p_session_id, p_payload_hash
+        );
+    EXCEPTION WHEN unique_violation THEN
+        SELECT operation_type, canonical_target, payload_hash, terminal_result
+        INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
+        FROM idempotency_records
+        WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
+        FOR UPDATE;
+        
+        IF v_existing_type != 'release_session' OR v_existing_target != p_session_id OR v_existing_hash != p_payload_hash THEN
+            RETURN jsonb_build_object('error', 'IdempotencyConflict', 'previous_result', v_existing_result);
+        END IF;
+        RETURN v_existing_result;
+    END;
+
+    -- 4. Lifecycle transition validation
+    IF v_current_status = 'RELEASED' THEN
+        -- Deterministic already-released
+        v_result := jsonb_build_object(
+            'status', 'success',
+            'message', 'Session is already RELEASED.',
+            'session_id', p_session_id
+        );
+    ELSIF v_current_status = 'NONE' THEN
+        v_result := jsonb_build_object(
+            'error', 'Cannot release a session that is not escalated.',
+            'status', 'failed'
+        );
+    ELSIF v_current_status = 'ACTIVE' THEN
+        -- Mutate durable state
+        UPDATE session_escalation_state
+        SET status = 'RELEASED', updated_at = NOW()
+        WHERE session_id = p_session_id;
+
+        v_result := jsonb_build_object(
+            'status', 'success',
+            'message', 'Session released successfully.',
+            'session_id', p_session_id
+        );
+    END IF;
+
+    -- 5. Terminal Idempotency Result
+    UPDATE idempotency_records
+    SET terminal_result = v_result
+    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id;
+
+    RETURN v_result;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION execute_release_transition FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION execute_release_transition TO service_role;
+
+
+-- 9. Custom Email Outbox Event RPC (Slice 3.6)
+CREATE OR REPLACE FUNCTION enqueue_custom_email_outbox_event(
+    p_customer_id BIGINT,
+    p_client_request_id UUID,
+    p_ticket_id BIGINT,
+    p_recipient_email TEXT,
+    p_payload JSONB,
+    p_payload_hash TEXT,
+    p_outbox_logical_identity_hash TEXT,
+    p_outbox_source_event_id TEXT,
+    p_outbox_notification_type TEXT,
+    p_outbox_recipient_identity TEXT
+) RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_ticket_owner BIGINT;
+    v_payload JSONB;
+    v_payload_hash TEXT;
+    v_source_event_id TEXT;
+    v_logical_identity TEXT;
+    v_logical_identity_hash TEXT;
+    v_existing_type TEXT;
+    v_existing_target TEXT;
+    v_existing_hash TEXT;
+    v_existing_result JSONB;
+    v_outbox_event_id UUID;
+    v_result JSONB;
+BEGIN
+    -- 1. Verify Ticket Ownership
+    SELECT customer_id INTO v_ticket_owner
+    FROM tickets WHERE id = p_ticket_id;
+    
+    IF NOT FOUND OR v_ticket_owner != p_customer_id THEN
+        RETURN jsonb_build_object('error', 'Ticket #' || p_ticket_id || ' not found or does not belong to you');
+    END IF;
+
+    -- The canonical hashes (idempotency p_payload_hash and outbox p_outbox_logical_identity_hash)
+    -- are computed in Python to preserve the single canonicalization convention.
+    
+    -- 3. Idempotency Check (Row Lock)
+    SELECT operation_type, canonical_target, payload_hash, terminal_result
+    INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
+    FROM idempotency_records
+    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
+    FOR UPDATE;
+
+    IF FOUND THEN
+        IF v_existing_type != 'custom_email' OR v_existing_target != p_ticket_id::TEXT OR v_existing_hash != p_payload_hash THEN
+            RETURN jsonb_build_object(
+                'error', 'IdempotencyConflict',
+                'message', 'This request ID was already used for a different operation.',
+                'previous_result', v_existing_result
+            );
+        END IF;
+        RETURN v_existing_result;
+    END IF;
+
+    -- 4. Insert to establish operation and claim the request_id.
+    BEGIN
+        INSERT INTO idempotency_records (
+            customer_id, client_request_id, operation_type, canonical_target, payload_hash, terminal_result
+        ) VALUES (
+            p_customer_id, p_client_request_id, 'custom_email', p_ticket_id::TEXT, p_payload_hash, NULL
+        );
+    EXCEPTION WHEN unique_violation THEN
+        SELECT operation_type, canonical_target, payload_hash, terminal_result
+        INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
+        FROM idempotency_records
+        WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
+        FOR UPDATE;
+        
+        IF v_existing_type != 'custom_email' OR v_existing_target != p_ticket_id::TEXT OR v_existing_hash != p_payload_hash THEN
+            RETURN jsonb_build_object(
+                'error', 'IdempotencyConflict',
+                'message', 'This request ID was already used for a different operation.',
+                'previous_result', v_existing_result
+            );
+        END IF;
+        RETURN v_existing_result;
+    END;
+
+    -- 5. Create outbox event
+    INSERT INTO outbox_events (
+        logical_identity_hash, source_event_id, notification_type, 
+        recipient_identity, recipient_address, payload, status
+    ) VALUES (
+        p_outbox_logical_identity_hash, p_outbox_source_event_id, p_outbox_notification_type, 
+        p_outbox_recipient_identity, p_recipient_email, p_payload, 'PENDING'
+    )
+    ON CONFLICT (logical_identity_hash) DO NOTHING
+    RETURNING event_id INTO v_outbox_event_id;
+
+    v_result := jsonb_build_object(
+        'status', 'success',
+        'message', 'Custom email to ' || p_recipient_email || ' enqueued successfully',
+        'outbox_event_id', v_outbox_event_id
+    );
+
+    -- 6. Save terminal result
+    UPDATE idempotency_records
+    SET terminal_result = v_result
+    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id;
+    
+    RETURN v_result;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION enqueue_custom_email_outbox_event FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION enqueue_custom_email_outbox_event TO service_role;
+
+-- Force PostgREST to reload schema cache so changes are immediately visible
+NOTIFY pgrst, 'reload schema';

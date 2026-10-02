@@ -256,6 +256,11 @@ class WorkflowStatus(str, Enum):
     FAILED = "failed"
     ESCALATED = "escalated"
 
+class EscalationLifecycleStatus(str, Enum):
+    NONE = "NONE"
+    ACTIVE = "ACTIVE"
+    RELEASED = "RELEASED"
+
 from typing import TypedDict
 
 class TargetAgentState(TypedDict):

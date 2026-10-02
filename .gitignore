@@ -47,3 +47,4 @@ dataset/strova_multi_turn_customer_support.csv
 *.sqlite
 *.sqlite3
 *.db
+graphify-out/cache/
