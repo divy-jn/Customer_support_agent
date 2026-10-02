@@ -227,7 +227,7 @@ BEGIN
     ELSIF p_operation_type = 'cancel_order' THEN
         -- canonical_target is order_id
         SELECT status, customer_id INTO v_order_status, v_order_customer_id
-        FROM orders WHERE id = p_canonical_target::BIGINT;
+        FROM orders WHERE id = p_canonical_target::BIGINT FOR UPDATE;
         
         IF NOT FOUND OR v_order_customer_id != p_customer_id THEN
             v_result := jsonb_build_object('error', 'Order #' || p_canonical_target || ' not found or does not belong to you');
@@ -240,7 +240,7 @@ BEGIN
 
     ELSIF p_operation_type = 'process_refund' THEN
         SELECT status, customer_id INTO v_order_status, v_order_customer_id
-        FROM orders WHERE id = p_canonical_target::BIGINT;
+        FROM orders WHERE id = p_canonical_target::BIGINT FOR UPDATE;
         
         IF NOT FOUND OR v_order_customer_id != p_customer_id THEN
             v_result := jsonb_build_object('error', 'Order #' || p_canonical_target || ' not found or does not belong to you');
@@ -346,3 +346,204 @@ $$;
 REVOKE EXECUTE ON FUNCTION enqueue_outbox_event FROM public, anon, authenticated;
 GRANT EXECUTE ON FUNCTION enqueue_outbox_event TO service_role;
 
+
+
+-- 8. Ticket Notification Wrapper RPC (Slice 3.4)
+CREATE OR REPLACE FUNCTION execute_ticket_mutation_with_outbox(
+    p_customer_id BIGINT,
+    p_client_request_id UUID,
+    p_operation_type TEXT,
+    p_canonical_target TEXT,
+    p_payload_hash TEXT,
+    p_payload JSONB,
+    p_outbox_logical_identity_hash TEXT,
+    p_outbox_source_event_id TEXT,
+    p_outbox_notification_type TEXT,
+    p_outbox_recipient_identity TEXT,
+    p_outbox_payload_template JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_existing_type TEXT;
+    v_existing_target TEXT;
+    v_existing_hash TEXT;
+    v_existing_result JSONB;
+    v_result JSONB;
+    
+    v_ticket_owner BIGINT;
+    v_actual_customer_id BIGINT;
+    v_existing_desc TEXT;
+    v_current_status TEXT;
+    v_timestamp TEXT;
+    
+    v_cust_email TEXT;
+    v_cust_name TEXT;
+    v_final_outbox_payload JSONB;
+    v_ticket_id BIGINT;
+BEGIN
+    -- Derive actual customer_id if p_customer_id is NULL (agent update)
+    IF p_operation_type = 'update_ticket' THEN
+        v_ticket_id := p_canonical_target::BIGINT;
+        -- Lock ticket to derive authoritative ticket.customer_id
+        SELECT customer_id INTO v_ticket_owner FROM tickets WHERE id = v_ticket_id FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN jsonb_build_object('error', 'Ticket #' || v_ticket_id || ' not found');
+        END IF;
+        IF p_customer_id IS NOT NULL AND v_ticket_owner != p_customer_id THEN
+            RETURN jsonb_build_object('error', 'Ticket #' || v_ticket_id || ' does not belong to you');
+        END IF;
+        v_actual_customer_id := v_ticket_owner;
+    ELSE
+        IF p_customer_id IS NULL THEN
+            RETURN jsonb_build_object('error', 'Customer ID is required for ticket creation');
+        END IF;
+        v_actual_customer_id := p_customer_id;
+    END IF;
+
+    -- 1. Idempotency Lookup
+    SELECT operation_type, canonical_target, payload_hash, terminal_result
+    INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
+    FROM idempotency_records
+    WHERE customer_id = v_actual_customer_id AND client_request_id = p_client_request_id
+    FOR UPDATE;
+
+    IF FOUND THEN
+        IF v_existing_type != p_operation_type OR v_existing_target != p_canonical_target OR v_existing_hash != p_payload_hash THEN
+            RETURN jsonb_build_object(
+                'error', 'IdempotencyConflict',
+                'message', 'This request ID was already used for a different operation.',
+                'previous_result', v_existing_result
+            );
+        END IF;
+        -- EXACT_REPLAY: return cached result, do NOT insert outbox
+        RETURN v_existing_result;
+    END IF;
+
+    -- 2. Insert Idempotency Record
+    BEGIN
+        INSERT INTO idempotency_records (
+            customer_id, client_request_id, operation_type, canonical_target, payload_hash
+        ) VALUES (
+            v_actual_customer_id, p_client_request_id, p_operation_type, p_canonical_target, p_payload_hash
+        );
+    EXCEPTION WHEN unique_violation THEN
+        SELECT operation_type, canonical_target, payload_hash, terminal_result
+        INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
+        FROM idempotency_records
+        WHERE customer_id = v_actual_customer_id AND client_request_id = p_client_request_id
+        FOR UPDATE;
+        
+        IF v_existing_type != p_operation_type OR v_existing_target != p_canonical_target OR v_existing_hash != p_payload_hash THEN
+            RETURN jsonb_build_object('error', 'IdempotencyConflict', 'previous_result', v_existing_result);
+        END IF;
+        RETURN v_existing_result;
+    END;
+
+    -- 3. Business Mutation
+    IF p_operation_type = 'create_ticket' THEN
+        INSERT INTO tickets (
+            customer_id, subject, description, type, status, priority, channel, order_id
+        ) VALUES (
+            v_actual_customer_id,
+            p_payload->>'subject',
+            p_payload->>'description',
+            p_payload->>'type',
+            p_payload->>'status',
+            p_payload->>'priority',
+            p_payload->>'channel',
+            (p_payload->>'order_id')::BIGINT
+        ) RETURNING id INTO v_ticket_id;
+        
+        v_result := jsonb_build_object(
+            'status', 'success',
+            'message', 'Ticket #' || v_ticket_id || ' created successfully',
+            'ticket_id', v_ticket_id
+        );
+
+        -- Enqueue Outbox for Create
+        IF p_outbox_logical_identity_hash IS NOT NULL THEN
+            SELECT email, name INTO v_cust_email, v_cust_name FROM customers WHERE id = v_actual_customer_id;
+            v_final_outbox_payload := p_outbox_payload_template || jsonb_build_object(
+                'ticket_id', v_ticket_id,
+                'customer_name', v_cust_name
+            );
+            
+            PERFORM enqueue_outbox_event(
+                p_outbox_logical_identity_hash,
+                p_outbox_source_event_id,
+                p_outbox_notification_type,
+                p_outbox_recipient_identity,
+                v_cust_email,
+                v_final_outbox_payload
+            );
+        END IF;
+
+    ELSIF p_operation_type = 'update_ticket' THEN
+        SELECT description, status INTO v_existing_desc, v_current_status
+        FROM tickets WHERE id = v_ticket_id FOR UPDATE;
+        
+        IF p_payload ? 'description_append' THEN
+            v_timestamp := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS "UTC"');
+            v_existing_desc := COALESCE(v_existing_desc, '') || E'\n\n--- Update (' || v_timestamp || E') ---\n' || (p_payload->>'description_append');
+        END IF;
+        
+        UPDATE tickets SET 
+            description = v_existing_desc,
+            priority = COALESCE(p_payload->>'priority', priority),
+            order_id = COALESCE((p_payload->>'order_id')::BIGINT, order_id),
+            status = COALESCE(p_payload->>'status', status),
+            resolution = COALESCE(p_payload->>'resolution', resolution),
+            assigned_agent = COALESCE(p_payload->>'assigned_agent', assigned_agent),
+            satisfaction_rating = COALESCE((p_payload->>'satisfaction_rating')::INT, satisfaction_rating),
+            closed_at = CASE WHEN (p_payload->>'status' = 'closed' AND v_current_status != 'closed') THEN now() ELSE closed_at END,
+            updated_at = now()
+        WHERE id = v_ticket_id;
+        
+        v_result := jsonb_build_object('status', 'success', 'message', 'Ticket #' || v_ticket_id || ' updated');
+
+        -- Enqueue Outbox for Resolution
+        IF (p_payload->>'status' = 'closed' AND v_current_status != 'closed' AND p_outbox_logical_identity_hash IS NOT NULL) THEN
+            SELECT email, name INTO v_cust_email, v_cust_name FROM customers WHERE id = v_actual_customer_id;
+            v_final_outbox_payload := p_outbox_payload_template || jsonb_build_object(
+                'ticket_id', v_ticket_id,
+                'customer_name', v_cust_name
+            );
+            
+            IF p_outbox_logical_identity_hash = 'GENERATED_IN_SQL' THEN
+                PERFORM enqueue_outbox_event(
+                    md5('customer:' || v_actual_customer_id || '|req:' || p_client_request_id || '|TICKET_RESOLVED|customer:' || v_actual_customer_id),
+                    'customer:' || v_actual_customer_id || '|req:' || p_client_request_id,
+                    'TICKET_RESOLVED',
+                    'customer:' || v_actual_customer_id,
+                    v_cust_email,
+                    v_final_outbox_payload
+                );
+            ELSE
+                PERFORM enqueue_outbox_event(
+                    p_outbox_logical_identity_hash,
+                    p_outbox_source_event_id,
+                    p_outbox_notification_type,
+                    p_outbox_recipient_identity,
+                    v_cust_email,
+                    v_final_outbox_payload
+                );
+            END IF;
+        END IF;
+    ELSE
+        v_result := jsonb_build_object('error', 'Unknown operation type: ' || p_operation_type);
+    END IF;
+
+    -- 4. Save Terminal Result
+    IF NOT (v_result ? 'error') THEN
+        UPDATE idempotency_records 
+        SET terminal_result = v_result
+        WHERE customer_id = v_actual_customer_id AND client_request_id = p_client_request_id;
+    END IF;
+
+    RETURN v_result;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION execute_ticket_mutation_with_outbox FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION execute_ticket_mutation_with_outbox TO service_role;

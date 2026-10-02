@@ -3,8 +3,9 @@ REST API Routes — provides HTTP endpoints for the frontend
 to interact with tickets, customers, and dashboard data.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 import json
+import uuid
 
 from app.dependencies import verify_admin_key, verify_agent_token, verify_customer_token
 from app.config import settings
@@ -124,7 +125,11 @@ async def get_ticket_detail(ticket_id: int, authenticated_customer_id: int = Dep
 
 
 @router.post("/tickets", status_code=201)
-async def create_new_ticket(ticket: TicketCreate, _: bool = Depends(verify_agent_token)):
+async def create_new_ticket(
+    ticket: TicketCreate, 
+    _: bool = Depends(verify_agent_token),
+    client_request_id: uuid.UUID = Header(..., alias="X-Client-Request-Id")
+):
     """Create a new support ticket."""
     result = create_ticket(
         customer_id=ticket.customer_id,
@@ -133,38 +138,23 @@ async def create_new_ticket(ticket: TicketCreate, _: bool = Depends(verify_agent
         ticket_type=ticket.type.value,
         priority=ticket.priority.value,
         channel=ticket.channel,
+        client_request_id=str(client_request_id),
     )
     data = json.loads(result)
     if "error" in data:
         raise HTTPException(status_code=400, detail=data["error"])
-
-    # Send email notification on ticket creation
-    if data.get("status") == "success" and data.get("ticket_id"):
-        try:
-            from app.tools import get_customer_by_id
-            customer_result = get_customer_by_id(ticket.customer_id)
-            customer_data = json.loads(customer_result)
-            if isinstance(customer_data, list) and customer_data:
-                c = customer_data[0]
-                import asyncio
-                await asyncio.to_thread(
-                    send_ticket_created_email,
-                    customer_email=c.get("email", ""),
-                    customer_name=c.get("name", "Customer"),
-                    ticket_id=data["ticket_id"],
-                    subject=ticket.subject,
-                    description=ticket.description,
-                    priority=ticket.priority.value,
-                )
-        except Exception:
-            pass  # Don't fail ticket creation if email fails
 
     return data
 
 
 @router.patch("/tickets/{ticket_id}")
 @router.put("/tickets/{ticket_id}")
-async def update_existing_ticket(ticket_id: int, update: TicketUpdate, _: bool = Depends(verify_agent_token)):
+async def update_existing_ticket(
+    ticket_id: int, 
+    update: TicketUpdate, 
+    _: bool = Depends(verify_agent_token),
+    client_request_id: uuid.UUID = Header(..., alias="X-Client-Request-Id")
+):
     """Update a ticket's status, priority, resolution, or assigned agent."""
     result = update_ticket(
         ticket_id=ticket_id,
@@ -173,29 +163,11 @@ async def update_existing_ticket(ticket_id: int, update: TicketUpdate, _: bool =
         resolution=update.resolution,
         assigned_agent=update.assigned_agent,
         satisfaction_rating=update.satisfaction_rating,
+        client_request_id=str(client_request_id),
     )
     data = json.loads(result)
     if "error" in data:
         raise HTTPException(status_code=400, detail=data["error"])
-
-    # Send resolution email when ticket is closed
-    if update.status and update.status.value == "closed":
-        try:
-            ticket_result = get_ticket(ticket_id)
-            ticket_data = json.loads(ticket_result)
-            if ticket_data.get("customers"):
-                c = ticket_data["customers"]
-                import asyncio
-                await asyncio.to_thread(
-                    send_resolution_email,
-                    customer_email=c.get("email", ""),
-                    customer_name=c.get("name", "Customer"),
-                    ticket_id=ticket_id,
-                    subject=ticket_data.get("subject", ""),
-                    resolution=update.resolution or ticket_data.get("resolution", ""),
-                )
-        except Exception:
-            pass
 
     return data
 

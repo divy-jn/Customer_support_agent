@@ -190,16 +190,36 @@ def create_ticket(
         import hashlib
         payload_hash = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
         
+        from app.notification_identity import SourceEventIdentity, LogicalNotificationIdentity, NotificationType, RecipientIdentity
+        source_event = SourceEventIdentity.from_ticket_creation(customer_id, client_request_id)
+        recipient = RecipientIdentity.customer(customer_id)
+        logical_identity = LogicalNotificationIdentity(
+            source_event=source_event,
+            notification_type=NotificationType.TICKET_CREATED,
+            recipient=recipient
+        )
+
+        outbox_payload_template = {
+            "subject": subject,
+            "description": description,
+            "priority": priority_enum.value,
+        }
+
         rpc_params = {
             "p_customer_id": customer_id,
             "p_client_request_id": client_request_id,
             "p_operation_type": "create_ticket",
             "p_canonical_target": "new",
             "p_payload_hash": payload_hash,
-            "p_payload": data
+            "p_payload": data,
+            "p_outbox_logical_identity_hash": logical_identity.get_hash(),
+            "p_outbox_source_event_id": source_event.source_event_id,
+            "p_outbox_notification_type": NotificationType.TICKET_CREATED.value,
+            "p_outbox_recipient_identity": recipient.principal,
+            "p_outbox_payload_template": outbox_payload_template
         }
         
-        response = supabase.rpc("execute_idempotent_operation", rpc_params).execute()
+        response = supabase.rpc("execute_ticket_mutation_with_outbox", rpc_params).execute()
         
         if not response.data:
             return json.dumps({"error": "Failed to create ticket: RPC returned no data"})
@@ -296,7 +316,7 @@ def update_ticket(
         payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         
         rpc_params = {
-            "p_customer_id": customer_id,
+            "p_customer_id": customer_id,  # Might be None for agents
             "p_client_request_id": client_request_id,
             "p_operation_type": "update_ticket",
             "p_canonical_target": str(ticket_id),
@@ -304,7 +324,30 @@ def update_ticket(
             "p_payload": payload
         }
         
-        response = supabase.rpc("execute_idempotent_operation", rpc_params).execute()
+        is_closing = (status and TicketStatus(status) == TicketStatus.CLOSED)
+        if is_closing:
+            # The outbox identity will be completely generated inside the SQL wrapper
+            # to guarantee it uses the transactionally locked authoritative customer_id.
+            outbox_payload_template = {
+                "resolution": resolution or "",
+            }
+            rpc_params.update({
+                "p_outbox_logical_identity_hash": "GENERATED_IN_SQL",
+                "p_outbox_source_event_id": "GENERATED_IN_SQL",
+                "p_outbox_notification_type": "TICKET_RESOLVED",
+                "p_outbox_recipient_identity": "GENERATED_IN_SQL",
+                "p_outbox_payload_template": outbox_payload_template
+            })
+        else:
+            rpc_params.update({
+                "p_outbox_logical_identity_hash": None,
+                "p_outbox_source_event_id": None,
+                "p_outbox_notification_type": None,
+                "p_outbox_recipient_identity": None,
+                "p_outbox_payload_template": None
+            })
+            
+        response = supabase.rpc("execute_ticket_mutation_with_outbox", rpc_params).execute()
         
         if not response.data:
             return json.dumps({"error": f"Ticket #{ticket_id} not found or update failed: RPC returned no data"})
@@ -494,7 +537,8 @@ def list_all_products() -> str:
 # ──────────────────────────────────────────────
 
 # Injectable clock for deterministic tests
-_CLOCK = lambda: datetime.now(timezone.utc)
+def _CLOCK():
+    return datetime.now(timezone.utc)
 
 def _parse_warranty_duration(description: str) -> relativedelta | None:
     """Deterministically parse warranty duration from product description."""
@@ -513,7 +557,7 @@ def _parse_warranty_duration(description: str) -> relativedelta | None:
     return None
 
 @_supabase_retry
-def _check_warranty_status_impl(customer_id: int, product_name: str = None, order_id: int = None) -> 'WarrantyStatusResult':
+def _check_warranty_status_impl(customer_id: int, product_name: str = None, order_id: int = None):
     """Internal implementation of warranty check with DB retries."""
     from app.models import WarrantyStatusResult, WarrantyStatus
     if not isinstance(customer_id, int) or customer_id <= 0:
@@ -615,7 +659,7 @@ def _check_warranty_status_impl(customer_id: int, product_name: str = None, orde
     )
 
 @track_tool_call("check_warranty_status")
-def check_warranty_status(customer_id: int, product_name: str = None, order_id: int = None) -> 'WarrantyStatusResult':
+def check_warranty_status(customer_id: int, product_name: str = None, order_id: int = None):
     """Deterministically check warranty status for a customer's purchase."""
     from app.models import WarrantyStatusResult, WarrantyStatus
     try:
@@ -845,7 +889,7 @@ def check_vectordb_health() -> dict:
 def check_supabase_health() -> dict:
     """Check if Supabase is accessible."""
     try:
-        response = supabase.table("customers").select("id").limit(1).execute()
+        supabase.table("customers").select("id").limit(1).execute()
         return {
             "status": "healthy",
             "url": settings.supabase_url,
