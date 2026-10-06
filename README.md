@@ -1,6 +1,10 @@
 # IntelliSupport - AI Customer Support Agent
 
-**IntelliSupport** is an intelligent, full-stack Customer Support Agent designed to autonomously handle customer inquiries, process complex transactions, and intelligently hand off conversations to human agents when needed. 
+> **DEVELOPMENT STAGE — UNDER ACTIVE DEVELOPMENT / STAGING**
+>
+> IntelliSupport / CSA is a **development-stage project and is not yet production-ready**. Features, agent workflows, integrations, testing, security hardening, and deployment-readiness work are still evolving.
+
+**IntelliSupport** is an intelligent, full-stack Customer Support Agent designed to autonomously handle customer inquiries, process complex transactions, and intelligently hand off conversations to human agents when needed.
 
 This project demonstrates a production-minded architecture integrating **LangGraph**, **Pinecone RAG**, **Supabase**, and **FastAPI WebSockets** to create a seamless customer service experience.
 
@@ -150,3 +154,13 @@ While the current architecture is robust for a major project submission, future 
 - A production-grade Identity Provider (OAuth2/OIDC) instead of custom JWT handling.
 - A distributed WebSocket layer using Redis Pub/Sub to support horizontal scaling across multiple FastAPI instances.
 - A background task queue (like Celery) for non-blocking asynchronous email delivery in production scenarios.
+
+---
+
+## 📌 Development Status
+
+**Current stage: Development / Staging**
+
+This repository is under active development. The project is being iterated on for agent behavior, retrieval quality, backend reliability, customer/support UX, testing, security, integrations, and deployment readiness. A production release should **not** be inferred from the current implementation or documentation.
+
+Architecture and interfaces may continue to change as development progresses.
