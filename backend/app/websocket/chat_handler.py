@@ -696,20 +696,78 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                 }, session_id)
 
             elif msg_type == "takeover":
-                # Agent is taking over the conversation
-                def _takeover(s):
-                    if s.get("mode") != "human":
-                        s["mode"] = "human"
-                        return True
-                    return False
-                session, was_changed = await _mutate_session(session_id, _takeover, allow_retry=True)
-                if was_changed and session and session.get("mode") == "human":
-                    await manager.send_personal_message({
-                        "type": "mode_change",
-                        "mode": "human",
-                        "agent_name": data.get("agent_name", "Support Agent"),
+                # Persist the takeover before changing Redis/in-memory session mode.
+                client_request_id_str = data.get("client_request_id")
+                customer_id = session.get("customer_id")
+                if not client_request_id_str or not customer_id:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": "Takeover requires a valid request ID and customer session.",
                         "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }, session_id)
+                    }))
+                    continue
+
+                try:
+                    from app.persistence.escalation import ensure_durable_escalation_state
+                    from app.models import EscalationLifecycleStatus
+                    durable_status = await asyncio.to_thread(
+                        ensure_durable_escalation_state, session_id, customer_id
+                    )
+
+                    if durable_status != EscalationLifecycleStatus.ACTIVE:
+                        from app.escalation.service import (
+                            EscalationService, EscalationRequest, IdempotencyConflict
+                        )
+                        latest_customer_message = next(
+                            (
+                                item.get("content", "")
+                                for item in reversed(session.get("conversation_history", []))
+                                if item.get("role") == "customer"
+                            ),
+                            "",
+                        )
+                        request = EscalationRequest(
+                            customer_id=customer_id,
+                            session_id=session_id,
+                            client_request_id=uuid.UUID(client_request_id_str),
+                            sentiment="neutral",
+                            urgency="normal",
+                            last_message=latest_customer_message,
+                            customer_notification_required=False,
+                        )
+                        result = await asyncio.to_thread(
+                            EscalationService.escalate_session, request
+                        )
+                        if not (result.is_success or result.status == "bypassed"):
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": result.error or result.message or "Could not persist takeover.",
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            }))
+                            continue
+
+                    def _takeover(s):
+                        if s.get("mode") != "human":
+                            s["mode"] = "human"
+                            return True
+                        return False
+                    session, was_changed = await _mutate_session(
+                        session_id, _takeover, allow_retry=True
+                    )
+                    if was_changed and session and session.get("mode") == "human":
+                        await manager.send_personal_message({
+                            "type": "mode_change",
+                            "mode": "human",
+                            "agent_name": data.get("agent_name", "Support Agent"),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }, session_id)
+                except Exception as e:
+                    logger.error(f"Failed to persist takeover for session {session_id}: {e}")
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": "Could not take over this conversation. Please retry.",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }))
 
             elif msg_type == "release":
                 # Agent is returning the conversation to the AI
