@@ -35,6 +35,24 @@ from app.email_service import send_ticket_created_email, send_resolution_email
 
 router = APIRouter()
 
+@router.post("/auth/agent/dev-login")
+async def dev_agent_login():
+    """
+    Local-development agent login. Disabled unless DEBUG_MODE is explicitly enabled.
+    Production deployments must use a real agent identity provider.
+    """
+    if not settings.debug_mode:
+        raise HTTPException(status_code=403, detail="Development agent login is disabled")
+    expiration = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expiration_minutes)
+    payload = {
+        "sub": "local-support-agent",
+        "role": "agent",
+        "exp": expiration,
+    }
+    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return {"access_token": token, "token_type": "bearer"}
+
+
 @router.post("/auth/dev-login")
 async def dev_login(email: str):
     """
