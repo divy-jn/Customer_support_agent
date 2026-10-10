@@ -363,9 +363,7 @@ from pydantic import BaseModel
 from app.llm_factory import get_dynamic_settings, SETTINGS_FILE
 
 class LLMSettingsUpdate(BaseModel):
-    llm_base_url: str
-    small_model: str
-    large_model: str
+    model: str = "gemini-3.8-flash"
 
 @router.get("/admin/llm-settings")
 @router.get("/admin/settings")

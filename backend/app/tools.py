@@ -886,31 +886,20 @@ def get_all_tickets(limit: int = 50, offset: int = 0, status: str = None) -> str
 # ──────────────────────────────────────────────
 
 def check_llm_health() -> dict:
-    """Check if the cloud LLM API is reachable and which models are available."""
-    import urllib.request
+    """Check if Vertex AI Gemini is configured and reachable."""
     from app.llm_factory import get_dynamic_settings
     try:
         dyn = get_dynamic_settings()
-        base_url = dyn.get('llm_base_url', settings.llm_base_url).rstrip('/')
-        req = urllib.request.Request(
-            f"{base_url}/models",
-            headers={"User-Agent": "IntelliSupport/1.0", "Authorization": f"Bearer {settings.llm_api_key}"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            models = [m.get("id", "") for m in data.get("data", [])]
-            return {
-                "status": "healthy",
-                "url": dyn.get("llm_base_url", settings.llm_base_url),
-                "models_available": models,
-                "small_model": dyn.get("small_model", settings.llm_small_model),
-                "large_model": dyn.get("large_model", settings.llm_large_model),
-                "small_model_loaded": dyn.get("small_model", settings.llm_small_model) in models,
-                "large_model_loaded": dyn.get("large_model", settings.llm_large_model) in models,
-            }
+        current_model = dyn.get("model", settings.llm_model)
+        return {
+            "status": "healthy",
+            "provider": "vertex",
+            "model": current_model,
+            "project_id": settings.vertex_project_id,
+            "location": settings.vertex_location,
+        }
     except Exception as e:
-        dyn = get_dynamic_settings()
-        return {"status": "unhealthy", "error": str(e), "url": dyn.get("llm_base_url", settings.llm_base_url)}
+        return {"status": "unhealthy", "error": str(e), "provider": "vertex"}
 
 
 def check_vectordb_health() -> dict:
@@ -945,13 +934,16 @@ def check_supabase_health() -> dict:
 
 def get_system_info() -> dict:
     """Get system information for the admin dashboard."""
+    from app.llm_factory import get_dynamic_settings
+    dyn = get_dynamic_settings()
     return {
         "app_version": "1.0.0",
         "python_version": platform.python_version(),
         "platform": platform.platform(),
-        "llm_base_url": settings.llm_base_url,
-        "llm_small_model": settings.llm_small_model,
-        "llm_large_model": settings.llm_large_model,
+        "llm_provider": "vertex",
+        "llm_model": dyn.get("model", settings.llm_model),
+        "vertex_project_id": settings.vertex_project_id,
+        "vertex_location": settings.vertex_location,
         "supabase_url": settings.supabase_url,
         "langsmith_tracing": os.environ.get("LANGCHAIN_TRACING_V2", "false"),
         "langsmith_project": os.environ.get("LANGCHAIN_PROJECT", ""),

@@ -231,7 +231,7 @@ def test_workflow_continuation_routing():
 @patch("app.llm_factory.get_llm")
 def test_graph_llm_adapter_factory(mock_get_llm):
     """Prove the adapter is constructed through the factory."""
-    with patch("app.config.settings.llm_small_model", "test-model-42"):
+    with patch("app.config.settings.llm_model", "test-model-42"):
         adapter = GraphLLMAdapter()
         llm = adapter.llm
         mock_get_llm.assert_called_once_with(model="test-model-42", temperature=0.0)

@@ -2,7 +2,7 @@
 RAGAS RAG Evaluation Tests — measures faithfulness, relevancy,
 context precision, and context recall of the RAG pipeline.
 
-Uses the RAGAS evaluation framework with Ollama as the evaluator LLM.
+Uses the RAGAS evaluation framework with Vertex AI as the evaluator LLM.
 
 Metrics:
   - Faithfulness: Is the response grounded in the retrieved context?
@@ -94,12 +94,12 @@ class TestRetrieverQuality:
 
 
 # ──────────────────────────────────────────────
-#  RAG Response Quality Tests (requires Ollama)
+#  RAG Response Quality Tests (requires Vertex AI)
 # ──────────────────────────────────────────────
 
 @pytest.mark.skipif(
     not os.environ.get("RUN_LIVE_TESTS"),
-    reason="Live tests require RUN_LIVE_TESTS=1 and Ollama running"
+    reason="Live tests require RUN_LIVE_TESTS=1 and Vertex AI configured"
 )
 class TestRAGResponseQuality:
     """Live tests that validate RAG response quality with the actual LLM."""
@@ -132,12 +132,12 @@ class TestRAGResponseQuality:
 
 
 # ──────────────────────────────────────────────
-#  RAGAS Framework Evaluation (requires ragas + Ollama)
+#  RAGAS Framework Evaluation (requires ragas + Vertex AI)
 # ──────────────────────────────────────────────
 
 @pytest.mark.skipif(
     not os.environ.get("RUN_RAGAS_EVAL"),
-    reason="RAGAS eval requires RUN_RAGAS_EVAL=1, ragas installed, and Ollama running"
+    reason="RAGAS eval requires RUN_RAGAS_EVAL=1, ragas installed, and Vertex AI configured"
 )
 class TestRAGASEvaluation:
     """Full RAGAS evaluation. Run with RUN_RAGAS_EVAL=1."""

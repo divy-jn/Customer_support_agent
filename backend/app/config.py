@@ -17,13 +17,11 @@ class Settings(BaseSettings):
     supabase_key: str = Field(..., alias="SUPABASE_KEY")
     database_password: str = Field(default="", alias="DATABASE_PASSWORD")
 
-    # --- Cloud LLM (Ollama Cloud) ---
-    llm_base_url: str = Field(default="https://ollama.com/v1", alias="LLM_BASE_URL")
-    llm_small_model: str = Field(default="nemotron-3-super", alias="LLM_SMALL_MODEL")
-    llm_large_model: str = Field(default="nemotron-3-super", alias="LLM_LARGE_MODEL")
-    llm_fallback_model: str = Field(default="gpt-oss:120b", alias="LLM_FALLBACK_MODEL")
-    llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
+    # --- LLM (Vertex AI) ---
+    llm_model: str = Field(default="gemini-3.8-flash", alias="LLM_MODEL")
     llm_timeout: int = Field(default=120, alias="LLM_TIMEOUT")  # seconds
+    vertex_project_id: str = Field(default="bytebazaar-dj", alias="VERTEX_PROJECT_ID")
+    vertex_location: str = Field(default="global", alias="VERTEX_LOCATION")
 
     # --- Pinecone ---
     pinecone_api_key: str = Field(default="", alias="PINECONE_API_KEY")
@@ -46,8 +44,8 @@ class Settings(BaseSettings):
     mcp_web_port: int = 8003
 
     # --- FastAPI ---
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
+    api_host: str = Field(default="0.0.0.0", alias="API_HOST")
+    api_port: int = Field(default=8002, alias="API_PORT")
 
     # --- CORS ---
     cors_origins: str = Field(

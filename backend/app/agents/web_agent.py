@@ -15,8 +15,8 @@ WEB_AGENT_SYSTEM_PROMPT = GLOBAL_SYSTEM_POLICY + "\n\n" + render_skill_prompt(We
 WEB_AGENT_SYSTEM_PROMPT += "\n\nTOOL RESULTS from web search:\n{tool_results}"
 
 def get_web_llm():
-    """Get the large LLM for generating web search-based responses."""
-    return get_llm(model=settings.llm_large_model, temperature=0.3)
+    """Get the LLM for generating web search-based responses."""
+    return get_llm(model=settings.llm_model, temperature=0.3)
 
 def determine_search_query(message: str) -> dict:
     """

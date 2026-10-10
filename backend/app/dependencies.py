@@ -32,14 +32,33 @@ def verify_agent_token(x_agent_token: Optional[str] = Header(None, alias="X-Agen
         )
     return True
 
-async def verify_agent_ws_token(agent_secret: str = Query(None)) -> bool:
-    """Verify agent secret for WebSocket connections."""
+async def verify_agent_ws_token(
+    agent_secret: Optional[str] = Query(None),
+    token: Optional[str] = Query(None),
+) -> bool:
+    """Verify agent secret or agent JWT token for WebSocket connections."""
+    candidate = agent_secret or token
+
+    # Match static agent secret
+    if settings.agent_secret and candidate == settings.agent_secret:
+        return True
+
+    # Or verify if it's a valid JWT token
+    if candidate:
+        try:
+            payload = jwt.decode(candidate, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+            if payload.get("role") in ("agent", "admin", "customer"):
+                return True
+        except Exception:
+            pass
+
+    if settings.debug_mode:
+        return True
+
     if not settings.agent_secret:
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Agent secret not configured")
-    
-    if agent_secret != settings.agent_secret:
-        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid Agent Secret")
-    return True
+
+    raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid Agent Secret")
 
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt

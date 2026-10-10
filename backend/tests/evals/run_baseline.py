@@ -280,12 +280,12 @@ async def run_baseline(target: str = "baseline", max_concurrency: int = 3, max_r
     # Diagnostic metadata
     import os
     from app.config import settings
-    env_present_os = "LLM_API_KEY" in os.environ
+    env_present_os = "VERTEX_PROJECT_ID" in os.environ
     env_present_dotenv = False
     dotenv_path = Path(".env")
     if dotenv_path.exists():
         with open(dotenv_path) as f:
-            env_present_dotenv = any("LLM_API_KEY=" in line for line in f)
+            env_present_dotenv = any("VERTEX_PROJECT_ID=" in line for line in f)
 
     if env_present_os:
         cred_source = "environment"
@@ -301,8 +301,8 @@ async def run_baseline(target: str = "baseline", max_concurrency: int = 3, max_r
         "environment_diagnostics": {
             "credential_source": cred_source,
             "credential_present": env_present_os or env_present_dotenv,
-            "provider": getattr(settings, 'llm_base_url', 'unknown'),
-            "model": getattr(settings, 'llm_small_model', 'unknown')
+            "provider": "vertex",
+            "model": getattr(settings, 'llm_model', 'unknown')
         },
         "metrics": {
             "total_examples": len(dataset.examples),
@@ -329,7 +329,7 @@ async def run_baseline(target: str = "baseline", max_concurrency: int = 3, max_r
     output = {
         "dataset_version": dataset.version,
         "commit_identity": "HEAD",
-        "model_provider": os.getenv("LLM_LARGE_MODEL", "unknown"),
+        "model_provider": getattr(settings, 'llm_model', os.getenv("LLM_MODEL", "unknown")),
         "evaluation_timestamp": datetime.now(timezone.utc).isoformat(),
         "baseline_state": baseline_state,
         "evaluation_metadata": metadata,

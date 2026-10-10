@@ -42,7 +42,7 @@ If you are unsure of the domain, use "unknown".
 """
 
 def get_semantic_router_llm():
-    return get_llm(model=settings.llm_small_model, temperature=0.1)
+    return get_llm(model=settings.llm_model, temperature=0.1)
 
 def parse_and_validate_semantic_output(raw_text: str, latency_ms: int) -> SemanticRouteResult:
     """Parses LLM output, enforcing the SemanticRouteResult schema and capturing failures."""
@@ -153,7 +153,7 @@ Classify this message and respond with a JSON object."""
 
     start_time = time.time()
     try:
-        with track_llm_call(settings.llm_small_model, "semantic_router", prompt) as tracker:
+        with track_llm_call(settings.llm_model, "semantic_router", prompt) as tracker:
             response = await llm.ainvoke([
                 {"role": "system", "content": SEMANTIC_ROUTER_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},

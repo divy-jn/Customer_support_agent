@@ -63,19 +63,14 @@ def _run_startup_checks():
 
     checks = {}
 
-    # LLM
+    # LLM (Vertex AI)
     try:
-        req = urllib.request.Request(
-            f"{settings.llm_base_url.rstrip('/')}/models",
-            headers={"User-Agent": "IntelliSupport/1.0", "Authorization": f"Bearer {settings.llm_api_key}"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = _json.loads(resp.read().decode("utf-8"))
-            models = [m.get("id", "") for m in data.get("data", [])]
-            checks["llm"] = f"OK ({len(models)} models)"
+        from app.llm_factory import get_llm
+        llm = get_llm()
+        checks["llm"] = f"OK (Vertex AI: {settings.llm_model})"
     except Exception as e:
-        checks["llm"] = f"UNREACHABLE ({e})"
-        logger.warning(f"LLM API not reachable at startup: {e}")
+        checks["llm"] = f"CONFIG_ERROR ({e})"
+        logger.warning(f"Vertex AI initialization check failed at startup: {e}")
 
     # Supabase
     try:
@@ -108,9 +103,10 @@ def _run_startup_checks():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=== Customer Support AI Server Starting ===")
-    logger.info(f"LLM URL       : {settings.llm_base_url}")
-    logger.info(f"Small Model   : {settings.llm_small_model}")
-    logger.info(f"Large Model   : {settings.llm_large_model}")
+    logger.info(f"LLM Provider  : Vertex AI")
+    logger.info(f"LLM Model     : {settings.llm_model}")
+    logger.info(f"GCP Project   : {settings.vertex_project_id}")
+    logger.info(f"GCP Location  : {settings.vertex_location}")
     logger.info(f"Supabase URL  : {settings.supabase_url}")
     logger.info(f"Log Level     : {settings.log_level}")
     logger.info(f"CORS Origins  : {settings.cors_origins_list}")
@@ -248,7 +244,8 @@ async def health_check():
         "service": "customer-support-ai",
         "version": "1.0.0",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "llm_url": settings.llm_base_url,
+        "llm_provider": "vertex",
+        "llm_model": settings.llm_model,
         "supabase_connected": status == "healthy",
         "details": db_health
     }

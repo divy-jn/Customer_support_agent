@@ -3,20 +3,16 @@ import { useState, useEffect } from "react";
 import { API_BASE } from "../lib/api";
 
 const PREDEFINED_MODELS = [
-  "gpt-oss:20b-cloud",
-  "gpt-oss:120b-cloud",
-  "gemma4:cloud",
-  "gemma4:31b-cloud",
-  "nemotron-3-nano:30b-cloud",
-  "minimax-m3:cloud",
-  "nemotron-3-super:cloud"
+  "gemini-3.8-flash",
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-1.5-flash",
+  "gemini-1.5-pro",
 ];
 
 export function DynamicModelSettings() {
   const [settings, setSettings] = useState({
-    llm_base_url: "",
-    small_model: "",
-    large_model: "",
+    model: "gemini-3.8-flash",
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -26,7 +22,9 @@ export function DynamicModelSettings() {
     fetch(`${API_BASE}/api/v1/admin/llm-settings`)
       .then((res) => res.json())
       .then((data) => {
-        setSettings(data);
+        if (data && data.model) {
+          setSettings({ model: data.model });
+        }
         setIsLoading(false);
       })
       .catch((err) => {
@@ -37,7 +35,7 @@ export function DynamicModelSettings() {
 
   const handleChange = (field, value) => {
     setSettings((prev) => ({ ...prev, [field]: value }));
-    setSaveStatus(null); // Clear status on edit
+    setSaveStatus(null);
   };
 
   const handleSave = async () => {
@@ -69,8 +67,6 @@ export function DynamicModelSettings() {
         <div className="h-5 w-48 bg-[var(--border)] rounded mb-4"></div>
         <div className="space-y-4">
           <div className="h-10 w-full bg-[var(--bg-input)] rounded"></div>
-          <div className="h-10 w-full bg-[var(--bg-input)] rounded"></div>
-          <div className="h-10 w-full bg-[var(--bg-input)] rounded"></div>
         </div>
       </div>
     );
@@ -81,13 +77,13 @@ export function DynamicModelSettings() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--text-secondary)] flex items-center gap-2">
-            Dynamic Model Selection
+            Vertex AI Model Selection
             <span className="bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full text-[10px] font-bold">
               LIVE
             </span>
           </h2>
           <p className="text-xs text-[var(--text-muted)] mt-1">
-            Changes made here take effect instantly without restarting the server.
+            Configure the primary model on Google Cloud Vertex AI. Takes effect immediately.
           </p>
         </div>
         <button
@@ -102,47 +98,17 @@ export function DynamicModelSettings() {
       <div className="space-y-5">
         <div>
           <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
-            Cloud Provider Base URL
+            Primary Model Name
           </label>
-          <input
-            type="text"
-            className="w-full bg-[var(--bg-input)] border border-[var(--border)] rounded p-2.5 text-sm font-mono focus:border-[var(--accent)] focus:outline-none transition-colors"
-            value={settings.llm_base_url}
-            onChange={(e) => handleChange("llm_base_url", e.target.value)}
-            placeholder="https://api.openai.com/v1"
-          />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
-              Small Model (Fast Router / Escalation)
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                list="models-list"
-                className="w-full bg-[var(--bg-input)] border border-[var(--border)] rounded p-2.5 text-sm font-mono focus:border-[var(--accent)] focus:outline-none transition-colors"
-                value={settings.small_model}
-                onChange={(e) => handleChange("small_model", e.target.value)}
-                placeholder="e.g. glm-4"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
-              Large Model (RAG / DB Tools / Web)
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                list="models-list"
-                className="w-full bg-[var(--bg-input)] border border-[var(--border)] rounded p-2.5 text-sm font-mono focus:border-[var(--accent)] focus:outline-none transition-colors"
-                value={settings.large_model}
-                onChange={(e) => handleChange("large_model", e.target.value)}
-                placeholder="e.g. nemotron-4-340b-instruct"
-              />
-            </div>
+          <div className="relative">
+            <input
+              type="text"
+              list="models-list"
+              className="w-full bg-[var(--bg-input)] border border-[var(--border)] rounded p-2.5 text-sm font-mono focus:border-[var(--accent)] focus:outline-none transition-colors"
+              value={settings.model}
+              onChange={(e) => handleChange("model", e.target.value)}
+              placeholder="gemini-3.8-flash"
+            />
           </div>
         </div>
 

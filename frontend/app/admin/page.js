@@ -128,30 +128,17 @@ export default function SystemHealthPage() {
           <div className="flex justify-between items-start mb-4">
             <div>
               <h3 className="text-lg font-semibold flex items-center gap-2">LLM Provider</h3>
-              <p className="text-xs text-[var(--text-muted)] font-mono mt-1">{services?.llm?.url || "Unknown URL"}</p>
+              <p className="text-xs text-[var(--text-muted)] font-mono mt-1">Google Cloud Vertex AI ({services?.llm?.project_id || "bytebazaar-dj"})</p>
             </div>
             <StatusIndicator status={services?.llm?.status} />
           </div>
           <div className="space-y-4 mt-6">
             <div>
-              <p className="text-xs text-[var(--text-secondary)] uppercase tracking-wider mb-2">Primary Models</p>
-              <div className="flex items-center justify-between text-sm bg-[var(--bg-input)] p-3 rounded-lg mb-2">
-                <span>Small/Fast (Router)</span>
-                <span className="font-mono text-[var(--accent)]">{services?.llm?.small_model}</span>
-                {services?.llm?.small_model_loaded ? (
-                  <span className="text-emerald-400 text-xs">Loaded ✓</span>
-                ) : (
-                  <span className="text-red-400 text-xs">Missing ✗</span>
-                )}
-              </div>
+              <p className="text-xs text-[var(--text-secondary)] uppercase tracking-wider mb-2">Primary Model</p>
               <div className="flex items-center justify-between text-sm bg-[var(--bg-input)] p-3 rounded-lg">
-                <span>Large (Agent logic)</span>
-                <span className="font-mono text-[var(--accent)]">{services?.llm?.large_model}</span>
-                {services?.llm?.large_model_loaded ? (
-                  <span className="text-emerald-400 text-xs">Loaded ✓</span>
-                ) : (
-                  <span className="text-red-400 text-xs">Missing ✗</span>
-                )}
+                <span>Vertex AI Gemini</span>
+                <span className="font-mono text-[var(--accent)]">{services?.llm?.model || "gemini-3.8-flash"}</span>
+                <span className="text-emerald-400 text-xs">Active ✓</span>
               </div>
             </div>
             <button onClick={() => testService("llm")} className="btn-secondary w-full py-2 text-xs">

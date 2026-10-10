@@ -205,10 +205,9 @@ export default function CustomerChatPage() {
       if (event.code === 1008 || event.code === 1011) {
         setMessages((prev) => [
           ...prev,
-          { role: "error", content: `WebSocket connection rejected (Code: ${event.code}). Please check authentication.`, timestamp: new Date().toISOString() },
+          { role: "error", content: `Authentication failed (Code: ${event.code}). Getting a new token and reconnecting...`, timestamp: new Date().toISOString() },
         ]);
-        setReconnecting(false);
-        return; // Stop reconnecting
+        localStorage.removeItem("intellisupport_jwt");
       }
 
       setReconnecting(true);

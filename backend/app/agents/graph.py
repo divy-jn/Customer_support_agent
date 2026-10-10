@@ -55,7 +55,7 @@ class GraphLLMAdapter:
         if self._llm is None:
             from app.llm_factory import get_llm
             from app.config import settings
-            self._llm = get_llm(model=settings.llm_small_model, temperature=0.0)
+            self._llm = get_llm(model=settings.llm_model, temperature=0.0)
         return self._llm
         
     async def invoke(self, system: str, user: str) -> str:

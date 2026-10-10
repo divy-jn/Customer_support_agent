@@ -30,7 +30,7 @@ policy:
     - "create_ticket"
     - "update_ticket"
     - "web_search"
-  risk_level: "READ_ONLY"
+  risk_level: "read_only"
   requires_confirmation: false
 ---
 

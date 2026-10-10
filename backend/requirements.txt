@@ -9,7 +9,8 @@ pydantic-settings>=2.8.0
 # === LLM & Agents ===
 langchain>=0.3.0
 langgraph>=0.4.0
-langchain-openai>=0.3.0
+langchain-google-genai>=2.0.0
+google-genai
 langchain-community>=0.3.0
 langsmith>=0.3.0
 

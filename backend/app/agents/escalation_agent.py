@@ -14,8 +14,8 @@ from app.skills.registry import EscalationSkill
 ESCALATION_PROMPT = GLOBAL_SYSTEM_POLICY + "\n\n" + render_skill_prompt(EscalationSkill)
 
 def get_escalation_llm():
-    """Get the small LLM for fast escalation processing."""
-    return get_llm(model=settings.llm_small_model, temperature=0.1)
+    """Get the LLM for fast escalation processing."""
+    return get_llm(model=settings.llm_model, temperature=0.1)
 
 async def generate_escalation_response(message: str) -> dict:
     """

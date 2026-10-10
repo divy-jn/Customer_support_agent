@@ -23,7 +23,7 @@ DB_AGENT_SYSTEM_PROMPT = GLOBAL_SYSTEM_POLICY + "\n\n" + render_skill_prompt(Dat
 
 def get_db_llm():
     """Get the large LLM for generating database-informed responses."""
-    return get_llm(model=settings.llm_large_model, temperature=0.3)
+    return get_llm(model=settings.llm_model, temperature=0.3)
 
 
 class DBPlannerOutput(BaseModel):
@@ -60,7 +60,7 @@ Do NOT invent IDs.
 """
 
     try:
-        with track_llm_call(settings.llm_large_model, "db_plan", prompt) as tracker:
+        with track_llm_call(settings.llm_model, "db_plan", prompt) as tracker:
             result = structured_llm.invoke([
                 {"role": "system", "content": DB_AGENT_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
@@ -159,7 +159,7 @@ TOOL RESULTS from database:
 Based on the tool results above, provide a helpful response to the customer."""
 
     try:
-        with track_llm_call(settings.llm_large_model, "db_node", user_prompt) as tracker:
+        with track_llm_call(settings.llm_model, "db_node", user_prompt) as tracker:
             response = await llm.ainvoke([
                 {"role": "system", "content": DB_AGENT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},

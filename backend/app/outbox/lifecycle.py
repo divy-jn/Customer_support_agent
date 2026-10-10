@@ -48,6 +48,10 @@ async def start_outbox_worker() -> None:
     """Start the outbox worker as a background task.  Call from lifespan startup."""
     global _worker_instance
 
+    if not settings.database_password:
+        logger.info("Outbox worker disabled: DATABASE_PASSWORD not configured")
+        return
+
     dsn = _build_dsn()
     sender = GmailSmtpSender()
 
@@ -193,8 +197,8 @@ async def start_reconciliation_scheduler() -> None:
     """Start the periodic reconciliation background task."""
     global _reconciliation_task, _reconciliation_cancel_event, _reconciliation_lock
     
-    if not settings.reconciliation_enabled:
-        logger.info("Outbox reconciliation is disabled via configuration.")
+    if not settings.database_password or not settings.reconciliation_enabled:
+        logger.info("Outbox reconciliation is disabled (DATABASE_PASSWORD not set or disabled via config).")
         return
         
     if _reconciliation_cancel_event is None:

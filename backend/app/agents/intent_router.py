@@ -19,8 +19,8 @@ ROUTER_SYSTEM_PROMPT = GLOBAL_SYSTEM_POLICY + "\n\n" + render_skill_prompt(Inten
 
 
 def get_router_llm():
-    """Get the small LLM for fast routing decisions."""
-    return get_llm(model=settings.llm_small_model, temperature=0.1)
+    """Get the LLM for fast routing decisions."""
+    return get_llm(model=settings.llm_model, temperature=0.1)
 
 
 def parse_and_validate_router_output(raw_text: str) -> dict:
@@ -116,7 +116,7 @@ async def classify_intent(message: str, conversation_history: list[dict] = None)
 Classify this message and respond with a JSON object."""
 
     try:
-        with track_llm_call(settings.llm_small_model, "intent_router", prompt) as tracker:
+        with track_llm_call(settings.llm_model, "intent_router", prompt) as tracker:
             response = await llm.ainvoke([
                 {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},

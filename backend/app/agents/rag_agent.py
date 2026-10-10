@@ -21,8 +21,8 @@ RAG_SYSTEM_PROMPT += "\n\nCONTEXT:\n{context}"
 
 
 def get_rag_llm():
-    """Get the large LLM for generating RAG responses."""
-    return get_llm(model=settings.llm_large_model, temperature=0.3)
+    """Get the LLM for generating RAG responses."""
+    return get_llm(model=settings.llm_model, temperature=0.3)
 
 
 async def generate_response(
@@ -72,7 +72,7 @@ async def generate_response(
     llm = get_rag_llm()
 
     try:
-        with track_llm_call(settings.llm_large_model, "rag_node", user_prompt) as tracker:
+        with track_llm_call(settings.llm_model, "rag_node", user_prompt) as tracker:
             response = await llm.ainvoke([
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

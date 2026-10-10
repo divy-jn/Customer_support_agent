@@ -2,7 +2,7 @@
 Tests for the LangGraph agent flow — verifies intent routing
 and end-to-end graph execution.
 
-Requires a running LLM (Ollama Cloud) and seeded database.
+Requires a running LLM (Vertex AI) and seeded database.
 
 Usage:
     cd backend
