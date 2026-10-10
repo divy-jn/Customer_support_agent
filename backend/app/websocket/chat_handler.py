@@ -658,6 +658,15 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
             msg_type = data.get("type", "")
 
             if msg_type == "agent_message":
+                # Keep AI and human modes mutually exclusive.
+                if session.get("mode") != "human":
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": "Take over the conversation before sending a human-agent reply.",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }))
+                    continue
+
                 # Human agent is sending a message to the customer
                 agent_message = data.get("message", "").strip()
                 agent_name = data.get("agent_name", "Support Agent")
