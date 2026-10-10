@@ -1,5 +1,7 @@
 from fastapi import Depends, HTTPException, status, Header, Query, WebSocketException
 from typing import Optional
+import jwt
+from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
 from app.config import settings
 
 def verify_admin_key(x_api_key: Optional[str] = Header(None, alias="X-API-Key")) -> bool:
@@ -17,20 +19,32 @@ def verify_admin_key(x_api_key: Optional[str] = Header(None, alias="X-API-Key"))
         )
     return True
 
-def verify_agent_token(x_agent_token: Optional[str] = Header(None, alias="X-Agent-Token")) -> bool:
-    """Verify the agent token from headers (for REST routes)."""
-    if not settings.agent_secret:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Agent secret is not configured on the server"
-        )
-        
-    if x_agent_token != settings.agent_secret:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing Agent Token"
-        )
-    return True
+def verify_agent_token(
+    x_agent_token: Optional[str] = Header(None, alias="X-Agent-Token"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+) -> bool:
+    """Verify a static demo token or a signed agent/admin JWT for REST routes."""
+    if settings.agent_secret and x_agent_token == settings.agent_secret:
+        return True
+
+    if authorization and authorization.lower().startswith("bearer "):
+        candidate = authorization.split(" ", 1)[1].strip()
+        try:
+            payload = jwt.decode(
+                candidate,
+                settings.jwt_secret,
+                algorithms=[settings.jwt_algorithm],
+            )
+            if payload.get("role") in ("agent", "admin"):
+                return True
+        except (InvalidTokenError, ExpiredSignatureError):
+            pass
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Valid agent authentication is required",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 async def verify_agent_ws_token(
     agent_secret: Optional[str] = Query(None),
@@ -47,13 +61,10 @@ async def verify_agent_ws_token(
     if candidate:
         try:
             payload = jwt.decode(candidate, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
-            if payload.get("role") in ("agent", "admin", "customer"):
+            if payload.get("role") in ("agent", "admin"):
                 return True
         except Exception:
             pass
-
-    if settings.debug_mode:
-        return True
 
     if not settings.agent_secret:
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Agent secret not configured")
@@ -61,8 +72,6 @@ async def verify_agent_ws_token(
     raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid Agent Secret")
 
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import jwt
-from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
 
 security = HTTPBearer()
 
