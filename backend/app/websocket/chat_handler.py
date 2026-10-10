@@ -122,8 +122,13 @@ async def _mutate_session(session_id: str, mutator_fn, allow_retry: bool = True,
 
 
 async def get_all_active_sessions() -> list:
-    """Retrieve all active sessions from Redis or memory."""
-    return await session_store.get_all_active_sessions()
+    """Return sessions with a currently connected customer WebSocket."""
+    sessions = await session_store.get_all_active_sessions()
+    connected_session_ids = set(manager.active_connections.keys())
+    return [
+        session for session in sessions
+        if session.get("session_id") in connected_session_ids
+    ]
 
 
 async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None, authenticated_customer_id: int | None = None):
