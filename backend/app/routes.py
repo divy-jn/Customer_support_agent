@@ -251,7 +251,7 @@ async def search_products(q: str):
 # ──────────────────────────────────────────────
 
 @router.get("/dashboard/stats")
-async def dashboard_stats():
+async def dashboard_stats(_: bool = Depends(verify_agent_token)):
     """Get aggregated dashboard statistics."""
     result = get_dashboard_stats()
     return json.loads(result)
