@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import EmptyState from "../../components/EmptyState";
 import { useToast } from "../../components/Toast";
 import { API_BASE, WS_BASE } from "../../lib/api";
+import { agentFetch, getAgentToken } from "../../lib/agent-auth";
 
 const CANNED_RESPONSES = [
   { label: "Greeting", text: "Hello! I'm a support agent. Let me help you with your concern." },
@@ -49,7 +50,8 @@ export default function LiveSessionsPage() {
   useEffect(() => {
     const fetchSessions = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/v1/dashboard/sessions`);
+        const res = await agentFetch(`${API_BASE}/api/v1/dashboard/sessions`);
+        if (!res.ok) throw new Error(`Session API failed (${res.status})`);
         const data = await res.json();
         setSessions(data.active_sessions || []);
       } catch (err) {
