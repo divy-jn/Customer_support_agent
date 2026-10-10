@@ -70,9 +70,13 @@ export default function TicketsPage() {
   const updateTicketStatus = async (ticketId, newStatus) => {
     setUpdatingTicketId(ticketId);
     try {
+      const reqId = crypto.randomUUID();
       const res = await fetch(`${API_BASE}/api/v1/tickets/${ticketId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "X-Client-Request-Id": reqId
+        },
         body: JSON.stringify({ status: newStatus }),
       });
       if (res.ok) {

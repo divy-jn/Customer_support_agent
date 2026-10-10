@@ -192,10 +192,10 @@ class TestWebSocketConnection:
             assert welcome["type"] == "system"
 
             # Send empty message
-            websocket.send_json({"message": ""})
+            websocket.send_json({"message": "", "client_request_id": "req-1"})
 
             # Send a valid message to verify connection is still alive
-            websocket.send_json({"message": "hello"})
+            websocket.send_json({"message": "hello", "client_request_id": "req-2"})
 
             # We should get a typing indicator or response (not crash)
             response = websocket.receive_json()
@@ -215,9 +215,10 @@ class TestWebSocketConnection:
             # Send plain text instead of JSON
             websocket.send_text("hello plain text")
 
-            # Should get typing indicator then response
+            # Should get error message since it doesn't contain JSON with client_request_id
             response = websocket.receive_json()
-            assert response["type"] in ("typing", "agent_response", "ping"), f"Expected typing or agent_response, got {response}"
+            assert response["type"] == "error", f"Expected error, got {response}"
+            assert "Missing client_request_id" in response["message"]
 
     @patch("app.persistence.escalation.ensure_durable_escalation_state")
     @patch("app.websocket.chat_handler.customer_support_graph.ainvoke", new_callable=AsyncMock)
@@ -238,10 +239,12 @@ class TestWebSocketConnection:
         session_id = f"test-reconnect-{uuid.uuid4().hex[:6]}"
         
         messages = ["message A", "message B"]
-        for msg_text in messages:
+        import uuid as uuid_lib
+        for i, msg_text in enumerate(messages):
             with client.websocket_connect(f"/ws/chat/{session_id}?token={auth_token}") as websocket:
                 websocket.receive_json() # welcome
-                websocket.send_json({"message": msg_text})
+                req_id = f"req-{i}"
+                websocket.send_json({"message": msg_text, "client_request_id": req_id})
                 
                 # Receive LLM response
                 msg = websocket.receive_json()
@@ -306,7 +309,7 @@ class TestWebSocketConnection:
             assert welcome["type"] == "system"
             
             with patch("app.websocket.chat_handler.customer_support_graph.ainvoke", new_callable=AsyncMock) as mock_call_agent:
-                customer_ws.send_json({"message": "Hello in human mode"})
+                customer_ws.send_json({"message": "Hello in human mode", "client_request_id": "req-test"})
                 import time
                 time.sleep(0.1)
                 # Ensure the AI agent was NOT invoked because the session mode was read from durable state as 'human'
@@ -347,7 +350,7 @@ class TestWebSocketConnection:
             assert session_id in manager.active_connections, "WS2 was erroneously deleted by WS1 disconnect"
             
             # Now verify WS2 still works
-            ws2_conn.send_json({"message": "hello"})
+            ws2_conn.send_json({"message": "hello", "client_request_id": "req-123"})
             
             # Should receive typing or agent_response
             response = ws2_conn.receive_json()
@@ -373,7 +376,7 @@ class TestHumanHandover:
                 assert agent_welcome["type"] == "session_state"
                 
                 # 3. Agent takes over
-                agent_ws.send_json({"type": "takeover", "agent_name": "Test Human"})
+                agent_ws.send_json({"type": "takeover", "agent_name": "Test Human", "client_request_id": str(uuid.uuid4())})
                 
                 # Customer should receive system message about takeover
                 cust_takeover_msg = customer_ws.receive_json()
@@ -385,7 +388,7 @@ class TestHumanHandover:
                 assert cust_takeover_msg["mode"] == "human"
                 
                 # 4. Customer sends a message in human mode
-                customer_ws.send_json({"message": "Hello Human"})
+                customer_ws.send_json({"message": "Hello Human", "client_request_id": str(uuid.uuid4())})
                 
                 # Agent should receive customer message
                 agent_receives_msg = agent_ws.receive_json()
@@ -407,7 +410,7 @@ class TestHumanHandover:
                 assert cust_agent_msg["agent_name"] == "Test Human"
                 
                 # 6. Agent releases conversation
-                agent_ws.send_json({"type": "release"})
+                agent_ws.send_json({"type": "release", "client_request_id": str(uuid.uuid4())})
                 
                 # Customer receives release system message
                 cust_release_msg = customer_ws.receive_json()
@@ -480,3 +483,50 @@ class TestDualActiveSessions:
         
         manager.disconnect_customer(session1_id)
         manager.disconnect_customer(session2_id)
+
+class TestIdempotency:
+    """Test idempotency constraints via RPC."""
+
+    @patch("app.persistence.escalation.ensure_durable_escalation_state")
+    @patch("app.tools.supabase")
+    def test_idempotency_conflict_rejection(self, mock_supabase, mock_esc, auth_token):
+        from app.models import EscalationLifecycleStatus
+        mock_esc.return_value = EscalationLifecycleStatus.NONE
+        
+        # Mock Supabase RPC to return IdempotencyConflict
+        mock_rpc = MagicMock()
+        mock_rpc.execute.return_value.data = {
+            "error": "IdempotencyConflict",
+            "message": "This request ID was already used for a different operation."
+        }
+        mock_supabase.rpc.return_value = mock_rpc
+        
+        from app.tools import create_ticket
+        
+        import uuid
+        req_id = str(uuid.uuid4())
+        
+        res = create_ticket(
+            customer_id=1, 
+            subject="Test Conflict", 
+            description="Testing ID conflict", 
+            client_request_id=req_id
+        )
+        
+        import json
+        res_data = json.loads(res)
+        assert res_data["error"] == "IdempotencyConflict"
+        
+    def test_missing_client_request_id_in_mutation(self, auth_token):
+        from app.tools import create_ticket
+        
+        res = create_ticket(
+            customer_id=1, 
+            subject="No ID", 
+            description="Testing missing ID", 
+            client_request_id=None
+        )
+        
+        import json
+        res_data = json.loads(res)
+        assert "client_request_id is required" in res_data["error"]

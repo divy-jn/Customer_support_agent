@@ -296,12 +296,13 @@ export default function CustomerChatPage() {
     e.preventDefault();
     if (!input.trim() || !wsRef.current || wsRef.current.readyState !== 1) return;
     const msg = input.trim();
+    const reqId = crypto.randomUUID();
     setMessages((prev) => [
       ...prev,
-      { role: "customer", content: msg, timestamp: new Date().toISOString(), status: "sent" },
+      { role: "customer", content: msg, timestamp: new Date().toISOString(), status: "sent", client_request_id: reqId },
     ]);
     wsRef.current.send(
-      JSON.stringify({ message: msg, customer_id: identifiedCustomer?.id })
+      JSON.stringify({ message: msg, customer_id: identifiedCustomer?.id, client_request_id: reqId })
     );
     setInput("");
     setAutoScroll(true);
@@ -328,11 +329,12 @@ export default function CustomerChatPage() {
 
   const sendSuggestion = (text) => {
     if (!wsRef.current || wsRef.current.readyState !== 1) return;
+    const reqId = crypto.randomUUID();
     setMessages((prev) => [
       ...prev,
-      { role: "customer", content: text, timestamp: new Date().toISOString(), status: "sent" },
+      { role: "customer", content: text, timestamp: new Date().toISOString(), status: "sent", client_request_id: reqId },
     ]);
-    wsRef.current.send(JSON.stringify({ message: text, customer_id: identifiedCustomer?.id }));
+    wsRef.current.send(JSON.stringify({ message: text, customer_id: identifiedCustomer?.id, client_request_id: reqId }));
     setAutoScroll(true);
   };
 

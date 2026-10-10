@@ -208,7 +208,11 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 client_request_id = None
                 
             if not client_request_id:
-                pass # Do NOT silently convert an omitted request ID into a new operation
+                await manager.send_personal_message({
+                    "type": "error",
+                    "message": "Missing client_request_id in payload."
+                }, session_id)
+                continue
 
             customer_id = authenticated_customer_id
 
