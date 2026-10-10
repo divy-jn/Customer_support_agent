@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { SkeletonCard } from "../components/LoadingSkeleton";
 import EmptyState from "../components/EmptyState";
 import { API_BASE } from "../lib/api";
+import { agentFetch } from "../lib/agent-auth";
 
 // ── Animated Counter Hook ──
 function useAnimatedCounter(target, duration = 800) {
@@ -92,9 +93,12 @@ export default function DashboardPage() {
     if (isManual) setRefreshing(true);
     try {
       const [statsRes, sessionsRes] = await Promise.all([
-        fetch(`${API_BASE}/api/v1/dashboard/stats`),
-        fetch(`${API_BASE}/api/v1/dashboard/sessions`),
+        agentFetch(`${API_BASE}/api/v1/dashboard/stats`),
+        agentFetch(`${API_BASE}/api/v1/dashboard/sessions`),
       ]);
+      if (!statsRes.ok || !sessionsRes.ok) {
+        throw new Error(`Dashboard API failed: stats=${statsRes.status}, sessions=${sessionsRes.status}`);
+      }
       const statsData = await statsRes.json();
       const sessionsData = await sessionsRes.json();
       setStats(statsData);
