@@ -135,7 +135,7 @@ export default function LiveSessionsPage() {
       if (event.code === 1008) localStorage.removeItem("intellisupport_agent_jwt");
       // Auto-reconnect after 3 seconds if we still have a selected session
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = setTimeout(async () => {
         if (selectedSessionRef.current) {
           let freshToken;
           try {
