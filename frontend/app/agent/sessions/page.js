@@ -64,8 +64,10 @@ export default function LiveSessionsPage() {
   }, []);
 
   // Connect to session as agent
-  const monitorSession = useCallback((session) => {
-    if (wsRef.current) wsRef.current.close();
+  const monitorSession = useCallback(async (session) => {
+    const previousSocket = wsRef.current;
+    wsRef.current = null;
+    if (previousSocket) previousSocket.close();
 
     setSelectedSession(session);
     selectedSessionRef.current = session;
@@ -74,10 +76,17 @@ export default function LiveSessionsPage() {
     setHasTakenOver(session.mode === "human");
     if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
 
-    let token = localStorage.getItem("intellisupport_jwt");
-    let wsUrl = `${WS_BASE}/ws/agent/${session.session_id}`;
-    if (token) wsUrl += `?token=${token}`;
-    
+    let token;
+    try {
+      token = await getAgentToken();
+    } catch (error) {
+      setIsMonitoring(false);
+      toast(error.message || "Agent authentication failed.", "error");
+      return;
+    }
+    if (selectedSessionRef.current?.session_id !== session.session_id) return;
+
+    const wsUrl = `${WS_BASE}/ws/agent/${encodeURIComponent(session.session_id)}?token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -121,16 +130,22 @@ export default function LiveSessionsPage() {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setIsMonitoring(false);
+      if (event.code === 1008) localStorage.removeItem("intellisupport_agent_jwt");
       // Auto-reconnect after 3 seconds if we still have a selected session
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = setTimeout(() => {
         if (selectedSessionRef.current) {
-          let token = localStorage.getItem("intellisupport_jwt");
-          let wsUrl = `${WS_BASE}/ws/agent/${selectedSessionRef.current.session_id}`;
-          if (token) wsUrl += `?token=${token}`;
-          
+          let freshToken;
+          try {
+            freshToken = await getAgentToken();
+          } catch (error) {
+            toast(error.message || "Agent reconnect failed.", "error");
+            return;
+          }
+          if (!selectedSessionRef.current) return;
+          const wsUrl = `${WS_BASE}/ws/agent/${encodeURIComponent(selectedSessionRef.current.session_id)}?token=${encodeURIComponent(freshToken)}`;
           const ws2 = new WebSocket(wsUrl);
           wsRef.current = ws2;
           ws2.onmessage = ws.onmessage;
@@ -148,6 +163,10 @@ export default function LiveSessionsPage() {
   const sendAgentMessage = (e) => {
     e.preventDefault();
     if (!agentInput.trim() || !wsRef.current || wsRef.current.readyState !== 1) return;
+    if (!hasTakenOver && selectedSession?.mode !== "human") {
+      toast("Take over this conversation before sending a human-agent reply.", "warning");
+      return;
+    }
 
     wsRef.current.send(
       JSON.stringify({
@@ -181,7 +200,7 @@ export default function LiveSessionsPage() {
   const takeoverSession = () => {
     if (wsRef.current && wsRef.current.readyState === 1) {
       wsRef.current.send(
-        JSON.stringify({ type: "takeover", agent_name: "Support Agent" })
+        JSON.stringify({ type: "takeover", client_request_id: crypto.randomUUID(), agent_name: "Support Agent" })
       );
       setHasTakenOver(true);
       toast("You've taken over this conversation.", "success");
@@ -192,7 +211,7 @@ export default function LiveSessionsPage() {
   const releaseSession = () => {
     if (wsRef.current && wsRef.current.readyState === 1) {
       wsRef.current.send(
-        JSON.stringify({ type: "release" })
+        JSON.stringify({ type: "release", client_request_id: crypto.randomUUID() })
       );
       setHasTakenOver(false);
       toast("Released conversation to AI Assistant.", "info");
