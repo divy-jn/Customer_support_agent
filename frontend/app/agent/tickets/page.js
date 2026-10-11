@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { SkeletonTable } from "../../components/LoadingSkeleton";
 import EmptyState from "../../components/EmptyState";
 import { useToast } from "../../components/Toast";
 import { API_BASE } from "../../lib/api";
+import { agentFetch } from "../../lib/agent-auth";
 
 const STATUS_OPTIONS = ["open", "in_progress", "pending_customer", "escalated", "closed"];
 const PRIORITY_OPTIONS = ["low", "medium", "high", "critical"];
@@ -27,10 +28,11 @@ export default function TicketsPage() {
   const [filterPriority, setFilterPriority] = useState("");
   const [updatingTicketId, setUpdatingTicketId] = useState(null);
   const { toast, ToastContainer } = useToast();
+  const pendingRequestsRef = useRef({});
 
   const fetchTickets = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/tickets?limit=50`);
+      const res = await agentFetch(`${API_BASE}/api/v1/tickets?limit=50`);
       if (res.ok) {
         const data = await res.json();
         setTickets(Array.isArray(data) ? data : (data.data || []));
@@ -54,7 +56,7 @@ export default function TicketsPage() {
     e.preventDefault();
     if (!searchId.trim()) return;
     try {
-      const res = await fetch(`${API_BASE}/api/v1/tickets/${searchId}`);
+      const res = await agentFetch(`${API_BASE}/api/v1/tickets/${searchId}`);
       if (res.ok) {
         const data = await res.json();
         setSelectedTicket(data);
@@ -70,8 +72,13 @@ export default function TicketsPage() {
   const updateTicketStatus = async (ticketId, newStatus) => {
     setUpdatingTicketId(ticketId);
     try {
-      const reqId = crypto.randomUUID();
-      const res = await fetch(`${API_BASE}/api/v1/tickets/${ticketId}`, {
+      const actionKey = `${ticketId}-${newStatus}`;
+      if (!pendingRequestsRef.current[actionKey]) {
+        pendingRequestsRef.current[actionKey] = crypto.randomUUID();
+      }
+      const reqId = pendingRequestsRef.current[actionKey];
+
+      const res = await agentFetch(`${API_BASE}/api/v1/tickets/${ticketId}`, {
         method: "PATCH",
         headers: { 
           "Content-Type": "application/json",
@@ -80,6 +87,7 @@ export default function TicketsPage() {
         body: JSON.stringify({ status: newStatus }),
       });
       if (res.ok) {
+        delete pendingRequestsRef.current[actionKey];
         setTickets((prev) =>
           prev.map((t) => (t.id === ticketId ? { ...t, status: newStatus } : t))
         );

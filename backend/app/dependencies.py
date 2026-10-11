@@ -96,6 +96,37 @@ def verify_customer_token(credentials: HTTPAuthorizationCredentials = Depends(se
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid customer identity format")
 
+def verify_any_token(
+    x_agent_token: Optional[str] = Header(None, alias="X-Agent-Token"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+) -> dict:
+    """Verify customer, agent, or admin JWT token, or static agent token."""
+    # Check static agent secret first
+    if settings.agent_secret and x_agent_token == settings.agent_secret:
+        return {"role": "agent"}
+
+    if authorization and authorization.lower().startswith("bearer "):
+        candidate = authorization.split(" ", 1)[1].strip()
+        try:
+            payload = jwt.decode(candidate, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+            role = payload.get("role")
+            if role in ("agent", "admin"):
+                return {"role": role}
+            elif role == "customer":
+                sub = payload.get("sub")
+                if not sub:
+                    raise HTTPException(status_code=401, detail="Invalid token subject")
+                try:
+                    return {"role": role, "id": int(sub)}
+                except ValueError:
+                    raise HTTPException(status_code=401, detail="Invalid customer identity format")
+        except ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token has expired")
+        except InvalidTokenError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+    raise HTTPException(status_code=401, detail="Valid authentication is required")
+
 async def verify_customer_ws_token(token: str = Query(None)) -> int:
     """Verify customer JWT token from WebSocket query parameters."""
     if not token:

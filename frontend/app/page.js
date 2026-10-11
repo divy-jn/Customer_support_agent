@@ -246,8 +246,18 @@ export default function CustomerChatPage() {
     if (!customerEmail.trim()) return;
     setIdentifying(true);
     try {
+      const authRes = await fetch(`${API_BASE}/api/v1/auth/dev-login?email=${encodeURIComponent(customerEmail)}`, { method: 'POST' });
+      if (!authRes.ok) {
+          toast("No account found with that email. Try another or continue as guest.", "warning");
+          setIdentifying(false);
+          return;
+      }
+      const authData = await authRes.json();
+      localStorage.setItem("intellisupport_jwt", authData.access_token);
+
       const res = await fetch(
-        `${API_BASE}/api/v1/customers/search?q=${encodeURIComponent(customerEmail)}`
+        `${API_BASE}/api/v1/customers/search?q=${encodeURIComponent(customerEmail)}`,
+        { headers: { "Authorization": `Bearer ${authData.access_token}` } }
       );
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
@@ -260,7 +270,7 @@ export default function CustomerChatPage() {
           // No need to send fake [System] messages that trigger LangGraph.
         }
       } else {
-        toast("No account found with that email. Try another or continue as guest.", "warning");
+        toast("Failed to load customer profile.", "warning");
       }
     } catch (err) {
       toast("Connection error. Please try again.", "error");
@@ -291,12 +301,16 @@ export default function CustomerChatPage() {
     if (!drawerOpen && identifiedCustomer && !customerHistory) loadHistory();
   };
 
+  const nextReqIdRef = useRef(crypto.randomUUID());
+
   // ── Send Message ──
   const sendMessage = (e) => {
     e.preventDefault();
     if (!input.trim() || !wsRef.current || wsRef.current.readyState !== 1) return;
     const msg = input.trim();
-    const reqId = crypto.randomUUID();
+    const reqId = nextReqIdRef.current;
+    nextReqIdRef.current = crypto.randomUUID(); // generate new id for the NEXT distinct action
+    
     setMessages((prev) => [
       ...prev,
       { role: "customer", content: msg, timestamp: new Date().toISOString(), status: "sent", client_request_id: reqId },
@@ -329,7 +343,9 @@ export default function CustomerChatPage() {
 
   const sendSuggestion = (text) => {
     if (!wsRef.current || wsRef.current.readyState !== 1) return;
-    const reqId = crypto.randomUUID();
+    const reqId = nextReqIdRef.current;
+    nextReqIdRef.current = crypto.randomUUID();
+    
     setMessages((prev) => [
       ...prev,
       { role: "customer", content: text, timestamp: new Date().toISOString(), status: "sent", client_request_id: reqId },

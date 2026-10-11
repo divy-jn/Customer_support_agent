@@ -462,21 +462,28 @@ def cancel_order(order_id: int, customer_id: int | None = None, client_request_i
         if not response.data:
             return json.dumps({"error": f"Order #{order_id} not found"})
             
-        # Enforce customer ownership
-        if customer_id is not None and response.data[0].get("customer_id") != customer_id:
+        order_record = response.data[0]
+
+        # Enforce customer ownership if customer_id is supplied
+        if customer_id is not None and order_record.get("customer_id") != customer_id:
             return json.dumps({"error": f"Order #{order_id} not found or does not belong to you"})
             
-        if response.data[0]["status"] != "active":
+        if order_record.get("status") != "active":
             return json.dumps({
-                "error": f"Cannot cancel order #{order_id}. Current status: {response.data[0]['status']}. Only active orders can be cancelled."
+                "error": f"Cannot cancel order #{order_id}. Current status: {order_record.get('status')}. Only active orders can be cancelled."
             })
+
+        actual_customer_id = order_record.get("customer_id")
+        if actual_customer_id is None:
+            return json.dumps({"error": f"Order #{order_id} has no associated customer"})
+
         payload = {"status": "cancelled"}
             
         import hashlib
         payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         
         rpc_params = {
-            "p_customer_id": customer_id,
+            "p_customer_id": actual_customer_id,
             "p_client_request_id": client_request_id,
             "p_operation_type": "cancel_order",
             "p_canonical_target": str(order_id),
@@ -510,21 +517,28 @@ def process_refund(order_id: int, customer_id: int | None = None, client_request
         if not response.data:
             return json.dumps({"error": f"Order #{order_id} not found"})
             
-        # Enforce customer ownership
-        if customer_id is not None and response.data[0].get("customer_id") != customer_id:
+        order_record = response.data[0]
+
+        # Enforce customer ownership if customer_id is supplied
+        if customer_id is not None and order_record.get("customer_id") != customer_id:
             return json.dumps({"error": f"Order #{order_id} not found or does not belong to you"})
             
-        if response.data[0]["status"] not in ("cancelled", "delivered"):
+        if order_record.get("status") not in ("cancelled", "delivered"):
             return json.dumps({
-                "error": f"Cannot refund order #{order_id}. Current status: {response.data[0]['status']}. Order must be cancelled or delivered."
+                "error": f"Cannot refund order #{order_id}. Current status: {order_record.get('status')}. Order must be cancelled or delivered."
             })
+
+        actual_customer_id = order_record.get("customer_id")
+        if actual_customer_id is None:
+            return json.dumps({"error": f"Order #{order_id} has no associated customer"})
+
         payload = {"status": "refunded"}
             
         import hashlib
         payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         
         rpc_params = {
-            "p_customer_id": customer_id,
+            "p_customer_id": actual_customer_id,
             "p_client_request_id": client_request_id,
             "p_operation_type": "process_refund",
             "p_canonical_target": str(order_id),

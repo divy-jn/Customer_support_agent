@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, Header
 import json
 import uuid
 
-from app.dependencies import verify_admin_key, verify_agent_token, verify_customer_token
+from app.dependencies import verify_admin_key, verify_agent_token, verify_customer_token, verify_any_token
 from app.config import settings
 
 # ──────────────────────────────────────────────
@@ -85,7 +85,7 @@ async def dev_login(email: str):
 # ──────────────────────────────────────────────
 
 @router.get("/customers/search")
-async def search_customer(q: str):
+async def search_customer(q: str, auth_user: dict = Depends(verify_any_token)):
     """Search for a customer by name or email."""
     if not q or not q.strip():
         raise HTTPException(status_code=400, detail="Search query cannot be empty")
@@ -93,11 +93,16 @@ async def search_customer(q: str):
     data = json.loads(result)
     if isinstance(data, dict) and "error" in data:
         raise HTTPException(status_code=400, detail=data["error"])
+        
+    if auth_user.get("role") == "customer":
+        customer_id = auth_user.get("id")
+        data = [c for c in data if c.get("id") == customer_id]
+        
     return data
 
 
 @router.get("/customers")
-async def list_customers(limit: int = 50, offset: int = 0):
+async def list_customers(limit: int = 50, offset: int = 0, _: bool = Depends(verify_agent_token)):
     """Get all customers with pagination."""
     if limit <= 0 or offset < 0:
         raise HTTPException(status_code=400, detail="Invalid pagination parameters")
@@ -119,7 +124,7 @@ async def customer_history(customer_id: int, authenticated_customer_id: int = De
 # ──────────────────────────────────────────────
 
 @router.get("/tickets")
-async def list_tickets(limit: int = 50, offset: int = 0, status: TicketStatus = None):
+async def list_tickets(limit: int = 50, offset: int = 0, status: TicketStatus = None, _: bool = Depends(verify_agent_token)):
     """Get all tickets with optional status filter."""
     if limit <= 0 or offset < 0:
         raise HTTPException(status_code=400, detail="Invalid pagination parameters")
@@ -128,15 +133,15 @@ async def list_tickets(limit: int = 50, offset: int = 0, status: TicketStatus = 
 
 
 @router.get("/tickets/{ticket_id}")
-async def get_ticket_detail(ticket_id: int, authenticated_customer_id: int = Depends(verify_customer_token)):
+async def get_ticket_detail(ticket_id: int, auth_user: dict = Depends(verify_any_token)):
     """Get details of a specific ticket."""
     result = get_ticket(ticket_id)
     data = json.loads(result)
     if "error" in data:
         raise HTTPException(status_code=404, detail=data["error"])
         
-    # Enforce ownership: only the ticket owner (or an agent, though this route is for customers) can view it
-    if data.get("customer_id") != authenticated_customer_id:
+    # Enforce ownership: only the ticket owner or an agent can view it
+    if auth_user.get("role") == "customer" and data.get("customer_id") != auth_user.get("id"):
         raise HTTPException(status_code=403, detail="Not authorized to access this ticket")
         
     return data
@@ -210,9 +215,13 @@ async def track_order_status(order_id: int, authenticated_customer_id: int = Dep
 
 
 @router.post("/orders/{order_id}/cancel")
-async def cancel_order_endpoint(order_id: int, _: bool = Depends(verify_agent_token)):
+async def cancel_order_endpoint(
+    order_id: int, 
+    _: bool = Depends(verify_agent_token),
+    client_request_id: uuid.UUID = Header(..., alias="X-Client-Request-Id")
+):
     """Cancel an active order."""
-    result = cancel_order(order_id)
+    result = cancel_order(order_id, client_request_id=str(client_request_id))
     data = json.loads(result)
     if "error" in data:
         raise HTTPException(status_code=400, detail=data["error"])
@@ -220,9 +229,13 @@ async def cancel_order_endpoint(order_id: int, _: bool = Depends(verify_agent_to
 
 
 @router.post("/orders/{order_id}/refund")
-async def refund_order_endpoint(order_id: int, _: bool = Depends(verify_agent_token)):
+async def refund_order_endpoint(
+    order_id: int, 
+    _: bool = Depends(verify_agent_token),
+    client_request_id: uuid.UUID = Header(..., alias="X-Client-Request-Id")
+):
     """Process a refund for an order."""
-    result = process_refund(order_id)
+    result = process_refund(order_id, client_request_id=str(client_request_id))
     data = json.loads(result)
     if "error" in data:
         raise HTTPException(status_code=400, detail=data["error"])
