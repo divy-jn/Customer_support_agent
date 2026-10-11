@@ -8,7 +8,7 @@ from app.outbox.reconciliation_coordinator import ReconciliationCoordinator
 from app.config import settings
 
 TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "postgres")
-conn_string = f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
+conn_string = f"dbname='postgres' user='postgres' host='127.0.0.1' port='5433' password='{TEST_DB_PASSWORD}'"
 
 @pytest.fixture
 def coordinator():
@@ -116,14 +116,18 @@ def test_startup_scheduler_disabled_mode():
     asyncio.run(run())
     settings.reconciliation_enabled = True  # reset
 
-def test_startup_scheduler_runs_and_stops():
+def test_startup_scheduler_runs_and_stops(monkeypatch, caplog):
     """Test that the scheduler starts up, creates a task, and stops gracefully."""
     import asyncio
+    import logging
     from app.outbox.lifecycle import start_reconciliation_scheduler, stop_reconciliation_scheduler
     import app.outbox.lifecycle as lc
     
-    settings.reconciliation_enabled = True
-    settings.reconciliation_interval_seconds = 1  # fast interval
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(settings, "reconciliation_enabled", True)
+    monkeypatch.setattr(settings, "database_password", TEST_DB_PASSWORD)
+    monkeypatch.setattr(settings, "reconciliation_interval_seconds", 1)
+    monkeypatch.setattr(lc, "_build_dsn", lambda: conn_string)
     
     async def run():
         await start_reconciliation_scheduler()
@@ -136,8 +140,9 @@ def test_startup_scheduler_runs_and_stops():
         await stop_reconciliation_scheduler()
         assert lc._reconciliation_task is None
         
-        
     asyncio.run(run())
+    assert "Outbox reconciliation scheduler started" in caplog.text
+    assert "Outbox reconciliation scheduler stopped" in caplog.text
 
 
 def test_discovery_stable_sweep_boundary(coordinator, test_customer, cleanup_db):
@@ -298,9 +303,18 @@ def test_periodic_cursor_continuation(coordinator, test_customer, cleanup_db, mo
         lc._reconciliation_cancel_event.clear()
         
         task = asyncio.create_task(lc._reconciliation_loop())
-        # Let it run for enough time to complete multiple periodic iterations (53+ DB queries)
-        # We give it 30 seconds because hitting Postgres 53+ times can take >10 seconds on Windows.
-        await asyncio.sleep(30.0)
+        def sweep_has_reset():
+            if len(spy_calls) < 53:
+                return False
+            first_sweep = spy_calls[0]['sweep_started_at']
+            return any(c['sweep_started_at'] != first_sweep for c in spy_calls[1:])
+
+        timeout = 30.0
+        poll_interval = 0.05
+        elapsed = 0.0
+        while not sweep_has_reset() and elapsed < timeout:
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
         
         lc._reconciliation_cancel_event.set()
         await task

@@ -255,7 +255,8 @@ async def test_missing_client_request_id_fails_closed():
         mock_graph.return_value = {"response": "Escalating!", "escalated": True}
         await handle_customer_ws(ws, session_id, customer_id)
         
-    assert any("Missing client_request_id. Cannot perform escalation." in m for m in ws.sent_messages)
+    assert any("Missing client_request_id in payload." in m for m in ws.sent_messages)
+    mock_graph.assert_not_called()
     
     conn = psycopg2.connect(conn_string)
     cur = conn.cursor()

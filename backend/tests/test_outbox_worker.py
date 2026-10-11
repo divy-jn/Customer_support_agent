@@ -55,7 +55,7 @@ if not TEST_DB_PASSWORD:
         "TEST_DB_PASSWORD environment variable is required to run real integration tests."
     )
 
-DSN = f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
+DSN = f"dbname='postgres' user='postgres' host='127.0.0.1' port='5433' password='{TEST_DB_PASSWORD}'"
 
 
 # ──────────────────────────────────────────────
@@ -65,6 +65,20 @@ DSN = f"dbname='postgres' user='postgres' host='localhost' port='5433' password=
 def _conn():
     """Return a new psycopg2 connection with autocommit off."""
     return psycopg2.connect(DSN)
+
+
+@pytest.fixture(autouse=True)
+def isolate_outbox_table():
+    """Ensure clean outbox_events table for every test to prevent cross-test leakage."""
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM outbox_events")
+        conn.commit()
+    yield
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM outbox_events")
+        conn.commit()
 
 
 def _insert_event(
