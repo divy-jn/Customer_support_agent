@@ -77,26 +77,26 @@ class TestCORS:
 class TestRESTEndpoints:
     """Test REST API endpoints."""
 
-    def test_get_customers(self):
+    def test_get_customers(self, agent_token):
         """GET /api/v1/customers should return customer list."""
         client = TestClient(app)
-        response = client.get("/api/v1/customers?limit=5")
+        response = client.get("/api/v1/customers?limit=5", headers={"Authorization": f"Bearer {agent_token}"})
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
 
-    def test_get_tickets(self):
+    def test_get_tickets(self, agent_token):
         """GET /api/v1/tickets should return ticket list."""
         client = TestClient(app)
-        response = client.get("/api/v1/tickets?limit=5")
+        response = client.get("/api/v1/tickets?limit=5", headers={"Authorization": f"Bearer {agent_token}"})
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
 
-    def test_search_customer_empty_query(self):
+    def test_search_customer_empty_query(self, agent_token):
         """Search with empty query should return 400."""
         client = TestClient(app)
-        response = client.get("/api/v1/customers/search?q=")
+        response = client.get("/api/v1/customers/search?q=", headers={"Authorization": f"Bearer {agent_token}"})
         assert response.status_code == 400
 
     def test_dashboard_stats(self):
