@@ -92,7 +92,7 @@ DatabaseSkill = AgentSkill(
     ],
     allowed_tools=[
         "lookup_customer", "get_customer_history", "get_ticket", "create_ticket",
-        "update_ticket", "track_order", "cancel_order", "process_refund",
+        "update_ticket", "track_order", "get_payment_record", "cancel_order", "process_refund",
         "check_inventory", "list_all_products", "get_chat_history", "send_ticket_email_to_customer"
     ],
     forbidden_tools=[

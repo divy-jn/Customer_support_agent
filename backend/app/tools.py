@@ -462,6 +462,33 @@ def send_ticket_email_to_customer(
 
 
 # ──────────────────────────────────────────────
+#  Payment Operations
+# ──────────────────────────────────────────────
+
+@track_tool_call("get_payment_record")
+@_supabase_retry
+def get_payment_record(order_id: int, customer_id: int | None = None) -> str:
+    """Return a minimal customer-scoped payment ledger record for an order."""
+    try:
+        _validate_positive_int(order_id, "order_id")
+        response = (
+            supabase.table("payment_records")
+            .select("order_id, customer_id, transaction_reference, status, amount, currency, payment_method, processed_at")
+            .eq("order_id", order_id)
+            .limit(1)
+            .execute()
+        )
+        if not response.data:
+            return json.dumps({"error": f"Payment record for order #{order_id} not found"})
+        record = response.data[0]
+        if customer_id is not None and record.get("customer_id") != customer_id:
+            return json.dumps({"error": f"Payment record for order #{order_id} not found or does not belong to you"})
+        return json.dumps(record, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ──────────────────────────────────────────────
 #  Order Operations
 # ──────────────────────────────────────────────
 

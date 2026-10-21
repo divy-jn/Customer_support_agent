@@ -5,15 +5,19 @@ and confirmation boundary. Other payment intents deliberately fall back to
 legacy until a customer-scoped payment-record capability exists.
 """
 
+import asyncio
+import json
 import re
 from typing import Any
+
+from app.tools import get_payment_record
 
 
 _ORDER_ID = re.compile(r"(?:order\s*(?:#|number)?\s*)(\d+)|#(\d+)", re.IGNORECASE)
 _REFUND_INTENTS = {"refund", "refund_request", "process_refund"}
 _REVIEW_INTENTS = {
     "billing_issue", "payment_failure", "payment_failed", "transaction_issue",
-    "duplicate_charge", "charged_twice", "payment_method",
+    "duplicate_charge", "charged_twice",
 }
 
 
@@ -26,13 +30,30 @@ async def handle_payment_request(state: dict[str, Any]) -> dict[str, Any]:
     """Prepare a refund request without performing a mutation."""
     intent = state.get("intent", "").lower()
     if intent in _REVIEW_INTENTS:
+        order_id = _order_id(state["message"])
+        if order_id is None:
+            return {
+                "response": "Please share the order number so I can verify the payment record before opening a support case.",
+                "escalated": False,
+            }
+        raw = await asyncio.to_thread(get_payment_record, order_id, state.get("customer_id"))
+        try:
+            record = json.loads(raw)
+        except json.JSONDecodeError:
+            record = {"error": "Unable to read the payment record."}
+        if record.get("error"):
+            return {
+                "response": f"I couldn’t verify a payment record for order #{order_id}. I’ll have a specialist investigate this safely.",
+                "requires_human": True,
+                "escalated": False,
+            }
+        status = record.get("status", "unknown")
         return {
             "response": (
-                "I’ll have a payment support specialist review this billing issue. "
-                "They will verify the transaction before making any account changes."
+                f"I verified that the payment record for order #{order_id} is {status}. "
+                "I’ll have a payment support specialist review the billing issue before making any account changes."
             ),
-            # No customer-scoped payment-record tool exists, so never infer a
-            # transaction outcome or refund eligibility from conversation text.
+            "tool_results": raw,
             "requires_human": True,
             "escalated": False,
         }

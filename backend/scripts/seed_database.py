@@ -162,6 +162,37 @@ def seed():
         for status, count in sorted(status_counts.items()):
             print(f"      → {status}: {count}")
 
+        # ── 3A. Seed payment ledger records ──
+        # The support payment lookup is customer-scoped and reads this ledger;
+        # use a stable per-order reference so repeated seeding is idempotent.
+        print("\n💳 Seeding payment ledger records...")
+        existing_payments_res = supabase.table("payment_records").select("order_id").execute()
+        existing_payment_order_ids = {row["order_id"] for row in existing_payments_res.data}
+        payments_to_insert = []
+        methods = ("UPI", "Card", "Net Banking", "Wallet")
+        for idx, order in enumerate(data["orders"]):
+            order_id = order_id_map[idx]
+            if order_id in existing_payment_order_ids:
+                continue
+            product = data["products"][order["product_index"]]
+            order_status = order["status"]
+            payment_status = "refunded" if order_status == "refunded" else "captured"
+            payments_to_insert.append({
+                "order_id": order_id,
+                "customer_id": order_customer_map[idx],
+                "transaction_reference": f"DEMO-{order_id}",
+                "status": payment_status,
+                "amount": product["price"],
+                "currency": "INR",
+                "payment_method": methods[idx % len(methods)],
+            })
+        for i in range(0, len(payments_to_insert), 50):
+            batch = payments_to_insert[i:i + 50]
+            res = supabase.table("payment_records").insert(batch).execute()
+            if not res.data:
+                raise RuntimeError(f"Failed to insert payment ledger batch starting at index {i}")
+        print(f"   ✅ {len(payments_to_insert)} new payment records seeded.")
+
         # ── 4. Seed Tickets ──
         print("\n🎫 Step 4/4 — Seeding support tickets...")
         # Fetch existing tickets to prevent duplicates
