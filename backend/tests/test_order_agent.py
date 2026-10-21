@@ -26,3 +26,12 @@ async def test_cancellation_only_creates_approval_request():
 async def test_order_id_is_required_before_any_database_lookup():
     result = await handle_order_request({"message": "Where is my order?", "intent": "order_tracking"})
     assert "share the order number" in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_delivery_exception_requires_guardian_controlled_handoff():
+    result = await handle_order_request({
+        "message": "My order #42 arrived damaged", "intent": "damaged_item", "customer_id": 7,
+    })
+    assert result["requires_human"] is True
+    assert "specialist" in result["response"]

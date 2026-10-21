@@ -22,3 +22,4 @@ async def test_refund_is_approval_gated():
 async def test_billing_does_not_attempt_an_unsupported_mutation():
     result = await handle_payment_request({"message": "My card was charged twice", "intent": "billing_issue"})
     assert "pending_approval" not in result
+    assert result["requires_human"] is True

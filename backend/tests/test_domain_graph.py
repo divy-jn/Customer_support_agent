@@ -100,11 +100,11 @@ def test_order_and_general_v2_slices_also_cross_guardian_boundary(monkeypatch):
     assert route_after_supervisor({
         "semantic_domain": "general", "intent": "faq", "supervisor_action": "continue",
     }) == "general"
-    # Delivery exceptions are not implemented by OrderAgent yet, so they must
-    # keep the established legacy behavior instead of receiving a fake answer.
+    # Delivery exceptions use the V2 agent only to make a Guardian-controlled
+    # human handoff; it never invents fulfilment or refund decisions.
     assert route_after_supervisor({
         "semantic_domain": "order", "intent": "delivery_issue", "supervisor_action": "continue",
-    }) == "legacy"
+    }) == "order"
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,10 @@ from typing import Any
 
 _ORDER_ID = re.compile(r"(?:order\s*(?:#|number)?\s*)(\d+)|#(\d+)", re.IGNORECASE)
 _REFUND_INTENTS = {"refund", "refund_request", "process_refund"}
+_REVIEW_INTENTS = {
+    "billing_issue", "payment_failure", "payment_failed", "transaction_issue",
+    "duplicate_charge", "charged_twice", "payment_method",
+}
 
 
 def _order_id(message: str) -> int | None:
@@ -20,7 +24,20 @@ def _order_id(message: str) -> int | None:
 
 async def handle_payment_request(state: dict[str, Any]) -> dict[str, Any]:
     """Prepare a refund request without performing a mutation."""
-    if state.get("intent", "").lower() not in _REFUND_INTENTS:
+    intent = state.get("intent", "").lower()
+    if intent in _REVIEW_INTENTS:
+        return {
+            "response": (
+                "I’ll have a payment support specialist review this billing issue. "
+                "They will verify the transaction before making any account changes."
+            ),
+            # No customer-scoped payment-record tool exists, so never infer a
+            # transaction outcome or refund eligibility from conversation text.
+            "requires_human": True,
+            "escalated": False,
+        }
+
+    if intent not in _REFUND_INTENTS:
         return {
             "response": "I’ll connect you with the payment support flow for that billing request.",
             "escalated": False,

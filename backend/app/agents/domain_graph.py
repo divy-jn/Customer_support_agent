@@ -29,8 +29,14 @@ from app.tools import create_ticket, find_customer_support_cases, update_ticket
 
 logger = logging.getLogger(__name__)
 
-_ORDER_V2_INTENTS = {"tracking", "track_order", "order_tracking", "cancel_order", "order_cancellation", "cancellation"}
-_REFUND_V2_INTENTS = {"refund", "refund_request", "process_refund"}
+_ORDER_V2_INTENTS = {
+    "tracking", "track_order", "order_tracking", "cancel_order", "order_cancellation", "cancellation",
+    "delivery_issue", "delivery_delay", "missing_item", "wrong_item", "damaged_item", "order_issue", "shipping_issue",
+}
+_PAYMENT_V2_INTENTS = {
+    "refund", "refund_request", "process_refund", "billing_issue", "payment_failure", "payment_failed",
+    "transaction_issue", "duplicate_charge", "charged_twice", "payment_method",
+}
 
 
 class DomainAgentState(AgentState):
@@ -111,7 +117,7 @@ def route_after_supervisor(state: DomainAgentState) -> str:
         return "order"
     if (
         state.get("semantic_domain") == "payment"
-        and state.get("intent") in _REFUND_V2_INTENTS
+        and state.get("intent") in _PAYMENT_V2_INTENTS
         and settings.agent_architecture_mode in {"v2_core", "v2_all"}
     ):
         return "payment"

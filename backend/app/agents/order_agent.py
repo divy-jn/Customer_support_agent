@@ -15,6 +15,10 @@ from app.tools import track_order
 
 _ORDER_ID = re.compile(r"(?:order\s*(?:#|number)?\s*)(\d+)|#(\d+)", re.IGNORECASE)
 _CANCEL_INTENTS = {"cancel_order", "order_cancellation", "cancellation"}
+_EXCEPTION_INTENTS = {
+    "delivery_issue", "delivery_delay", "missing_item", "wrong_item",
+    "damaged_item", "order_issue", "shipping_issue",
+}
 
 
 def _order_id(message: str) -> int | None:
@@ -38,7 +42,7 @@ def _format_tracking(order: dict[str, Any]) -> str:
 
 
 async def handle_order_request(state: dict[str, Any]) -> dict[str, Any]:
-    """Handle tracking or safely prepare a cancellation confirmation."""
+    """Handle tracking/cancellation and safely hand off delivery exceptions."""
     order_id = _order_id(state["message"])
     intent = state.get("intent", "").lower()
     if order_id is None:
@@ -57,6 +61,19 @@ async def handle_order_request(state: dict[str, Any]) -> dict[str, Any]:
                 "customer_id": state.get("customer_id"),
                 "session_id": state.get("session_id"),
             },
+            "escalated": False,
+        }
+
+    if intent in _EXCEPTION_INTENTS:
+        return {
+            "response": (
+                f"I’m sorry there is an issue with order #{order_id}. "
+                "I’ll have a support specialist review the delivery details and help resolve it."
+            ),
+            # There is no claim/returns tool yet.  Explicitly require Guardian
+            # to create or update a customer-scoped support case instead of
+            # guessing about fulfilment, replacement, or refund eligibility.
+            "requires_human": True,
             "escalated": False,
         }
 
