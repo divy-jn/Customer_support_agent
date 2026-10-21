@@ -14,6 +14,20 @@ jobs:
   backend:
     name: Backend unit and architecture checks
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -25,6 +39,7 @@ jobs:
       JWT_SECRET: ci-only-not-a-production-secret
       AGENT_SECRET: ci-agent-secret
       DEBUG_MODE: "false"
+      TEST_DB_PASSWORD: postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,6 +49,26 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Initialize PostgreSQL integration-test schema
+        run: |
+          python - <<'PY'
+          import psycopg2
+
+          dsn = "dbname=postgres user=postgres host=localhost port=5433 password=postgres"
+          with psycopg2.connect(dsn) as conn:
+              conn.autocommit = True
+              with conn.cursor() as cur:
+                  for role in ("anon", "authenticated", "service_role"):
+                      cur.execute(
+                          "DO $ BEGIN IF NOT EXISTS "
+                          "(SELECT FROM pg_catalog.pg_roles WHERE rolname = %s) "
+                          "THEN EXECUTE 'CREATE ROLE ' || quote_ident(%s); END IF; END $;",
+                          (role, role),
+                      )
+                  with open("scripts/schema.sql", encoding="utf-8") as schema_file:
+                      cur.execute(schema_file.read())
+          print("PostgreSQL integration-test schema initialized.")
+          PY
       - name: Compile application and tests
         run: python -m compileall app tests -q
       - name: Run deterministic tests
