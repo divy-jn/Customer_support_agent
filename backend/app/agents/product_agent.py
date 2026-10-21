@@ -45,6 +45,9 @@ class ProductDomainContext(BaseModel):
     
     # Optional transcript up to this point
     conversation_history: List[Dict[str, Any]] = []
+    # V2 orchestration owns ticket side effects.  Legacy callers retain the
+    # established lifecycle behavior until their migration is complete.
+    manage_tickets: bool = True
 
 
 # ──────────────────────────────────────────────
@@ -80,6 +83,7 @@ class LLMAdapter(Protocol):
 # Explicit intent → skill name mapping.
 # Python selects the skill deterministically — the LLM only provides the intent.
 # Unknown or out-of-domain intents return None.
+# #review: If a new product intent is added to intent router, it must be added here, or it will fail with no_skill_matched
 _PRODUCT_INTENT_MAP: Dict[str, str] = {
     "product_inquiry": "Product Information Skill",
     "product_information": "Product Information Skill",
@@ -112,6 +116,7 @@ class ProductSkillResolver:
         Map a semantic intent to a Product-domain skill using explicit mappings only.
         Returns None if no mapping exists or the skill is not registered.
         """
+        # Case-insensitive resolution
         intent_lower = intent.lower() if intent else ""
         skill_name = _PRODUCT_INTENT_MAP.get(intent_lower)
         if skill_name is None:
@@ -191,6 +196,7 @@ class ProductAgent:
         start_time = time.time()
 
         # ── Step 0: Extract and merge state ──
+        # Runs LLM extraction to identify entities (order_id, product_name, manufacturer)
         merged_state, extracted_order_id = await self._extract_and_merge_state(context)
         merged_state.turn_count += 1
         
@@ -201,7 +207,9 @@ class ProductAgent:
             current_order_id = merged_state.order_state.order_id
         
         # ── Step 0.5: Central Ticket Lifecycle ──
-        if context.customer_id:
+        # #review: Automatically creating/updating tickets on every single product inquiry when customer_id exists
+        # can clutter customer ticket history with informational questions.
+        if context.customer_id and context.manage_tickets:
             from app.tickets.lifecycle import TicketLifecycleService
             from app.models import TicketContext, Urgency, Sentiment
             
@@ -222,6 +230,7 @@ class ProductAgent:
             try:
                 urgency = Urgency(context.urgency) if context.urgency else Urgency.MEDIUM
             except ValueError:
+                # Fallback or log if unknown enum value received
                 logger.error("ProductAgent: Invalid urgency format for ticket context: %s", context.urgency)
                 self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
                 return ProductAgentResponse(
@@ -313,6 +322,7 @@ class ProductAgent:
         self._set_domain_status(merged_state, DomainWorkflowStatus.IN_PROGRESS)
 
         # ── Step 3: ReAct Tool Calling Loop ──
+        # Maximum 5 reasoning turns allowed per customer turn to prevent infinite tool loops
         MAX_ITERATIONS = 5
         iteration = 0
         
@@ -328,6 +338,7 @@ class ProductAgent:
             try:
                 llm_response = await self.llm_adapter.invoke(system_prompt, conversation_history)
             except Exception as e:
+                # #review: LLM failure here falls back to generic technical error; original exception message is discarded
                 logger.error("ProductAgent: LLM invocation failed: %s", type(e).__name__)
                 self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
                 return ProductAgentResponse(
@@ -342,7 +353,8 @@ class ProductAgent:
                     metadata={"failure_code": type(e).__name__},
                 )
             
-            # Parse for tool call JSON
+            # Parse for tool call JSON from the LLM markdown response
+            # #review: Regex matching can be fragile if LLM formats nested JSON or markdown incorrectly
             import json
             import re
             
@@ -361,6 +373,7 @@ class ProductAgent:
                         raise ValueError("Missing 'tool_call' in JSON")
                         
                     # Execute tool through SkillRuntime Policy Enforcer
+                    # Enforces allowed tools per skill
                     exec_result = self.skill_runtime.execute_tool(
                         skill,
                         tool_name,
@@ -391,7 +404,7 @@ class ProductAgent:
                         result=result_data
                     )
                         
-                    # Append assistant's request and the tool's result to history
+                    # Append assistant's request and the tool's result to history for next iteration
                     conversation_history += f"\n\nAssistant requested tool: {tool_name}\nTool Result:\n{tool_result_str}\n\nPlease continue."
                     
                 except json.JSONDecodeError:
@@ -498,6 +511,7 @@ class ProductAgent:
         import re
         
         # Fast extraction prompt
+        # #review: Extra LLM invocation per message adds noticeable latency before the ReAct loop starts
         prompt = f"""Extract the following entities from the customer's message if explicitly mentioned.
 Return a JSON object exactly like this (use null if not found):
 {{
@@ -568,6 +582,7 @@ Message: "{context.customer_message}"
                     state.product_state.last_tool_result = None
                     
         except Exception as e:
+            # #review: Failed entity extraction is logged as warning/error but silently skipped
             logger.error("State extraction failed: %s", e)
             
         state.updated_at = __import__('datetime').datetime.now(__import__('datetime').timezone.utc)

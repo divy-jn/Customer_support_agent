@@ -7,6 +7,7 @@ import uuid
 import json
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 from fastapi import WebSocket, WebSocketDisconnect, status
@@ -14,9 +15,11 @@ from fastapi import WebSocket, WebSocketDisconnect, status
 from app.config import settings
 from app.websocket.connection import manager
 from app.agents.graph import customer_support_graph, AgentState
+from app.agents.domain_graph import domain_support_graph
 from app.email_service import send_escalation_email
 from app.tools import lookup_customer
 from app.guardrails import validate_input, validate_output, get_rejection_message
+from app.middleware.tracking import emit_workflow_turn
 
 from app.persistence.session import session_store
 
@@ -189,6 +192,9 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 break
 
             now = time.time()
+            # Sliding window in-memory rate limiting
+            # #review: Rate limit state is per-socket connection; reconnecting creates a new loop and resets the limit.
+            # Using Redis-backed sliding window prevents rate limit bypass via reconnection.
             msg_timestamps = [t for t in msg_timestamps if now - t < rate_limit_window]
             if len(msg_timestamps) >= rate_limit_max:
                 await websocket.send_text(json.dumps({
@@ -421,11 +427,29 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     }),
                 }
 
-                # Invoke LangGraph with timeout
+                # Invoke LangGraph with timeout and periodic typing keepalive
                 timeout_secs = settings.langgraph_timeout
+                async def _keepalive_typing():
+                    try:
+                        while True:
+                            await asyncio.sleep(4)
+                            await manager.send_personal_message({
+                                "type": "typing",
+                                "agent_name": "Adi",
+                            }, session_id)
+                    except asyncio.CancelledError:
+                        pass
+
+                turn_started = time.perf_counter()
+                typing_task = asyncio.create_task(_keepalive_typing())
                 try:
+                    active_graph = (
+                        domain_support_graph
+                        if settings.agent_architecture_mode.startswith("v2_")
+                        else customer_support_graph
+                    )
                     result = await asyncio.wait_for(
-                        customer_support_graph.ainvoke(initial_state),
+                        active_graph.ainvoke(initial_state),
                         timeout=timeout_secs,
                     )
                 except asyncio.TimeoutError:
@@ -438,10 +462,26 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }, session_id)
                     continue
+                finally:
+                    typing_task.cancel()
 
                 # We still re-check mode but the whole mutation must be atomic
                 raw_response = result.get("response", "I'm sorry, I couldn't process your request.")
                 is_escalated = result.get("escalated", False)
+                emit_workflow_turn({
+                    "session_id": session_id,
+                    "customer_id": customer_id,
+                    "architecture_mode": settings.agent_architecture_mode,
+                    "domain": result.get("semantic_domain"),
+                    "intent": result.get("intent"),
+                    "supervisor_action": result.get("supervisor_action"),
+                    "guardian_action": result.get("guardian_action"),
+                    "guardian_reason": result.get("guardian_reason"),
+                    "pending_approval": bool(result.get("pending_approval")),
+                    "escalated": is_escalated,
+                    "latency_ms": round((time.perf_counter() - turn_started) * 1000, 1),
+                    "outcome": "response_generated",
+                })
 
                 # ── Output Guardrails ──
                 output_guard = validate_output(raw_response)
@@ -463,6 +503,13 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
 
                     if result.get("workflow_state"):
                         s["workflow_state"] = result["workflow_state"]
+
+                    s["workflow_outcome"] = {
+                        "domain": result.get("semantic_domain"),
+                        "guardian_action": result.get("guardian_action"),
+                        "guardian_reason": result.get("guardian_reason"),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
 
                     s["conversation_history"].append({
                         "role": "agent",
@@ -497,6 +544,9 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     "intent": result.get("intent", ""),
                     "sentiment": result.get("sentiment", ""),
                     "urgency": result.get("urgency", ""),
+                    "domain": result.get("semantic_domain", ""),
+                    "guardian_action": result.get("guardian_action", ""),
+                    "guardian_reason": result.get("guardian_reason", ""),
                     "escalated": is_escalated,
                     "agent_name": "Adi",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -513,7 +563,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 if is_escalated and customer_id is not None:
                     from app.escalation.service import EscalationService, EscalationRequest, IdempotencyConflict
                     
-                    ticket_id = None
+                    ticket_id = result.get("guardian_ticket_id")
                     ws_state = result.get("workflow_state", {})
                     if ws_state.get("active_domain") == "product" and ws_state.get("product_state"):
                         ticket_id = ws_state["product_state"].get("active_ticket_id")
@@ -597,9 +647,10 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
             # Only save if we have initialized the session earlier in the function
             if 'session' in locals() and session and session.get("conversation_history"):
                 was_escalated = "true" if session.get("mode") == "human" or any(
-                    msg.get("escalated") for msg in session.get("conversation_history", [])
+                     msg.get("escalated") for msg in session.get("conversation_history", [])
                 ) else "false"
                 
+                # #review: Defaulting customer_id to 1 assigns transcripts from unauthenticated/anonymous guests to Customer 1 in Supabase
                 data = {
                     "session_id": session_id,
                     "customer_id": session.get("customer_id") or 1,
@@ -613,8 +664,6 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 # Instead of asyncio.shield (which fails under anyio cancellation),
                 # we spawn a background thread natively so it survives cancellation
                 # and we don't await it here to prevent CancelledError.
-                # This satisfies the requirement of not blocking the event loop
-                # while ensuring the write happens.
                 def save_to_db(save_data):
                     try:
                         supabase.table("conversations").upsert(save_data, on_conflict="session_id").execute()

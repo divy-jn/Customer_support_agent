@@ -9,7 +9,7 @@ from typing import Any
 
 
 # ──────────────────────────────────────────────
-#  Enums
+#  Enums — used across API, DB queries, and WebSocket messages
 # ──────────────────────────────────────────────
 
 class TicketStatus(str, Enum):
@@ -68,14 +68,14 @@ class WarrantyStatus(str, Enum):
 
 
 # ──────────────────────────────────────────────
-#  Chat Schemas
+#  Chat Schemas — WebSocket message payloads
 # ──────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
     """A single message in the chat."""
     role: str            # "customer" or "agent" or "system"
     content: str
-    timestamp: datetime | None = None
+    timestamp: datetime | None = None  #review: timestamp is optional but should always be set
 
 
 class ChatRequest(BaseModel):
@@ -261,7 +261,7 @@ class EscalationLifecycleStatus(str, Enum):
     ACTIVE = "ACTIVE"
     RELEASED = "RELEASED"
 
-from typing import TypedDict
+from typing import TypedDict  #review: imported mid-file — move to top with other imports
 
 class TargetAgentState(TypedDict):
     # Identity
@@ -377,7 +377,7 @@ class WorkflowState(BaseModel):
     # ─── F.2 Global Orchestration ───
     global_status: GlobalWorkflowStatus = GlobalWorkflowStatus.IDLE
     active_domain: str | None = None
-    suspended_domains: list[OrchestrationDomain] = Field(default_factory=list, max_length=3)
+    suspended_domains: list[OrchestrationDomain] = Field(default_factory=list, max_length=3)  # max 3 concurrent suspended domains
     
     # ─── F.2 Domain States ───
     product_state: ProductState | None = None
@@ -407,7 +407,7 @@ class WorkflowState(BaseModel):
             WorkflowStatus.FAILED: DomainWorkflowStatus.FAILED
         }
         if status not in mapping:
-            raise ValueError(f"Unknown workflow status enum: {status}")
+            raise ValueError(f"Unknown workflow status enum: {status}")  #review: unreachable if WorkflowStatus is exhaustive
         return mapping[status]
 
     @classmethod
@@ -459,7 +459,7 @@ class WorkflowState(BaseModel):
         has_order = bool(legacy_dict.get("order_id"))
         
         if has_prod and has_order:
-            raise ValueError("Contradictory cross-domain facts: both product and order facts present in legacy state.")
+            raise ValueError("Contradictory cross-domain facts: both product and order facts present in legacy state.")  #review: silent if both are empty
 
         # 1. Determine domain
         domain_enum = None

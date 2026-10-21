@@ -46,11 +46,14 @@ def send_email(to: str, subject: str, body: str, is_html: bool = True) -> str:
 
         message = EmailMessage()
         
+        # #review: Setting add_alternative without an initial set_content (plain text fallback)
+        # creates an HTML-only MIME part which may trip strict spam filters.
         if is_html:
             message.add_alternative(body, subtype="html")
         else:
             message.set_content(body)
             
+        # Development guard: redirect outgoing emails to email_test_recipient if configured
         if settings.email_test_recipient:
             message["To"] = settings.email_test_recipient
         else:

@@ -277,6 +277,7 @@ def render_notification(notification_type: str, payload: dict) -> tuple[str, str
         subject = f"Update on Order #{payload['order_id']}"
         body += f"<h1>Order #{payload['order_id']}</h1>"
     elif notification_type == "CUSTOM_EMAIL":
+        # #review: Requiring ticket_id here prevents sending general custom customer notification emails unrelated to tickets
         if "ticket_id" not in payload:
             raise ValueError(f"Missing required field 'ticket_id' for {notification_type}")
         subject = f"Custom Email for Ticket #{payload['ticket_id']}"

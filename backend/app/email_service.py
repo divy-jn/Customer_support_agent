@@ -66,7 +66,7 @@ def _info_table(rows: list[tuple[str, str]]) -> str:
 
 def _send_email(to: str | list[str], subject: str, html: str) -> dict:
     """Send an email via the local Gmail API. Returns result dict."""
-    from app.mcp.gmail_server import send_email
+    from app.mcp.gmail_server import send_email  # in-process call, not over MCP transport
     
     if isinstance(to, list):
         to = ", ".join(to)
@@ -147,7 +147,7 @@ def send_escalation_email(
     html = _base_template("Escalation Alert", team_body)
     result = _send_email(settings.support_team_email, "[Support Team] 🚨 Escalation Alert — Immediate Action Required", html)
 
-    # Customer notification (optional)
+    # Customer notification (optional — only if email is known)
     if customer_email:
         cust_body = f"""
         <p style="color:#9090a8;font-size:14px;line-height:1.6;">
@@ -213,7 +213,7 @@ def send_system_alert_email(
     </p>
     {details_html}
     <p style="color:#606078;font-size:12px;margin-top:16px;">
-      Timestamp: {datetime.utcnow().isoformat()}Z
+      Timestamp: {datetime.utcnow().isoformat()}Z  <!--#review: datetime.utcnow() is deprecated in Python 3.12+, use datetime.now(timezone.utc)-->
     </p>
     """
     html = _base_template(f"System Alert — {alert_type.upper()}", body)

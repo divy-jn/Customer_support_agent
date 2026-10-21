@@ -80,6 +80,7 @@ class SessionStore(dict):
 
     async def save_session(self, session_id: str, session: dict) -> None:
         """Unconditional save. Overwrites any existing session."""
+        # #review: Unconditional save can overwrite concurrent mutations; save_session_conditional should be preferred
         if redis_client:
             await redis_client.set(f"session:{session_id}", json.dumps(session), ex=86400)
         else:
@@ -140,6 +141,7 @@ class SessionStore(dict):
         """Retrieve all active sessions from Redis or memory."""
         if redis_client:
             try:
+                # #review: KEYS command blocks Redis if thousands of keys exist; SCAN is recommended for production
                 keys = await redis_client.keys("session:*")
                 sessions = []
                 if keys:

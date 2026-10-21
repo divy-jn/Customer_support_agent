@@ -22,8 +22,8 @@ def determine_search_query(message: str) -> dict:
     """
     Extract a search query from the customer's message.
     """
-    # For now, we simply use the message as the query.
-    # In a more advanced setup, an LLM could rewrite the query.
+    # #review: Using the raw customer message directly as query may include conversational filler
+    # (e.g. "hi can you please search...") or unredacted user info. A query-rewriting step would improve search quality.
     return {"action": "web_search", "params": {"query": message}}
 
 async def generate_response(
@@ -36,6 +36,7 @@ async def generate_response(
     """
     llm = get_web_llm()
 
+    # Retain the last 4 messages to preserve dialogue context
     history_text = ""
     if conversation_history:
         recent = conversation_history[-4:]
@@ -52,12 +53,16 @@ async def generate_response(
 Provide a helpful response to the customer based on the web search results."""
 
     try:
-        response = await llm.ainvoke([
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ])
+        # Wrap in telemetry tracker for latency and token monitoring
+        with track_llm_call(settings.llm_model, "web_node", user_prompt) as tracker:
+            response = await llm.ainvoke([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ])
+            tracker["output_text"] = response.content
         return {"response": response.content}
     except Exception as e:
+        # Graceful fallback when web search LLM synthesis fails
         return {
             "response": "I apologize, but I am having trouble accessing the internet to find that information for you.",
             "error": str(e),

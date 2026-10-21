@@ -142,6 +142,8 @@ def create_ticket(
             "priority": priority,
             "channel": channel,
         }
+        # #review: Direct table insert bypasses the transactional outbox pattern and idempotency checks
+        # implemented in app/tools.py (execute_ticket_mutation_with_outbox).
         response = supabase.table("tickets").insert(data).execute()
         
         if not response.data:

@@ -16,6 +16,7 @@ export async function getAgentToken({ forceRefresh = false } = {}) {
   const existing = localStorage.getItem(AGENT_TOKEN_KEY);
   if (existing) return existing;
 
+  // #review: Relies on dev-login which is strictly rejected when DEBUG_MODE=False on backend
   const response = await fetch(`${API_BASE}/api/v1/auth/agent/dev-login`, {
     method: "POST",
     headers: { Accept: "application/json" },

@@ -56,13 +56,15 @@ def read_document(filename: str) -> str:
     Args:
         filename: The filename of the document (e.g., 'return_policy.md').
     """
-    filepath = os.path.join(KB_DIR, filename)
-    if not os.path.exists(filepath):
-        return f"Error: Document '{filename}' not found. Use list_documents() to see available files."
-    if not filepath.startswith(KB_DIR):
+    # #review: filepath should be resolved with os.path.abspath/realpath before checking startswith
+    # to prevent path traversal with relative '../' segments.
+    resolved_path = os.path.abspath(os.path.join(KB_DIR, filename))
+    if not resolved_path.startswith(KB_DIR):
         return "Error: Access denied. Cannot read files outside the knowledge base directory."
+    if not os.path.exists(resolved_path):
+        return f"Error: Document '{filename}' not found. Use list_documents() to see available files."
 
-    with open(filepath, "r", encoding="utf-8") as f:
+    with open(resolved_path, "r", encoding="utf-8") as f:
         return f.read()
 
 

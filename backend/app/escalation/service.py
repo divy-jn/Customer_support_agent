@@ -90,7 +90,8 @@ class EscalationService:
             )
             customer_hash = customer_identity.get_hash()
         
-        # Call the RPC
+        # Call the Postgres RPC for atomic state transition & outbox record creation
+        # #review: customer_hash and support_identity hashes are computed above but not passed into execute_escalation_transition
         res = supabase.rpc(
             "execute_escalation_transition",
             {

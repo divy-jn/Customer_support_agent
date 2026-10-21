@@ -6,6 +6,7 @@ to interact with tickets, customers, and dashboard data.
 from fastapi import APIRouter, HTTPException, Depends, Header
 import json
 import uuid
+import asyncio
 
 from app.dependencies import verify_admin_key, verify_agent_token, verify_customer_token, verify_any_token
 from app.config import settings
@@ -35,6 +36,9 @@ from app.email_service import send_ticket_created_email, send_resolution_email
 
 router = APIRouter()
 
+# ──────────────────────────────────────────────
+#  Development Authentication Endpoints
+# ──────────────────────────────────────────────
 @router.post("/auth/agent/dev-login")
 async def dev_agent_login():
     """
@@ -57,8 +61,9 @@ async def dev_agent_login():
 async def dev_login(email: str):
     """
     DEVELOPMENT ONLY endpoint.
-    Generates a JWT token for the specified email.
-    Fails if the application is not in debug mode or if the customer doesn't exist.
+    Generates a JWT token for the specified email without password verification.
+    #review: In DEBUG_MODE, this endpoint allows impersonating any customer by email.
+    # Must remain strictly disabled in production environments.
     """
     if not settings.debug_mode:
         raise HTTPException(status_code=403, detail="Development login is disabled in production")
@@ -281,6 +286,8 @@ async def active_sessions(_: bool = Depends(verify_agent_token)):
         sid = session.get("session_id")
         history = session.get("conversation_history", [])
         last_msg = history[-1]["content"] if history else ""
+        workflow = session.get("workflow_state") or {}
+        outcome = session.get("workflow_outcome") or {}
         sessions.append({
             "session_id": sid,
             "customer_id": session.get("customer_id"),
@@ -289,6 +296,13 @@ async def active_sessions(_: bool = Depends(verify_agent_token)):
             "created_at": session.get("created_at"),
             "mode": session.get("mode", "ai"),
             "escalated": session.get("escalated", False),
+            # These are workflow facts only; support operators do not need the
+            # full customer message or tool payload to triage a live session.
+            "domain": outcome.get("domain") or workflow.get("active_domain"),
+            "workflow_status": workflow.get("global_status"),
+            "pending_approval": bool(session.get("pending_approval")),
+            "guardian_action": outcome.get("guardian_action"),
+            "guardian_reason": outcome.get("guardian_reason"),
         })
     return {"active_sessions": sessions, "total": len(sessions)}
 
@@ -345,15 +359,18 @@ async def admin_get_kb_doc(filename: str, _: bool = Depends(verify_admin_key)):
 
 @router.post("/admin/knowledge-base/reingest")
 async def admin_reingest_kb(_: bool = Depends(verify_admin_key)):
-    """Trigger re-ingestion of knowledge base into Pinecone."""
+    """Trigger re-ingestion of knowledge base into Pinecone/Chroma."""
     try:
+        # #review: Synchronous ingestion or blocking subprocess call freezes the FastAPI event loop for up to 120s!
+        # Should be offloaded to a background task (e.g. BackgroundTasks or Celery/Worker).
         from app.rag.retriever import ingest_knowledge_base
-        result = ingest_knowledge_base()
+        result = await asyncio.to_thread(ingest_knowledge_base)
         return {"status": "success", "message": "Knowledge base re-ingested", "details": result}
-    except ImportError:
-        # Fallback: run the script directly
+    except (ImportError, AttributeError):
+        # Fallback: run the script in a separate thread so event loop remains responsive
         import subprocess
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["python", "-m", "scripts.ingest_knowledge"],
             capture_output=True, text=True, timeout=120,
         )

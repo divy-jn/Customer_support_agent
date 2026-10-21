@@ -7,15 +7,15 @@ from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
 from pathlib import Path
 
-# backend/ directory — the project root for all relative paths
+# backend/ directory — root for resolving relative paths like knowledge_base
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    # --- Database ---
-    supabase_url: str = Field(..., alias="SUPABASE_URL")
-    supabase_key: str = Field(..., alias="SUPABASE_KEY")
-    database_password: str = Field(default="", alias="DATABASE_PASSWORD")
+    # --- Database (Supabase) ---
+    supabase_url: str = Field(..., alias="SUPABASE_URL")       # required, validated below
+    supabase_key: str = Field(..., alias="SUPABASE_KEY")       # required, min 10 chars
+    database_password: str = Field(default="", alias="DATABASE_PASSWORD")  # falls back to supabase_key
 
     # --- LLM (Vertex AI) ---
     llm_model: str = Field(default="gemini-3.8-flash", alias="LLM_MODEL")
@@ -45,7 +45,7 @@ class Settings(BaseSettings):
 
     # --- FastAPI ---
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
-    api_port: int = Field(default=8002, alias="API_PORT")
+    api_port: int = Field(default=8002, alias="API_PORT")  #review: conflicts with mcp_fs_port=8002 above
 
     # --- CORS ---
     cors_origins: str = Field(
@@ -64,12 +64,12 @@ class Settings(BaseSettings):
     reconciliation_batch_size: int = Field(default=100, alias="RECONCILIATION_BATCH_SIZE")
 
     # --- Email ---
-    gmail_address: str = Field(default="jdivy7151@gmail.com", alias="GMAIL_ADDRESS")
+    gmail_address: str = Field(default="jdivy7151@gmail.com", alias="GMAIL_ADDRESS")  #review: hardcoded personal email in defaults
     gmail_app_password: str = Field(default="", alias="GMAIL_APP_PASSWORD")
     support_team_email: str = Field(default="support@supportteam.com", alias="SUPPORT_TEAM_EMAIL")
     tech_team_email: str = Field(default="tech@supportteam.com", alias="TECH_TEAM_EMAIL")
-    from_email: str = Field(default="jdivy7151@gmail.com", alias="FROM_EMAIL")
-    email_test_recipient: str | None = Field(default="pdfallen0@gmail.com", alias="EMAIL_TEST_RECIPIENT")
+    from_email: str = Field(default="jdivy7151@gmail.com", alias="FROM_EMAIL")  #review: same hardcoded email
+    email_test_recipient: str | None = Field(default="pdfallen0@gmail.com", alias="EMAIL_TEST_RECIPIENT")  #review: test recipient should be None in prod
 
     # --- Logging & Debug ---
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
@@ -81,7 +81,8 @@ class Settings(BaseSettings):
     ws_message_rate_limit: int = Field(default=20, alias="WS_MESSAGE_RATE_LIMIT")  # messages per minute
 
     # --- LangGraph ---
-    langgraph_timeout: int = Field(default=60, alias="LANGGRAPH_TIMEOUT")  # seconds
+    langgraph_timeout: int = Field(default=120, alias="LANGGRAPH_TIMEOUT")  # seconds
+    agent_architecture_mode: str = Field(default="legacy", alias="AGENT_ARCHITECTURE_MODE")
 
     @property
     def cors_origins_list(self) -> list[str]:
@@ -104,7 +105,7 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         """Async PostgreSQL connection string for SQLAlchemy (asyncpg)."""
         host = f"db.{self._supabase_host}.supabase.co"
-        pw = self.database_password or self.supabase_key
+        pw = self.database_password or self.supabase_key  #review: using API key as DB password is risky
         return f"postgresql+asyncpg://postgres:{pw}@{host}:5432/postgres"
 
     @property
@@ -136,11 +137,23 @@ class Settings(BaseSettings):
             raise ValueError(f"LOG_LEVEL must be one of {valid}")
         return v.upper()
 
+    @field_validator("agent_architecture_mode")
+    @classmethod
+    def validate_agent_architecture_mode(cls, v: str) -> str:
+        """Keep architecture rollouts explicit and safely reversible."""
+        valid = {"legacy", "shadow", "v2_product", "v2_product_order", "v2_core", "v2_all"}
+        normalized = v.lower().strip()
+        if normalized not in valid:
+            raise ValueError(
+                f"AGENT_ARCHITECTURE_MODE must be one of {sorted(valid)}"
+            )
+        return normalized
+
     @field_validator("jwt_secret")
     @classmethod
     def validate_jwt_secret(cls, v, info):
         if not v:
-            return "dev-secret-key"
+            return "dev-secret-key"  #review: insecure fallback — should enforce in production
         return v
 
     model_config = {

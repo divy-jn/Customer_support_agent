@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { SkeletonCard } from "../components/LoadingSkeleton";
 import { useToast } from "../components/Toast";
 import { API_BASE } from "../lib/api";
+import { agentFetch } from "../lib/agent-auth";
 
 function StatusIndicator({ status }) {
   if (status === "healthy") {
@@ -31,13 +32,15 @@ export default function SystemHealthPage() {
   const [lastRefreshed, setLastRefreshed] = useState(null);
   const { toast, ToastContainer } = useToast();
 
+  // Fetch health, aggregate metrics, and websocket connection telemetry
   const fetchData = useCallback(async (isManual = false) => {
     if (isManual) setRefreshing(true);
     try {
+      // #review: Polling multiple admin endpoints every 15s sends repeated requests; consider combining into one endpoint or using SSE/WebSocket
       const [healthRes, metricsRes, connRes] = await Promise.all([
-        fetch(`${API_BASE}/api/v1/admin/health`),
-        fetch(`${API_BASE}/api/v1/admin/metrics`).catch(() => null),
-        fetch(`${API_BASE}/api/v1/admin/connections`).catch(() => null),
+        agentFetch(`${API_BASE}/api/v1/admin/health`),
+        agentFetch(`${API_BASE}/api/v1/admin/metrics`).catch(() => null),
+        agentFetch(`${API_BASE}/api/v1/admin/connections`).catch(() => null),
       ]);
       setHealth(await healthRes.json());
       if (metricsRes?.ok) setMetrics(await metricsRes.json());
@@ -55,6 +58,7 @@ export default function SystemHealthPage() {
     (async () => {
       await fetchData();
     })();
+    // Periodic refresh every 15 seconds
     const interval = setInterval(() => fetchData(), 15000);
     return () => clearInterval(interval);
   }, [fetchData]);

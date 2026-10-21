@@ -100,6 +100,10 @@ class Supervisor:
 
     @staticmethod
     def decide(semantic_domain: str, semantic_intent: str, state: WorkflowState, message: str) -> SupervisorDecision:
+        """
+        Pure deterministic decision function: inspects workflow state and semantic intent
+        to decide whether to CONTINUE, START_NEW, SUSPEND_AND_SWITCH, RESUME, or ESCALATE.
+        """
         # ── Guard: invalid active_domain ──
         if state.active_domain is not None and not Supervisor._is_valid_domain(state.active_domain):
             return SupervisorDecision(
@@ -117,6 +121,7 @@ class Supervisor:
             )
 
         # ── Guard: invalid/missing semantic domain ──
+        # #review: If semantic router fails or yields unknown domain, defaults to clarification rather than conversational fallback
         if not semantic_domain or not Supervisor._is_valid_domain(semantic_domain):
             return SupervisorDecision(
                 action=SupervisorAction.REQUEST_CLARIFICATION,
@@ -127,6 +132,7 @@ class Supervisor:
         target_domain = OrchestrationDomain(semantic_domain)
 
         # ── Terminal: escalated ──
+        # Once escalated, all further turns remain locked in escalation until human agent intervention
         if state.global_status == GlobalWorkflowStatus.ESCALATED:
             return SupervisorDecision(
                 action=SupervisorAction.ESCALATE,

@@ -89,9 +89,11 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState(null);
 
+  // Fetch dashboard statistics and active chat sessions for support agents
   const fetchData = useCallback(async (isManual = false) => {
     if (isManual) setRefreshing(true);
     try {
+      // #review: Polling dashboard endpoints every 15s; integrating WebSocket push events for active session updates reduces server queries
       const [statsRes, sessionsRes] = await Promise.all([
         agentFetch(`${API_BASE}/api/v1/dashboard/stats`),
         agentFetch(`${API_BASE}/api/v1/dashboard/sessions`),
@@ -116,6 +118,7 @@ export default function DashboardPage() {
     (async () => {
       await fetchData();
     })();
+    // Periodic polling every 15 seconds
     const interval = setInterval(() => fetchData(), 15000);
     return () => clearInterval(interval);
   }, [fetchData]);
@@ -298,6 +301,24 @@ export default function DashboardPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
+                  <span className="text-xs rounded-full bg-[var(--bg-card)] px-2 py-1 capitalize">
+                    {s.domain || "unrouted"}
+                  </span>
+                  {s.pending_approval && (
+                    <span className="text-xs rounded-full bg-amber-400/10 text-amber-400 px-2 py-1">
+                      Approval needed
+                    </span>
+                  )}
+                  {s.escalated && (
+                    <span className="text-xs rounded-full bg-red-400/10 text-red-400 px-2 py-1">
+                      Escalated
+                    </span>
+                  )}
+                  {s.guardian_action && (
+                    <span title={s.guardian_reason || ""} className="text-xs text-[var(--text-muted)] capitalize">
+                      {s.guardian_action.replaceAll("_", " ")}
+                    </span>
+                  )}
                   <span className="text-xs text-[var(--text-muted)]">
                     {s.message_count} msgs
                   </span>

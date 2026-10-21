@@ -18,9 +18,26 @@ from datetime import datetime, timezone
 logger = logging.getLogger("tracking")
 
 
+def emit_workflow_turn(event: dict) -> None:
+    """Emit the bounded, correlation-safe record for one customer turn.
+
+    Message bodies, prompts, and tool payloads are intentionally excluded. The
+    session ID is the correlation key; callers provide only workflow facts that
+    operators need to diagnose routing and policy decisions.
+    """
+    allowed = {
+        "session_id", "customer_id", "architecture_mode", "domain", "intent",
+        "supervisor_action", "guardian_action", "guardian_reason",
+        "pending_approval", "escalated", "latency_ms", "outcome",
+    }
+    logger.info("workflow_turn", extra={key: value for key, value in event.items() if key in allowed})
+
+
 # ──────────────────────────────────────────────
 #  Cost Estimation (per 1M tokens, approximate)
 # ──────────────────────────────────────────────
+# #review: Hardcoded cost dictionary only includes select Gemini models.
+# Unknown models will report estimated_cost_usd as 0.0 unless configured.
 MODEL_COSTS = {
     # Vertex AI Gemini
     "gemini-3.8-flash": {"input": 0.075, "output": 0.30},
@@ -33,6 +50,7 @@ MODEL_COSTS = {
 
 def _estimate_tokens(text: str) -> int:
     """Rough token estimation: ~4 chars per token for English text."""
+    # #review: Character-length heuristic (~4 chars/token) is imprecise for non-English languages, code, or structured JSON
     return max(1, len(text) // 4)
 
 

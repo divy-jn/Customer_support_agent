@@ -1,23 +1,38 @@
+"""Authentication & authorization dependency functions for FastAPI routes/websockets."""
+
 from fastapi import Depends, HTTPException, status, Header, Query, WebSocketException
 from typing import Optional
 import jwt
 from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
 from app.config import settings
 
-def verify_admin_key(x_api_key: Optional[str] = Header(None, alias="X-API-Key")) -> bool:
-    """Verify the admin API key from headers."""
-    if not settings.admin_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Admin API key is not configured on the server"
-        )
-    
-    if x_api_key != settings.admin_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing Admin API Key"
-        )
-    return True
+def verify_admin_key(
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+) -> bool:
+    """Verify the admin API key from headers, or fall back to a valid agent/admin JWT."""
+    # 1. Check static admin API key
+    if settings.admin_api_key and x_api_key == settings.admin_api_key:
+        return True
+
+    # 2. Fall back to agent/admin JWT (allows the frontend dashboard to authenticate)
+    if authorization and authorization.lower().startswith("bearer "):
+        candidate = authorization.split(" ", 1)[1].strip()
+        try:
+            payload = jwt.decode(
+                candidate,
+                settings.jwt_secret,
+                algorithms=[settings.jwt_algorithm],
+            )
+            if payload.get("role") in ("agent", "admin"):
+                return True
+        except (InvalidTokenError, ExpiredSignatureError):
+            pass
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Valid admin API key or agent authentication is required",
+    )
 
 def verify_agent_token(
     x_agent_token: Optional[str] = Header(None, alias="X-Agent-Token"),
@@ -66,14 +81,15 @@ async def verify_agent_ws_token(
         except Exception:
             pass
 
+    # Static secret not configured at all
     if not settings.agent_secret:
-        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Agent secret not configured")
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Agent secret not configured")  #review: this means no WS auth at all if agent_secret is unset
 
     raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid Agent Secret")
 
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials  #review: import at mid-file — consider moving to top
 
-security = HTTPBearer()
+security = HTTPBearer()  # extracts Bearer token from Authorization header
 
 def verify_customer_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> int:
     """Verify customer JWT token from Authorization header and return customer_id."""

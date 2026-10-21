@@ -110,6 +110,42 @@ def get_customer_history(customer_id: int) -> str:
         return json.dumps({"error": str(e)})
 
 
+@track_tool_call("find_customer_support_cases")
+@_supabase_retry
+def find_customer_support_cases(
+    customer_id: int,
+    *,
+    statuses: tuple[str, ...] = ("open", "in_progress", "pending_customer", "escalated"),
+    created_since: str | None = None,
+) -> str:
+    """Return recent customer-owned tickets for Guardian duplicate checks.
+
+    `created_since` is an ISO-8601 UTC timestamp.  This is intentionally a
+    narrow projection: Guardian needs ticket identity and classification, not
+    the full ticket body or data belonging to other customers.
+    """
+    try:
+        _validate_positive_int(customer_id, "customer_id")
+        if not statuses or any(not isinstance(status, str) or not status for status in statuses):
+            raise ValueError("statuses must contain one or more non-empty values")
+        if created_since is not None:
+            datetime.fromisoformat(created_since.replace("Z", "+00:00"))
+
+        query = (
+            supabase.table("tickets")
+            .select("id, subject, type, status, priority, created_at, order_id")
+            .eq("customer_id", customer_id)
+            .in_("status", list(statuses))
+            .order("created_at", desc=True)
+        )
+        if created_since:
+            query = query.gte("created_at", created_since)
+        response = query.limit(20).execute()
+        return json.dumps({"customer_id": customer_id, "cases": response.data or []}, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 @track_tool_call("get_chat_history")
 @_supabase_retry
 def get_chat_history(customer_id: int) -> str:
@@ -205,6 +241,7 @@ def create_ticket(
             "priority": priority_enum.value,
         }
 
+        # Outbox pattern: transactional emission of notification event alongside ticket mutation
         rpc_params = {
             "p_customer_id": customer_id,
             "p_client_request_id": client_request_id,
@@ -226,10 +263,8 @@ def create_ticket(
             
         result = response.data
         if "error" in result:
+            # #review: Idempotency conflict returned as JSON payload; client should check for IdempotencyConflict error key
             if result.get("error") == "IdempotencyConflict":
-                # Must throw IdempotencyConflictException to force LLM to reconcile
-                # But since Python tools return string, we can just return the JSON with the error
-                # The prompt says: "reject with explicit conflict".
                 pass
             return json.dumps(result)
             
@@ -903,6 +938,7 @@ def check_llm_health() -> dict:
     """Check if Vertex AI Gemini is configured and reachable."""
     from app.llm_factory import get_dynamic_settings
     try:
+        # #review: Only checks local settings file without performing a lightweight ping to Vertex AI API
         dyn = get_dynamic_settings()
         current_model = dyn.get("model", settings.llm_model)
         return {

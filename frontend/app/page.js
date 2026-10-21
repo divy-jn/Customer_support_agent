@@ -75,11 +75,19 @@ export default function CustomerChatPage() {
 
   // ── WebSocket ──
   const connectWebSocket = useCallback(async () => {
-    if (wsRef.current && wsRef.current.readyState <= 1) return;
+    // Only skip if we already have a fully open connection
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
+    // Clean up any lingering socket (CONNECTING or CLOSING state)
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch {}
+      wsRef.current = null;
+    }
 
     let token = localStorage.getItem("intellisupport_jwt");
     if (!token) {
       try {
+        // #review: Hardcoded development customer email 'amit.sharma@example.com'.
+        // In production, guest users should receive an anonymous token or a real login flow.
         const res = await fetch(`${API_BASE}/api/v1/auth/dev-login?email=amit.sharma@example.com`, { method: 'POST' });
         if (res.ok) {
           const data = await res.json();
@@ -157,9 +165,9 @@ export default function CustomerChatPage() {
         setIsTyping(false);
       } else if (data.type === "typing") {
         setIsTyping(true);
-        // Auto-clear typing indicator after 30s as a safety net
+        // Auto-clear typing indicator after 120s as a safety net
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 30000);
+        typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 120000);
       } else if (data.type === "human_message") {
         setIsTyping(false);
         if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
@@ -208,6 +216,8 @@ export default function CustomerChatPage() {
           { role: "error", content: `Authentication failed (Code: ${event.code}). Getting a new token and reconnecting...`, timestamp: new Date().toISOString() },
         ]);
         localStorage.removeItem("intellisupport_jwt");
+        localStorage.removeItem("intellisupport_session_id");
+        setSessionId(null);
       }
 
       setReconnecting(true);
@@ -264,11 +274,17 @@ export default function CustomerChatPage() {
         setIdentifiedCustomer(data[0]);
         setShowIdentityModal(false);
         localStorage.setItem("intellisupport_customer", JSON.stringify(data[0]));
+        // Clear previous session ID so new customer starts a clean, authorized session
+        localStorage.removeItem("intellisupport_session_id");
+        setSessionId(null);
+        setMessages([]);
         toast(`Welcome back, ${data[0].name}! 🎉`, "success");
-        if (wsRef.current && wsRef.current.readyState === 1) {
-          // Identity is handled purely by the JWT parameter in the WebSocket connection.
-          // No need to send fake [System] messages that trigger LangGraph.
+        // Reconnect WebSocket with new customer token
+        if (wsRef.current) {
+          try { wsRef.current.close(); } catch {}
+          wsRef.current = null;
         }
+        setTimeout(() => connectWebSocket(), 100);
       } else {
         toast("Failed to load customer profile.", "warning");
       }
@@ -323,6 +339,8 @@ export default function CustomerChatPage() {
   };
 
   // ── Markdown ──
+  // #review: Custom regex markdown replacement used with dangerouslySetInnerHTML without DOMPurify/sanitization.
+  // Content containing raw <script> or <img onerror=...> could lead to XSS if not sanitized.
   const renderMarkdown = (text) => {
     if (!text) return text;
     let html = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');

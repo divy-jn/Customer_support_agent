@@ -41,6 +41,8 @@ class SourceEventIdentity(BaseModel):
 
     @classmethod
     def from_ticket_creation(cls, customer_id: int, client_request_id: str) -> "SourceEventIdentity":
+        # #review: source_event_id does not include action name ('ticket_create'), but LogicalNotificationIdentity
+        # differentiates notifications by NotificationType enum during hash calculation.
         return cls(source_event_id=f"customer:{customer_id}|req:{client_request_id}")
 
     @classmethod

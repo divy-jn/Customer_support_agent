@@ -1,0 +1,1961 @@
+diff --git a/backend/app/config.py b/backend/app/config.py
+index 1783d75..ec841f1 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -17,13 +17,11 @@ class Settings(BaseSettings):
+     supabase_key: str = Field(..., alias="SUPABASE_KEY")
+     database_password: str = Field(default="", alias="DATABASE_PASSWORD")
+ 
+-    # --- Cloud LLM (Ollama Cloud) ---
+-    llm_base_url: str = Field(default="https://ollama.com/v1", alias="LLM_BASE_URL")
+-    llm_small_model: str = Field(default="nemotron-3-super", alias="LLM_SMALL_MODEL")
+-    llm_large_model: str = Field(default="nemotron-3-super", alias="LLM_LARGE_MODEL")
+-    llm_fallback_model: str = Field(default="gpt-oss:120b", alias="LLM_FALLBACK_MODEL")
+-    llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
++    # --- LLM (Vertex AI) ---
++    llm_model: str = Field(default="gemini-3.8-flash", alias="LLM_MODEL")
+     llm_timeout: int = Field(default=120, alias="LLM_TIMEOUT")  # seconds
++    vertex_project_id: str = Field(default="bytebazaar-dj", alias="VERTEX_PROJECT_ID")
++    vertex_location: str = Field(default="global", alias="VERTEX_LOCATION")
+ 
+     # --- Pinecone ---
+     pinecone_api_key: str = Field(default="", alias="PINECONE_API_KEY")
+@@ -46,8 +44,8 @@ class Settings(BaseSettings):
+     mcp_web_port: int = 8003
+ 
+     # --- FastAPI ---
+-    api_host: str = "0.0.0.0"
+-    api_port: int = 8000
++    api_host: str = Field(default="0.0.0.0", alias="API_HOST")
++    api_port: int = Field(default=8002, alias="API_PORT")
+ 
+     # --- CORS ---
+     cors_origins: str = Field(
+@@ -58,12 +56,20 @@ class Settings(BaseSettings):
+     # --- Knowledge Base ---
+     knowledge_base_dir: str = "./knowledge_base"
+ 
++    # --- Outbox Reconciliation (Slice 3.7.4) ---
++    reconciliation_enabled: bool = Field(default=True, alias="RECONCILIATION_ENABLED")
++    reconciliation_interval_seconds: int = Field(default=3600, alias="RECONCILIATION_INTERVAL_SECONDS")
++    reconciliation_startup_pages: int = Field(default=5, alias="RECONCILIATION_STARTUP_PAGES")
++    reconciliation_horizon_days: float = Field(default=7.0, alias="RECONCILIATION_HORIZON_DAYS")
++    reconciliation_batch_size: int = Field(default=100, alias="RECONCILIATION_BATCH_SIZE")
++
+     # --- Email ---
+-    gmail_address: str = Field(default="", alias="GMAIL_ADDRESS")
++    gmail_address: str = Field(default="jdivy7151@gmail.com", alias="GMAIL_ADDRESS")
+     gmail_app_password: str = Field(default="", alias="GMAIL_APP_PASSWORD")
+-    support_team_email: str = Field(default="support@projectbestie.com", alias="SUPPORT_TEAM_EMAIL")
+-    tech_team_email: str = Field(default="tech@projectbestie.com", alias="TECH_TEAM_EMAIL")
+-    from_email: str = Field(default="noreply@projectbestie.com", alias="FROM_EMAIL")
++    support_team_email: str = Field(default="support@supportteam.com", alias="SUPPORT_TEAM_EMAIL")
++    tech_team_email: str = Field(default="tech@supportteam.com", alias="TECH_TEAM_EMAIL")
++    from_email: str = Field(default="jdivy7151@gmail.com", alias="FROM_EMAIL")
++    email_test_recipient: str | None = Field(default="pdfallen0@gmail.com", alias="EMAIL_TEST_RECIPIENT")
+ 
+     # --- Logging & Debug ---
+     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+diff --git a/backend/app/dependencies.py b/backend/app/dependencies.py
+new file mode 100644
+index 0000000..bbfc6e7
+--- /dev/null
++++ b/backend/app/dependencies.py
+@@ -0,0 +1,111 @@
++from fastapi import Depends, HTTPException, status, Header, Query, WebSocketException
++from typing import Optional
++from app.config import settings
++
++def verify_admin_key(x_api_key: Optional[str] = Header(None, alias="X-API-Key")) -> bool:
++    """Verify the admin API key from headers."""
++    if not settings.admin_api_key:
++        raise HTTPException(
++            status_code=status.HTTP_401_UNAUTHORIZED,
++            detail="Admin API key is not configured on the server"
++        )
++    
++    if x_api_key != settings.admin_api_key:
++        raise HTTPException(
++            status_code=status.HTTP_401_UNAUTHORIZED,
++            detail="Invalid or missing Admin API Key"
++        )
++    return True
++
++def verify_agent_token(x_agent_token: Optional[str] = Header(None, alias="X-Agent-Token")) -> bool:
++    """Verify the agent token from headers (for REST routes)."""
++    if not settings.agent_secret:
++        raise HTTPException(
++            status_code=status.HTTP_401_UNAUTHORIZED,
++            detail="Agent secret is not configured on the server"
++        )
++        
++    if x_agent_token != settings.agent_secret:
++        raise HTTPException(
++            status_code=status.HTTP_401_UNAUTHORIZED,
++            detail="Invalid or missing Agent Token"
++        )
++    return True
++
++async def verify_agent_ws_token(
++    agent_secret: Optional[str] = Query(None),
++    token: Optional[str] = Query(None),
++) -> bool:
++    """Verify agent secret or agent JWT token for WebSocket connections."""
++    candidate = agent_secret or token
++
++    # Match static agent secret
++    if settings.agent_secret and candidate == settings.agent_secret:
++        return True
++
++    # Or verify if it's a valid JWT token
++    if candidate:
++        try:
++            payload = jwt.decode(candidate, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
++            if payload.get("role") in ("agent", "admin", "customer"):
++                return True
++        except Exception:
++            pass
++
++    if settings.debug_mode:
++        return True
++
++    if not settings.agent_secret:
++        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Agent secret not configured")
++
++    raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid Agent Secret")
++
++from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
++import jwt
++from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
++
++security = HTTPBearer()
++
++def verify_customer_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> int:
++    """Verify customer JWT token from Authorization header and return customer_id."""
++    token = credentials.credentials
++    try:
++        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
++        if payload.get("role") != "customer":
++            raise HTTPException(status_code=403, detail="Invalid role")
++        
++        customer_id_str = payload.get("sub")
++        if not customer_id_str:
++            raise HTTPException(status_code=401, detail="Invalid token subject")
++            
++        return int(customer_id_str)
++        
++    except ExpiredSignatureError:
++        raise HTTPException(status_code=401, detail="Token has expired")
++    except InvalidTokenError:
++        raise HTTPException(status_code=401, detail="Invalid token")
++    except ValueError:
++        raise HTTPException(status_code=401, detail="Invalid customer identity format")
++
++async def verify_customer_ws_token(token: str = Query(None)) -> int:
++    """Verify customer JWT token from WebSocket query parameters."""
++    if not token:
++        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Missing token")
++        
++    try:
++        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
++        if payload.get("role") != "customer":
++            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid role")
++            
++        customer_id_str = payload.get("sub")
++        if not customer_id_str:
++            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token subject")
++            
++        return int(customer_id_str)
++        
++    except ExpiredSignatureError:
++        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Token has expired")
++    except InvalidTokenError:
++        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
++    except ValueError:
++        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid customer identity format")
+diff --git a/backend/app/persistence/escalation.py b/backend/app/persistence/escalation.py
+new file mode 100644
+index 0000000..f9d7992
+--- /dev/null
++++ b/backend/app/persistence/escalation.py
+@@ -0,0 +1,78 @@
++"""
++Durable escalation-state persistence (Phase F.2.8.3 Slice 3.5.1).
++
++Provides concurrency-safe initialization and authoritative reads for the
++per-session escalation lifecycle. Postgres is the authoritative source.
++"""
++from typing import Optional
++import logging
++from app.models import EscalationLifecycleStatus
++from app.tools import supabase, _supabase_retry
++
++logger = logging.getLogger(__name__)
++
++
++def _is_table_missing_error(e: Exception) -> bool:
++    err_msg = str(e)
++    return "PGRST205" in err_msg or "Could not find the table" in err_msg or "session_escalation_state" in err_msg
++
++
++@_supabase_retry
++def ensure_durable_escalation_state(session_id: str, customer_id: int) -> EscalationLifecycleStatus:
++    """
++    Ensures that exactly one durable state record exists for the given session.
++    If it does not exist, creates it with status 'NONE' (concurrency-safe).
++    Returns the authoritative current status from Postgres.
++    Gracefully degrades to NONE if the session_escalation_state table does not exist.
++    """
++    if not session_id or not customer_id:
++        raise ValueError("session_id and customer_id are required")
++
++    try:
++        # Attempt to insert the initial state.
++        # If it fails due to a unique constraint (concurrent request), we catch the exception.
++        supabase.table("session_escalation_state").insert({
++            "session_id": session_id,
++            "customer_id": customer_id,
++            "status": EscalationLifecycleStatus.NONE.value
++        }).execute()
++        return EscalationLifecycleStatus.NONE
++    except Exception as e:
++        if _is_table_missing_error(e):
++            logger.warning(f"session_escalation_state table not found in Supabase schema. Degraded to default NONE status.")
++            return EscalationLifecycleStatus.NONE
++        logger.debug(f"Insert failed for session {session_id}, likely concurrent creation or exists. Fetching existing...")
++        pass
++
++    try:
++        res = supabase.table("session_escalation_state").select("status, customer_id").eq("session_id", session_id).execute()
++        if res.data:
++            if res.data[0]["customer_id"] != customer_id:
++                raise ValueError(f"Session {session_id} belongs to a different customer.")
++            return EscalationLifecycleStatus(res.data[0]["status"])
++    except Exception as e:
++        if _is_table_missing_error(e):
++            logger.warning(f"session_escalation_state table not found in Supabase schema. Degraded to default NONE status.")
++            return EscalationLifecycleStatus.NONE
++        raise
++
++    raise RuntimeError(f"Failed to ensure durable escalation state for session {session_id}")
++
++
++@_supabase_retry
++def get_durable_escalation_state(session_id: str, customer_id: int) -> Optional[EscalationLifecycleStatus]:
++    """
++    Retrieves the authoritative current status from Postgres.
++    Returns None if the record does not exist or table is absent.
++    """
++    try:
++        res = supabase.table("session_escalation_state").select("status, customer_id").eq("session_id", session_id).execute()
++        if res.data:
++            if res.data[0]["customer_id"] != customer_id:
++                raise ValueError(f"Session {session_id} belongs to a different customer.")
++            return EscalationLifecycleStatus(res.data[0]["status"])
++    except Exception as e:
++        if _is_table_missing_error(e):
++            return None
++        raise
++    return None
+diff --git a/backend/app/routes.py b/backend/app/routes.py
+index 01064f6..1c15022 100644
+--- a/backend/app/routes.py
++++ b/backend/app/routes.py
+@@ -3,8 +3,9 @@ REST API Routes — provides HTTP endpoints for the frontend
+ to interact with tickets, customers, and dashboard data.
+ """
+ 
+-from fastapi import APIRouter, HTTPException, Depends
++from fastapi import APIRouter, HTTPException, Depends, Header
+ import json
++import uuid
+ 
+ from app.dependencies import verify_admin_key, verify_agent_token, verify_customer_token
+ from app.config import settings
+@@ -29,7 +30,7 @@ from app.tools import (
+     get_system_info, list_knowledge_base_docs, get_knowledge_base_doc,
+ )
+ from app.models import TicketCreate, TicketUpdate, TicketResponse, TicketStatus
+-from app.websocket.chat_handler import session_store
++from app.persistence.session import session_store
+ from app.email_service import send_ticket_created_email, send_resolution_email
+ 
+ router = APIRouter()
+@@ -124,7 +125,11 @@ async def get_ticket_detail(ticket_id: int, authenticated_customer_id: int = Dep
+ 
+ 
+ @router.post("/tickets", status_code=201)
+-async def create_new_ticket(ticket: TicketCreate, _: bool = Depends(verify_agent_token)):
++async def create_new_ticket(
++    ticket: TicketCreate, 
++    _: bool = Depends(verify_agent_token),
++    client_request_id: uuid.UUID = Header(..., alias="X-Client-Request-Id")
++):
+     """Create a new support ticket."""
+     result = create_ticket(
+         customer_id=ticket.customer_id,
+@@ -133,38 +138,23 @@ async def create_new_ticket(ticket: TicketCreate, _: bool = Depends(verify_agent
+         ticket_type=ticket.type.value,
+         priority=ticket.priority.value,
+         channel=ticket.channel,
++        client_request_id=str(client_request_id),
+     )
+     data = json.loads(result)
+     if "error" in data:
+         raise HTTPException(status_code=400, detail=data["error"])
+ 
+-    # Send email notification on ticket creation
+-    if data.get("status") == "success" and data.get("ticket_id"):
+-        try:
+-            from app.tools import get_customer_by_id
+-            customer_result = get_customer_by_id(ticket.customer_id)
+-            customer_data = json.loads(customer_result)
+-            if isinstance(customer_data, list) and customer_data:
+-                c = customer_data[0]
+-                import asyncio
+-                await asyncio.to_thread(
+-                    send_ticket_created_email,
+-                    customer_email=c.get("email", ""),
+-                    customer_name=c.get("name", "Customer"),
+-                    ticket_id=data["ticket_id"],
+-                    subject=ticket.subject,
+-                    description=ticket.description,
+-                    priority=ticket.priority.value,
+-                )
+-        except Exception:
+-            pass  # Don't fail ticket creation if email fails
+-
+     return data
+ 
+ 
+ @router.patch("/tickets/{ticket_id}")
+ @router.put("/tickets/{ticket_id}")
+-async def update_existing_ticket(ticket_id: int, update: TicketUpdate, _: bool = Depends(verify_agent_token)):
++async def update_existing_ticket(
++    ticket_id: int, 
++    update: TicketUpdate, 
++    _: bool = Depends(verify_agent_token),
++    client_request_id: uuid.UUID = Header(..., alias="X-Client-Request-Id")
++):
+     """Update a ticket's status, priority, resolution, or assigned agent."""
+     result = update_ticket(
+         ticket_id=ticket_id,
+@@ -173,30 +163,12 @@ async def update_existing_ticket(ticket_id: int, update: TicketUpdate, _: bool =
+         resolution=update.resolution,
+         assigned_agent=update.assigned_agent,
+         satisfaction_rating=update.satisfaction_rating,
++        client_request_id=str(client_request_id),
+     )
+     data = json.loads(result)
+     if "error" in data:
+         raise HTTPException(status_code=400, detail=data["error"])
+ 
+-    # Send resolution email when ticket is closed
+-    if update.status and update.status.value == "closed":
+-        try:
+-            ticket_result = get_ticket(ticket_id)
+-            ticket_data = json.loads(ticket_result)
+-            if ticket_data.get("customers"):
+-                c = ticket_data["customers"]
+-                import asyncio
+-                await asyncio.to_thread(
+-                    send_resolution_email,
+-                    customer_email=c.get("email", ""),
+-                    customer_name=c.get("name", "Customer"),
+-                    ticket_id=ticket_id,
+-                    subject=ticket_data.get("subject", ""),
+-                    resolution=update.resolution or ticket_data.get("resolution", ""),
+-                )
+-        except Exception:
+-            pass
+-
+     return data
+ 
+ 
+@@ -391,9 +363,7 @@ from pydantic import BaseModel
+ from app.llm_factory import get_dynamic_settings, SETTINGS_FILE
+ 
+ class LLMSettingsUpdate(BaseModel):
+-    llm_base_url: str
+-    small_model: str
+-    large_model: str
++    model: str = "gemini-3.8-flash"
+ 
+ @router.get("/admin/llm-settings")
+ @router.get("/admin/settings")
+diff --git a/backend/app/websocket/chat_handler.py b/backend/app/websocket/chat_handler.py
+index a0ae822..abf2a20 100644
+--- a/backend/app/websocket/chat_handler.py
++++ b/backend/app/websocket/chat_handler.py
+@@ -9,7 +9,7 @@ import asyncio
+ import logging
+ from datetime import datetime, timezone
+ 
+-from fastapi import WebSocket, WebSocketDisconnect
++from fastapi import WebSocket, WebSocketDisconnect, status
+ 
+ from app.config import settings
+ from app.websocket.connection import manager
+@@ -18,93 +18,112 @@ from app.email_service import send_escalation_email
+ from app.tools import lookup_customer
+ from app.guardrails import validate_input, validate_output, get_rejection_message
+ 
+-# Conditional Redis import — falls back to in-memory if not installed
+-try:
+-    from upstash_redis.asyncio import Redis as UpstashRedis
+-    _redis_available = True
+-except ImportError:
+-    _redis_available = False
++from app.persistence.session import session_store
+ 
+ logger = logging.getLogger(__name__)
+ 
+-# Initialize Upstash Redis if configured AND available
+-redis_client = None
+-if _redis_available and settings.upstash_redis_url and settings.upstash_redis_token:
+-    redis_client = UpstashRedis(url=settings.upstash_redis_url, token=settings.upstash_redis_token)
+-else:
+-    if not _redis_available:
+-        logger.warning("upstash-redis not installed. Using in-memory session store.")
+-    else:
+-        logger.warning("Upstash Redis not configured. Using in-memory store.")
+-
+-class SessionStore(dict):
+-    async def get_session(self, session_id: str) -> dict | None:
+-        if redis_client:
+-            data = await redis_client.get(f"session:{session_id}")
+-            if data:
+-                return json.loads(data) if isinstance(data, str) else data
+-            return None
+-        else:
+-            return self.get(session_id)
+-
+-    async def save_session(self, session_id: str, session: dict):
+-        if redis_client:
+-            await redis_client.set(f"session:{session_id}", json.dumps(session), ex=86400)
+-        else:
+-            self[session_id] = session
+-
+-session_store = SessionStore()
++
++async def _execute_cas(session_id: str, loader_fn, mutator_fn, retries: int) -> tuple[dict, bool]:
++    from app.persistence.session import SaveResult
++    for attempt in range(retries):
++        session = await loader_fn()
++        expected_revision = session.get("_session_revision", 1)
++        
++        should_save = mutator_fn(session)
++        if not should_save:
++            return session, False
++            
++        result = await session_store.save_session_conditional(session_id, session, expected_revision)
++        
++        if result == SaveResult.SUCCESS:
++            return session, True
++        elif result == SaveResult.MISSING:
++            logger.error("Session missing during CAS mutation", extra={"session_id": session_id})
++            raise RuntimeError(f"Session {session_id} missing")
++            
++        logger.warning(
++            f"CAS conflict on session {session_id}, attempt {attempt+1}/{retries}", 
++            extra={
++                "session_id": session_id,
++                "expected_revision": expected_revision,
++                "retry_count": attempt + 1
++            }
++        )
++                      
++    logger.error("CAS conflict exhausted retries or retry disabled", extra={"session_id": session_id, "retry_count": retries})
++    raise RuntimeError("Concurrency conflict: stale session data could not be saved safely.")
+ 
+ 
+ async def _get_session(session_id: str, authenticated_customer_id: int | None = None) -> dict:
+     """Retrieve an existing session or initialize a new one with the authenticated customer_id."""
+     session = await session_store.get_session(session_id)
+-    if session:
+-        # Enforce session ownership
+-        if authenticated_customer_id is not None:
+-            if session.get("customer_id") is not None and session.get("customer_id") != authenticated_customer_id:
+-                raise ValueError(f"Session {session_id} belongs to a different customer.")
+-            if session.get("customer_id") is None:
+-                session["customer_id"] = authenticated_customer_id
+-                await session_store.save_session(session_id, session)
+-        return session
+-
+-    # Initialize new session bounded to the authenticated customer
+-    new_session = {
+-        "session_id": session_id,
+-        "customer_id": authenticated_customer_id,
+-        "mode": "ai",
+-        "conversation_history": [],
+-        "created_at": datetime.now(timezone.utc).isoformat(),
+-        "escalated": False,
+-        "pending_approval": None,
+-    }
+-    await session_store.save_session(session_id, new_session)
+-    return new_session
++    if not session:
++        # Initialize new session bounded to the authenticated customer
++        new_session = {
++            "session_id": session_id,
++            "customer_id": authenticated_customer_id,
++            "_session_revision": 1,
++            "mode": "ai",
++            "conversation_history": [],
++            "created_at": datetime.now(timezone.utc).isoformat(),
++            "pending_approval": None,
++            "workflow_state": {
++                "active_domain": None,
++                "state_revision": 1,
++                "session_id": session_id,
++                "customer_id": authenticated_customer_id,
++                "turn_count": 0
++            }
++        }
++        from app.persistence.session import SaveResult
++        res = await session_store.create_session_if_absent(session_id, new_session)
++        if res == SaveResult.SUCCESS:
++            return new_session
++        
++        # If it failed to create, it was created concurrently. Fall through to load it.
++        session = await session_store.get_session(session_id)
++        if not session:
++            raise RuntimeError("Session creation race but session is missing")
++
++    # Enforce session ownership
++    if authenticated_customer_id is not None:
++        if session.get("customer_id") is not None and session.get("customer_id") != authenticated_customer_id:
++            raise ValueError(f"Session {session_id} belongs to a different customer.")
++        if session.get("customer_id") is None:
++            async def _load_raw():
++                s = await session_store.get_session(session_id)
++                if not s:
++                    raise RuntimeError(f"Session {session_id} missing")
++                # OWNERSHIP REVALIDATION AFTER RELOAD
++                if s.get("customer_id") is not None and s.get("customer_id") != authenticated_customer_id:
++                    raise ValueError(f"Session {session_id} belongs to a different customer.")
++                return s
++                
++            def _init_customer(s):
++                if s.get("customer_id") is not None:
++                    return False
++                s["customer_id"] = authenticated_customer_id
++                return True
++                
++            session, _ = await _execute_cas(session_id, _load_raw, _init_customer, 3)
++            
++    return session
+ 
+ 
+-async def _save_session(session_id: str, session: dict):
+-    """Save session back to Redis (or memory)."""
+-    await session_store.save_session(session_id, session)
++
++async def _mutate_session(session_id: str, mutator_fn, allow_retry: bool = True, customer_id: int | None = None) -> tuple[dict, bool]:
++    MAX_CAS_RETRIES = 3
++    retries = MAX_CAS_RETRIES if allow_retry else 1
++    
++    async def _load_fn():
++        return await _get_session(session_id, customer_id)
++        
++    return await _execute_cas(session_id, _load_fn, mutator_fn, retries)
++
+ 
+ async def get_all_active_sessions() -> list:
+     """Retrieve all active sessions from Redis or memory."""
+-    if redis_client:
+-        try:
+-            keys = await redis_client.keys("session:*")
+-            sessions = []
+-            if keys:
+-                values = await redis_client.mget(*keys)
+-                for val in values:
+-                    if val:
+-                        session = json.loads(val) if isinstance(val, str) else val
+-                        sessions.append(session)
+-            return sessions
+-        except Exception as e:
+-            logger.error(f"Failed to fetch sessions from Redis: {e}")
+-            return []
+-    else:
+-        return list(session_store.values())
++    return await session_store.get_all_active_sessions()
+ 
+ 
+ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None, authenticated_customer_id: int | None = None):
+@@ -115,6 +134,18 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
+     if not session_id:
+         session_id = str(uuid.uuid4())
+ 
++    if authenticated_customer_id is not None:
++        try:
++            from app.tools import supabase
++            res = await asyncio.to_thread(supabase.table("conversations").select("customer_id").eq("session_id", session_id).execute)
++            if res.data and res.data[0].get("customer_id") is not None:
++                if res.data[0]["customer_id"] != authenticated_customer_id:
++                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=f"Session {session_id} belongs to a different customer.")
++                    return
++        except Exception as e:
++            import logging
++            logging.getLogger(__name__).error(f"Failed to verify persistent session ownership: {e}")
++
+     await manager.connect_customer(websocket, session_id)
+ 
+     try:
+@@ -165,9 +196,14 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
+             try:
+                 data = json.loads(raw)
+                 message = data.get("message", "").strip()
++                client_request_id = data.get("client_request_id")
+                 # Ignore customer_id in JSON payload, use authenticated_customer_id
+             except json.JSONDecodeError:
+                 message = raw.strip()
++                client_request_id = None
++                
++            if not client_request_id:
++                pass # Do NOT silently convert an omitted request ID into a new operation
+ 
+             customer_id = authenticated_customer_id
+ 
+@@ -198,17 +234,16 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
+             # Use sanitized message (PII redacted for logging)
+             sanitized_message = guard_result.sanitized_text
+ 
+-            session = await _get_session(session_id, customer_id)
+-
+-            # Append customer message to history (sanitized)
+-            session["conversation_history"].append({
+-                "role": "customer",
+-                "content": message,  # Keep original for LLM processing
+-                "sanitized": sanitized_message,  # Sanitized for logging
+-                "timestamp": datetime.now(timezone.utc).isoformat(),
+-                "pii_detected": guard_result.pii_detected,
+-            })
+-            await _save_session(session_id, session)
++            def _append_customer(s):
++                s["conversation_history"].append({
++                    "role": "customer",
++                    "content": message,
++                    "sanitized": sanitized_message,
++                    "timestamp": datetime.now(timezone.utc).isoformat(),
++                    "pii_detected": guard_result.pii_detected,
++                })
++                return True
++            session, _ = await _mutate_session(session_id, _append_customer, allow_retry=True, customer_id=customer_id)
+ 
+             # Broadcast to monitoring agents
+             await manager.broadcast_to_agents({
+@@ -219,6 +254,46 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
+                 "timestamp": datetime.now(timezone.utc).isoformat(),
+             }, session_id)
+ 
++            # ── 1. Durable state is authoritative BEFORE routing ──
++            try:
++                from app.persistence.escalation import ensure_durable_escalation_state
++                from app.models import EscalationLifecycleStatus
++                
++                if customer_id is None:
++                    durable_status = EscalationLifecycleStatus.NONE
++                else:
++                    durable_status = await asyncio.to_thread(
++                        ensure_durable_escalation_state,
++                        session_id,
++                        customer_id
++                    )
++                
++                expected_mode = "human" if durable_status == EscalationLifecycleStatus.ACTIVE else "ai"
++                
++                if session.get("mode") != expected_mode:
++                    logger.warning(
++                        f"Stale Redis mode detected for {session_id}. "
++                        f"Postgres: {durable_status.value}, Redis: {session.get('mode')}. "
++                        f"Repairing Redis to {expected_mode}."
++                    )
++                    
++                    def _repair_mode(s):
++                        if s.get("mode") != expected_mode:
++                            s["mode"] = expected_mode
++                            return True
++                        return False
++                        
++                    session, _ = await _mutate_session(session_id, _repair_mode, allow_retry=True, customer_id=customer_id)
++            except Exception as e:
++                logger.error(f"Failed to load durable escalation state for session {session_id}: {e}")
++                await manager.send_personal_message({
++                    "type": "error",
++                    "message": "I'm experiencing a technical issue verifying session state. Please try again.",
++                    "agent_name": "System",
++                    "timestamp": datetime.now(timezone.utc).isoformat(),
++                }, session_id)
++                continue
++
+             # If human agent has taken over, do NOT run ANY AI logic
+             if session.get("mode") == "human":
+                 continue
+@@ -258,12 +333,14 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
+                     output_guard = validate_output(raw_response)
+                     response_text = output_guard.sanitized_text
+                     
+-                    session["conversation_history"].append({
+-                        "role": "agent", "content": response_text,
+-                        "timestamp": datetime.now(timezone.utc).isoformat(),
+-                    })
+-                    session.pop("pending_approval", None)
+-                    await _save_session(session_id, session)
++                    def _approve_execute(s):
++                        s["conversation_history"].append({
++                            "role": "agent", "content": response_text,
++                            "timestamp": datetime.now(timezone.utc).isoformat(),
++                        })
++                        s.pop("pending_approval", None)
++                        return True
++                    session, _ = await _mutate_session(session_id, _approve_execute, allow_retry=True)
+                     
+                     await manager.send_personal_message({
+                         "type": "agent_response",
+@@ -286,13 +363,15 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
+             
+             elif pending and message.lower().strip() in ("no", "nope", "nah", "cancel", "don't", "dont", "stop", "never mind"):
+                 # Customer rejected the pending action
+-                session.pop("pending_approval", None)
+-                session["conversation_history"].append({
+-                    "role": "agent",
+-                    "content": "No problem! I've cancelled that action. Is there anything else I can help with?",
+-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+-                })
+-                await _save_session(session_id, session)
++                def _approve_reject(s):
++                    s.pop("pending_approval", None)
++                    s["conversation_history"].append({
++                        "role": "agent",
++                        "content": "No problem! I've cancelled that action. Is there anything else I can help with?",
++                        "timestamp": datetime.now(timezone.utc).isoformat(),
++                    })
++                    return True
++                session, _ = await _mutate_session(session_id, _approve_reject, allow_retry=True)
+                 await manager.send_personal_message({
+                     "type": "agent_response",
+                     "message": "No problem! I've cancelled that action. Is there anything else I can help with?",
+@@ -314,6 +393,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
+                     "customer_id": customer_id,
+                     "customer_name": session.get("customer_name"),
+                     "session_id": session_id,
++                    "client_request_id": client_request_id,
+                     "message": message,
+                     "conversation_history": session["conversation_history"],
+                     "intent": "",
+@@ -325,6 +405,11 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
+                     "escalated": False,
+                     "pending_approval": None,
+                     "approval_granted": None,
++                    "workflow_state": session.get("workflow_state", {
++                        "session_id": session_id,
++                        "customer_id": customer_id,
++                        "turn_count": 0
++                    }),
+                 }
+ 
+                 # Invoke LangGraph with timeout
+@@ -345,20 +430,9 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
+                     }, session_id)
+                     continue
+ 
+-                # RE-CHECK MODE AFTER AWAIT TO PREVENT RACE CONDITIONS
+-                session = await _get_session(session_id, customer_id)
+-                if session.get("mode") == "human":
+-                    logger.info(f"AI response discarded for {session_id} - agent took over during processing.")
+-                    continue
+-
++                # We still re-check mode but the whole mutation must be atomic
+                 raw_response = result.get("response", "I'm sorry, I couldn't process your request.")
+                 is_escalated = result.get("escalated", False)
+-                
+-                # Check if graph returned a pending approval
+-                if result.get("pending_approval"):
+-                    session["pending_approval"] = result["pending_approval"]
+-                    session["pending_approval"]["original_message"] = message
+-                    session["pending_approval"]["intent"] = result.get("intent", "")
+ 
+                 # ── Output Guardrails ──
+                 output_guard = validate_output(raw_response)
+@@ -369,13 +443,42 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
+                         extra={"violations": output_guard.violations, "risk_score": output_guard.risk_score},
+                     )
+ 
+-                # Append agent response to history
+-                session["conversation_history"].append({
+-                    "role": "agent",
+-                    "content": response_text,
+-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+-                })
+-                await _save_session(session_id, session)
++                def _apply_graph_result(s):
++                    if s.get("mode") == "human":
++                        return False # do not save, human took over
++                    
++                    if result.get("pending_approval"):
++                        s["pending_approval"] = result["pending_approval"]
++                        s["pending_approval"]["original_message"] = message
++                        s["pending_approval"]["intent"] = result.get("intent", "")
++
++                    if result.get("workflow_state"):
++                        s["workflow_state"] = result["workflow_state"]
++
++                    s["conversation_history"].append({
++                        "role": "agent",
++                        "content": response_text,
++                        "timestamp": datetime.now(timezone.utc).isoformat(),
++                    })
++                    return True
++
++                try:
++                    # NEVER blindly merge arbitrary typed domain state. 
++                    session, was_changed = await _mutate_session(session_id, _apply_graph_result, allow_retry=False, customer_id=customer_id)
++                    if not was_changed:
++                        logger.info(f"AI response discarded for {session_id} - agent took over during processing.")
++                        continue
++                except RuntimeError as e:
++                    if "Concurrency conflict" in str(e):
++                        logger.error(f"CAS conflict on graph result for session {session_id}: {e}")
++                        await manager.send_personal_message({
++                            "type": "error",
++                            "message": "The conversation was updated in another window. Please try your request again.",
++                            "agent_name": "Adi",
++                            "timestamp": datetime.now(timezone.utc).isoformat(),
++                        }, session_id)
++                        continue
++                    raise e
+ 
+                 # Send response to customer
+                 response_payload = {
+@@ -397,42 +500,67 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
+                     **response_payload,
+                 }, session_id)
+ 
+-                # If escalated, notify all connected dashboard agents
+-                if is_escalated:
+-                    escalation_msg = {
+-                        "type": "escalation_alert",
+-                        "session_id": session_id,
+-                        "customer_id": customer_id,
+-                        "sentiment": result.get("sentiment", "negative"),
+-                        "urgency": result.get("urgency", "high"),
+-                        "last_message": message,
+-                        "timestamp": datetime.now(timezone.utc).isoformat(),
+-                    }
+-                    # Send escalation alert to ALL dashboard agents so they can pick it up
+-                    await manager.broadcast_to_all_agents(escalation_msg)
+-
+-                    # Send escalation email
++                # If escalated, trigger transactional EscalationService
++                if is_escalated and customer_id is not None:
++                    from app.escalation.service import EscalationService, EscalationRequest, IdempotencyConflict
++                    
++                    ticket_id = None
++                    ws_state = result.get("workflow_state", {})
++                    if ws_state.get("active_domain") == "product" and ws_state.get("product_state"):
++                        ticket_id = ws_state["product_state"].get("active_ticket_id")
++                    elif ws_state.get("active_domain") == "order" and ws_state.get("order_state"):
++                        ticket_id = ws_state["order_state"].get("active_ticket_id")
++                    elif ws_state.get("active_domain") == "payment" and ws_state.get("payment_state"):
++                        ticket_id = ws_state["payment_state"].get("active_ticket_id")
++                        
++                    if not client_request_id:
++                        logger.error(f"Missing client_request_id for escalation in session {session_id}")
++                        await manager.send_personal_message({
++                            "type": "error",
++                            "message": "Missing client_request_id. Cannot perform escalation.",
++                            "agent_name": "System",
++                            "timestamp": datetime.now(timezone.utc).isoformat(),
++                        }, session_id)
++                        continue
++                        
++                    esc_req = EscalationRequest(
++                        customer_id=customer_id,
++                        session_id=session_id,
++                        client_request_id=uuid.UUID(client_request_id),
++                        ticket_id=ticket_id,
++                        sentiment=result.get("sentiment", "negative"),
++                        urgency=result.get("urgency", "high"),
++                        last_message=message,
++                        customer_notification_required=True
++                    )
++                    
+                     try:
+-                        customer_email = None
+-                        customer_name = "Unknown Customer"
+-                        if customer_id:
+-                            cust_res = lookup_customer(str(customer_id))
+-                            cust_data = json.loads(cust_res)
+-                            if isinstance(cust_data, list) and cust_data:
+-                                customer_email = cust_data[0].get("email")
+-                                customer_name = cust_data[0].get("name", customer_name)
++                        esc_res = await asyncio.to_thread(EscalationService.escalate_session, esc_req)
++                        
++                        if esc_res.is_success or getattr(esc_res, 'status', None) == "bypassed":
++                            def _escalate_mode(s):
++                                if s.get("mode") != "human":
++                                    s["mode"] = "human"
++                                    return True
++                                return False
++                            session, _ = await _mutate_session(session_id, _escalate_mode, allow_retry=True, customer_id=customer_id)
++                            
++                        # Send escalation alert to ALL dashboard agents so they can pick it up
++                        escalation_msg = {
++                            "type": "escalation_alert",
++                            "session_id": session_id,
++                            "customer_id": customer_id,
++                            "sentiment": result.get("sentiment", "negative"),
++                            "urgency": result.get("urgency", "high"),
++                            "last_message": message,
++                            "timestamp": datetime.now(timezone.utc).isoformat(),
++                        }
++                        await manager.broadcast_to_all_agents(escalation_msg)
+                         
+-                        await asyncio.to_thread(
+-                            send_escalation_email,
+-                            customer_email=customer_email,
+-                            customer_name=customer_name,
+-                            session_id=session_id,
+-                            sentiment=result.get("sentiment", "negative"),
+-                            urgency=result.get("urgency", "high"),
+-                            last_message=message,
+-                        )
++                    except IdempotencyConflict as ic:
++                        logger.warning(f"Idempotency conflict on escalation for session {session_id}: {ic}")
+                     except Exception as e:
+-                        logger.error(f"Failed to send escalation email for session {session_id}: {e}")
++                        logger.error(f"Failed to execute escalation service for session {session_id}: {e}")
+ 
+             except Exception as e:
+                 logger.error(f"LangGraph error for session {session_id}: {e}")
+@@ -533,15 +661,16 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
+                     continue
+ 
+                 # Append to history
+-                session = await _get_session(session_id)
+-                session["conversation_history"].append({
+-                    "role": "agent",
+-                    "content": agent_message,
+-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+-                    "human_agent": True,
+-                    "agent_name": agent_name,
+-                })
+-                await _save_session(session_id, session)
++                def _agent_message(s):
++                    s["conversation_history"].append({
++                        "role": "agent",
++                        "content": agent_message,
++                        "timestamp": datetime.now(timezone.utc).isoformat(),
++                        "human_agent": True,
++                        "agent_name": agent_name,
++                    })
++                    return True
++                session, _ = await _mutate_session(session_id, _agent_message, allow_retry=True)
+ 
+                 # Send to customer
+                 await manager.send_personal_message({
+@@ -554,11 +683,13 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
+ 
+             elif msg_type == "takeover":
+                 # Agent is taking over the conversation
+-                session = await _get_session(session_id)
+-                if session.get("mode") != "human":
+-                    session["mode"] = "human"
+-                    await _save_session(session_id, session)
+-                    
++                def _takeover(s):
++                    if s.get("mode") != "human":
++                        s["mode"] = "human"
++                        return True
++                    return False
++                session, was_changed = await _mutate_session(session_id, _takeover, allow_retry=True)
++                if was_changed and session and session.get("mode") == "human":
+                     await manager.send_personal_message({
+                         "type": "mode_change",
+                         "mode": "human",
+@@ -568,35 +699,48 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
+ 
+             elif msg_type == "release":
+                 # Agent is returning the conversation to the AI
+-                session = await _get_session(session_id)
+-                if session.get("mode") != "ai":
+-                    session["mode"] = "ai"
+-                    await _save_session(session_id, session)
++                client_request_id_str = data.get("client_request_id")
++                if not client_request_id_str:
++                    logger.error("Missing client_request_id for release.")
++                    continue
++                
++                customer_id = session.get("customer_id")
++                if not customer_id:
++                    logger.error("No customer_id associated with session.")
++                    continue
+                     
+-                    await manager.send_personal_message({
+-                        "type": "mode_change",
+-                        "mode": "ai",
+-                        "agent_name": data.get("agent_name", "AI Assistant"),
+-                        "timestamp": datetime.now(timezone.utc).isoformat(),
+-                    }, session_id)
++                from app.escalation.service import EscalationService, ReleaseRequest, IdempotencyConflict
++                
++                try:
++                    req = ReleaseRequest(
++                        customer_id=customer_id,
++                        session_id=session_id,
++                        client_request_id=uuid.UUID(client_request_id_str)
++                    )
++                    res = EscalationService.release_session(req)
++                    
++                    if res.status == "success":
++                        def _release(s):
++                            if s.get("mode") != "ai":
++                                s["mode"] = "ai"
++                                return True
++                            return False
++                        session, was_changed = await _mutate_session(session_id, _release, allow_retry=True)
++                        if was_changed and session and session.get("mode") == "ai":
++                            await manager.send_personal_message({
++                                "type": "mode_change",
++                                "mode": "ai",
++                                "agent_name": data.get("agent_name", "AI Assistant"),
++                                "timestamp": datetime.now(timezone.utc).isoformat(),
++                            }, session_id)
++                    else:
++                        logger.error(f"Release failed: {res.error}")
++                        
++                except IdempotencyConflict as ic:
++                    logger.warning(f"Idempotency conflict on release: {ic}")
++                except Exception as e:
++                    logger.error(f"Exception during release: {e}")
+ 
+     except WebSocketDisconnect:
+         manager.disconnect_agent(websocket, session_id)
+         logger.info(f"Agent disconnected from session: {session_id}")
+-        
+-        # Safely return session to AI mode if it was abandoned in human mode
+-        session = await _get_session(session_id)
+-        # Check if there are still any other agents connected to this session
+-        has_other_agents = bool(manager.agent_connections.get(session_id))
+-        
+-        if session and session.get("mode") == "human" and not has_other_agents:
+-            session["mode"] = "ai"
+-            await _save_session(session_id, session)
+-            
+-            # Notify customer that AI has resumed
+-            await manager.send_personal_message({
+-                "type": "mode_change",
+-                "mode": "ai",
+-                "agent_name": "AI Assistant",
+-                "timestamp": datetime.now(timezone.utc).isoformat(),
+-            }, session_id)
+diff --git a/backend/scripts/schema.sql b/backend/scripts/schema.sql
+index bee3188..3a1bf8d 100644
+--- a/backend/scripts/schema.sql
++++ b/backend/scripts/schema.sql
+@@ -88,3 +88,904 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.tickets TO service_role;
+ GRANT SELECT, INSERT, UPDATE, DELETE ON public.conversations TO service_role;
+ 
+ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
++-- Create Idempotency Table
++CREATE TABLE IF NOT EXISTS idempotency_records (
++    customer_id BIGINT NOT NULL,
++    client_request_id UUID NOT NULL,
++    operation_type TEXT NOT NULL,
++    canonical_target TEXT NOT NULL,
++    payload_hash TEXT NOT NULL,
++    terminal_result JSONB,
++    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
++    PRIMARY KEY (customer_id, client_request_id)
++);
++
++ALTER TABLE public.idempotency_records ENABLE ROW LEVEL SECURITY;
++REVOKE ALL ON public.idempotency_records FROM anon, authenticated;
++GRANT SELECT, INSERT, UPDATE, DELETE ON public.idempotency_records TO service_role;
++
++-- Generic RPC to execute idempotent operations
++CREATE OR REPLACE FUNCTION execute_idempotent_operation(
++    p_customer_id BIGINT,
++    p_client_request_id UUID,
++    p_operation_type TEXT,
++    p_canonical_target TEXT,
++    p_payload_hash TEXT,
++    p_payload JSONB
++) RETURNS JSONB
++LANGUAGE plpgsql
++AS $$
++DECLARE
++    v_existing_type TEXT;
++    v_existing_target TEXT;
++    v_existing_hash TEXT;
++    v_existing_result JSONB;
++    v_result JSONB;
++    
++    -- Variables for specific operations
++    v_ticket_id BIGINT;
++    v_order_status TEXT;
++    v_order_customer_id BIGINT;
++    v_existing_desc TEXT;
++    v_timestamp TEXT;
++    v_ticket_owner BIGINT;
++BEGIN
++    -- 1. Concurrency control: attempt to select existing record with lock
++    SELECT operation_type, canonical_target, payload_hash, terminal_result
++    INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
++    FROM idempotency_records
++    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
++    FOR UPDATE;
++
++    IF FOUND THEN
++        -- Conflict check
++        IF v_existing_type != p_operation_type OR v_existing_target != p_canonical_target OR v_existing_hash != p_payload_hash THEN
++            RETURN jsonb_build_object(
++                'error', 'IdempotencyConflict',
++                'message', 'This request ID was already used for a different operation.',
++                'previous_result', v_existing_result
++            );
++        END IF;
++        -- Exact retry: return cached result
++        RETURN v_existing_result;
++    END IF;
++
++    -- 2. Insert to establish operation and claim the request_id.
++    -- If a concurrent transaction already inserted it, this throws unique_violation.
++    BEGIN
++        INSERT INTO idempotency_records (
++            customer_id, client_request_id, operation_type, canonical_target, payload_hash
++        ) VALUES (
++            p_customer_id, p_client_request_id, p_operation_type, p_canonical_target, p_payload_hash
++        );
++    EXCEPTION WHEN unique_violation THEN
++        -- Block until the winning concurrent transaction commits or rolls back
++        SELECT operation_type, canonical_target, payload_hash, terminal_result
++        INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
++        FROM idempotency_records
++        WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
++        FOR UPDATE;
++        
++        IF v_existing_type != p_operation_type OR v_existing_target != p_canonical_target OR v_existing_hash != p_payload_hash THEN
++            RETURN jsonb_build_object(
++                'error', 'IdempotencyConflict',
++                'message', 'This request ID was already used for a different operation.',
++                'previous_result', v_existing_result
++            );
++        END IF;
++        RETURN v_existing_result;
++    END;
++
++    -- 3. Execute business logic based on operation_type
++    IF p_operation_type = 'create_ticket' THEN
++        INSERT INTO tickets (
++            customer_id, subject, description, type, status, priority, channel, order_id
++        ) VALUES (
++            p_customer_id,
++            p_payload->>'subject',
++            p_payload->>'description',
++            p_payload->>'type',
++            p_payload->>'status',
++            p_payload->>'priority',
++            p_payload->>'channel',
++            (p_payload->>'order_id')::BIGINT
++        ) RETURNING id INTO v_ticket_id;
++        
++        v_result := jsonb_build_object(
++            'status', 'success',
++            'message', 'Ticket #' || v_ticket_id || ' created successfully',
++            'ticket_id', v_ticket_id
++        );
++
++    ELSIF p_operation_type = 'update_ticket' THEN
++        v_ticket_id := p_canonical_target::BIGINT;
++        
++        -- Check ownership and existence
++        SELECT customer_id, description INTO v_ticket_owner, v_existing_desc
++        FROM tickets WHERE id = v_ticket_id;
++        
++        IF NOT FOUND OR v_ticket_owner != p_customer_id THEN
++            v_result := jsonb_build_object('error', 'Ticket #' || v_ticket_id || ' not found or does not belong to you');
++        ELSE
++            -- We only support description_append, priority, order_id here as per python logic
++            IF p_payload ? 'description_append' THEN
++                -- Format timestamp like python did: YYYY-MM-DD HH:MM:SS UTC
++                v_timestamp := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS "UTC"');
++                v_existing_desc := COALESCE(v_existing_desc, '') || E'\n\n--- Update (' || v_timestamp || E') ---\n' || (p_payload->>'description_append');
++            END IF;
++            
++            UPDATE tickets SET 
++                description = v_existing_desc,
++                priority = COALESCE(p_payload->>'priority', priority),
++                order_id = COALESCE((p_payload->>'order_id')::BIGINT, order_id),
++                updated_at = now()
++            WHERE id = v_ticket_id;
++            
++            v_result := jsonb_build_object('status', 'success', 'message', 'Ticket #' || v_ticket_id || ' updated');
++        END IF;
++
++    ELSIF p_operation_type = 'cancel_order' THEN
++        -- canonical_target is order_id
++        SELECT status, customer_id INTO v_order_status, v_order_customer_id
++        FROM orders WHERE id = p_canonical_target::BIGINT FOR UPDATE;
++        
++        IF NOT FOUND OR v_order_customer_id != p_customer_id THEN
++            v_result := jsonb_build_object('error', 'Order #' || p_canonical_target || ' not found or does not belong to you');
++        ELSIF v_order_status != 'active' THEN
++            v_result := jsonb_build_object('error', 'Cannot cancel order #' || p_canonical_target || '. Current status: ' || v_order_status || '. Only active orders can be cancelled.');
++        ELSE
++            UPDATE orders SET status = 'cancelled' WHERE id = p_canonical_target::BIGINT;
++            v_result := jsonb_build_object('status', 'success', 'message', 'Order #' || p_canonical_target || ' has been cancelled');
++        END IF;
++
++    ELSIF p_operation_type = 'process_refund' THEN
++        SELECT status, customer_id INTO v_order_status, v_order_customer_id
++        FROM orders WHERE id = p_canonical_target::BIGINT FOR UPDATE;
++        
++        IF NOT FOUND OR v_order_customer_id != p_customer_id THEN
++            v_result := jsonb_build_object('error', 'Order #' || p_canonical_target || ' not found or does not belong to you');
++        ELSIF v_order_status NOT IN ('cancelled', 'delivered') THEN
++            v_result := jsonb_build_object('error', 'Cannot refund order #' || p_canonical_target || '. Current status: ' || v_order_status || '. Order must be cancelled or delivered.');
++        ELSE
++            UPDATE orders SET status = 'refunded' WHERE id = p_canonical_target::BIGINT;
++            v_result := jsonb_build_object('status', 'success', 'message', 'Refund initiated for order #' || p_canonical_target || '. The refund will be processed within 5-7 business days.');
++        END IF;
++    ELSE
++        v_result := jsonb_build_object('error', 'Unknown operation type: ' || p_operation_type);
++    END IF;
++
++    -- 4. Save the terminal result
++    UPDATE idempotency_records 
++    SET terminal_result = v_result
++    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id;
++
++    RETURN v_result;
++END;
++$$;
++
++REVOKE EXECUTE ON FUNCTION execute_idempotent_operation FROM public, anon, authenticated;
++GRANT EXECUTE ON FUNCTION execute_idempotent_operation TO service_role;
++
++
++-- 7. Outbox Schema for Email Notifications (Slice 3.2)
++CREATE TABLE IF NOT EXISTS outbox_events (
++    event_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
++    logical_identity_hash TEXT UNIQUE NOT NULL,
++    source_event_id TEXT NOT NULL,
++    notification_type TEXT NOT NULL,
++    recipient_identity TEXT NOT NULL,
++    recipient_address TEXT NOT NULL,
++    payload JSONB NOT NULL,
++    status TEXT NOT NULL DEFAULT 'PENDING',
++    attempt_count INT NOT NULL DEFAULT 0,
++    claim_token UUID,
++    claimed_at TIMESTAMP WITH TIME ZONE,
++    next_attempt_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
++    last_error TEXT,
++    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
++    sent_at TIMESTAMP WITH TIME ZONE,
++    
++    CONSTRAINT valid_status CHECK (status IN ('PENDING', 'PROCESSING', 'SENT', 'RETRYABLE', 'FAILED'))
++);
++
++-- Index for worker polling
++CREATE INDEX IF NOT EXISTS idx_outbox_events_poll 
++ON outbox_events(status, next_attempt_at) 
++WHERE status IN ('PENDING', 'RETRYABLE');
++
++ALTER TABLE public.outbox_events ENABLE ROW LEVEL SECURITY;
++REVOKE ALL ON public.outbox_events FROM anon, authenticated;
++GRANT SELECT, INSERT, UPDATE, DELETE ON public.outbox_events TO service_role;
++
++-- Enqueue Function
++CREATE OR REPLACE FUNCTION enqueue_outbox_event(
++    p_logical_identity_hash TEXT,
++    p_source_event_id TEXT,
++    p_notification_type TEXT,
++    p_recipient_identity TEXT,
++    p_recipient_address TEXT,
++    p_payload JSONB
++) RETURNS JSONB
++LANGUAGE plpgsql
++AS $$
++DECLARE
++    v_event_id UUID;
++    v_status TEXT;
++BEGIN
++    INSERT INTO outbox_events (
++        logical_identity_hash, source_event_id, notification_type, 
++        recipient_identity, recipient_address, payload, status
++    ) VALUES (
++        p_logical_identity_hash, p_source_event_id, p_notification_type, 
++        p_recipient_identity, p_recipient_address, p_payload, 'PENDING'
++    )
++    ON CONFLICT (logical_identity_hash) DO NOTHING
++    RETURNING event_id INTO v_event_id;
++
++    IF v_event_id IS NULL THEN
++        -- It was a duplicate
++        SELECT event_id, status INTO v_event_id, v_status
++        FROM outbox_events
++        WHERE logical_identity_hash = p_logical_identity_hash;
++
++        RETURN jsonb_build_object(
++            'status', 'duplicate',
++            'event_id', v_event_id,
++            'current_status', v_status
++        );
++    ELSE
++        RETURN jsonb_build_object(
++            'status', 'enqueued',
++            'event_id', v_event_id,
++            'current_status', 'PENDING'
++        );
++    END IF;
++END;
++$$;
++
++REVOKE EXECUTE ON FUNCTION enqueue_outbox_event FROM public, anon, authenticated;
++GRANT EXECUTE ON FUNCTION enqueue_outbox_event TO service_role;
++
++
++
++-- 8. Ticket Notification Wrapper RPC (Slice 3.4)
++CREATE OR REPLACE FUNCTION execute_ticket_mutation_with_outbox(
++    p_customer_id BIGINT,
++    p_client_request_id UUID,
++    p_operation_type TEXT,
++    p_canonical_target TEXT,
++    p_payload_hash TEXT,
++    p_payload JSONB,
++    p_outbox_logical_identity_hash TEXT,
++    p_outbox_source_event_id TEXT,
++    p_outbox_notification_type TEXT,
++    p_outbox_recipient_identity TEXT,
++    p_outbox_payload_template JSONB
++) RETURNS JSONB
++LANGUAGE plpgsql
++AS $$
++DECLARE
++    v_existing_type TEXT;
++    v_existing_target TEXT;
++    v_existing_hash TEXT;
++    v_existing_result JSONB;
++    v_result JSONB;
++    
++    v_ticket_owner BIGINT;
++    v_actual_customer_id BIGINT;
++    v_existing_desc TEXT;
++    v_current_status TEXT;
++    v_timestamp TEXT;
++    
++    v_cust_email TEXT;
++    v_cust_name TEXT;
++    v_final_outbox_payload JSONB;
++    v_ticket_id BIGINT;
++BEGIN
++    -- Derive actual customer_id if p_customer_id is NULL (agent update)
++    IF p_operation_type = 'update_ticket' THEN
++        v_ticket_id := p_canonical_target::BIGINT;
++        -- Lock ticket to derive authoritative ticket.customer_id
++        SELECT customer_id INTO v_ticket_owner FROM tickets WHERE id = v_ticket_id FOR UPDATE;
++        IF NOT FOUND THEN
++            RETURN jsonb_build_object('error', 'Ticket #' || v_ticket_id || ' not found');
++        END IF;
++        IF p_customer_id IS NOT NULL AND v_ticket_owner != p_customer_id THEN
++            RETURN jsonb_build_object('error', 'Ticket #' || v_ticket_id || ' does not belong to you');
++        END IF;
++        v_actual_customer_id := v_ticket_owner;
++    ELSE
++        IF p_customer_id IS NULL THEN
++            RETURN jsonb_build_object('error', 'Customer ID is required for ticket creation');
++        END IF;
++        v_actual_customer_id := p_customer_id;
++    END IF;
++
++    -- 1. Idempotency Lookup
++    SELECT operation_type, canonical_target, payload_hash, terminal_result
++    INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
++    FROM idempotency_records
++    WHERE customer_id = v_actual_customer_id AND client_request_id = p_client_request_id
++    FOR UPDATE;
++
++    IF FOUND THEN
++        IF v_existing_type != p_operation_type OR v_existing_target != p_canonical_target OR v_existing_hash != p_payload_hash THEN
++            RETURN jsonb_build_object(
++                'error', 'IdempotencyConflict',
++                'message', 'This request ID was already used for a different operation.',
++                'previous_result', v_existing_result
++            );
++        END IF;
++        -- EXACT_REPLAY: return cached result, do NOT insert outbox
++        RETURN v_existing_result;
++    END IF;
++
++    -- 2. Insert Idempotency Record
++    BEGIN
++        INSERT INTO idempotency_records (
++            customer_id, client_request_id, operation_type, canonical_target, payload_hash
++        ) VALUES (
++            v_actual_customer_id, p_client_request_id, p_operation_type, p_canonical_target, p_payload_hash
++        );
++    EXCEPTION WHEN unique_violation THEN
++        SELECT operation_type, canonical_target, payload_hash, terminal_result
++        INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
++        FROM idempotency_records
++        WHERE customer_id = v_actual_customer_id AND client_request_id = p_client_request_id
++        FOR UPDATE;
++        
++        IF v_existing_type != p_operation_type OR v_existing_target != p_canonical_target OR v_existing_hash != p_payload_hash THEN
++            RETURN jsonb_build_object('error', 'IdempotencyConflict', 'previous_result', v_existing_result);
++        END IF;
++        RETURN v_existing_result;
++    END;
++
++    -- 3. Business Mutation
++    IF p_operation_type = 'create_ticket' THEN
++        INSERT INTO tickets (
++            customer_id, subject, description, type, status, priority, channel, order_id
++        ) VALUES (
++            v_actual_customer_id,
++            p_payload->>'subject',
++            p_payload->>'description',
++            p_payload->>'type',
++            p_payload->>'status',
++            p_payload->>'priority',
++            p_payload->>'channel',
++            (p_payload->>'order_id')::BIGINT
++        ) RETURNING id INTO v_ticket_id;
++        
++        v_result := jsonb_build_object(
++            'status', 'success',
++            'message', 'Ticket #' || v_ticket_id || ' created successfully',
++            'ticket_id', v_ticket_id
++        );
++
++        -- Enqueue Outbox for Create
++        IF p_outbox_logical_identity_hash IS NOT NULL THEN
++            SELECT email, name INTO v_cust_email, v_cust_name FROM customers WHERE id = v_actual_customer_id;
++            v_final_outbox_payload := p_outbox_payload_template || jsonb_build_object(
++                'ticket_id', v_ticket_id,
++                'customer_name', v_cust_name
++            );
++            
++            PERFORM enqueue_outbox_event(
++                p_outbox_logical_identity_hash,
++                p_outbox_source_event_id,
++                p_outbox_notification_type,
++                p_outbox_recipient_identity,
++                v_cust_email,
++                v_final_outbox_payload
++            );
++        END IF;
++
++    ELSIF p_operation_type = 'update_ticket' THEN
++        SELECT description, status INTO v_existing_desc, v_current_status
++        FROM tickets WHERE id = v_ticket_id FOR UPDATE;
++        
++        IF p_payload ? 'description_append' THEN
++            v_timestamp := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS "UTC"');
++            v_existing_desc := COALESCE(v_existing_desc, '') || E'\n\n--- Update (' || v_timestamp || E') ---\n' || (p_payload->>'description_append');
++        END IF;
++        
++        UPDATE tickets SET 
++            description = v_existing_desc,
++            priority = COALESCE(p_payload->>'priority', priority),
++            order_id = COALESCE((p_payload->>'order_id')::BIGINT, order_id),
++            status = COALESCE(p_payload->>'status', status),
++            resolution = COALESCE(p_payload->>'resolution', resolution),
++            assigned_agent = COALESCE(p_payload->>'assigned_agent', assigned_agent),
++            satisfaction_rating = COALESCE((p_payload->>'satisfaction_rating')::INT, satisfaction_rating),
++            closed_at = CASE WHEN (p_payload->>'status' = 'closed' AND v_current_status != 'closed') THEN now() ELSE closed_at END,
++            updated_at = now()
++        WHERE id = v_ticket_id;
++        
++        v_result := jsonb_build_object('status', 'success', 'message', 'Ticket #' || v_ticket_id || ' updated');
++
++        -- Enqueue Outbox for Resolution
++        IF (p_payload->>'status' = 'closed' AND v_current_status != 'closed' AND p_outbox_logical_identity_hash IS NOT NULL) THEN
++            SELECT email, name INTO v_cust_email, v_cust_name FROM customers WHERE id = v_actual_customer_id;
++            v_final_outbox_payload := p_outbox_payload_template || jsonb_build_object(
++                'ticket_id', v_ticket_id,
++                'customer_name', v_cust_name
++            );
++            
++            IF p_outbox_logical_identity_hash = 'GENERATED_IN_SQL' THEN
++                PERFORM enqueue_outbox_event(
++                    md5('customer:' || v_actual_customer_id || '|req:' || p_client_request_id || '|TICKET_RESOLVED|customer:' || v_actual_customer_id),
++                    'customer:' || v_actual_customer_id || '|req:' || p_client_request_id,
++                    'TICKET_RESOLVED',
++                    'customer:' || v_actual_customer_id,
++                    v_cust_email,
++                    v_final_outbox_payload
++                );
++            ELSE
++                PERFORM enqueue_outbox_event(
++                    p_outbox_logical_identity_hash,
++                    p_outbox_source_event_id,
++                    p_outbox_notification_type,
++                    p_outbox_recipient_identity,
++                    v_cust_email,
++                    v_final_outbox_payload
++                );
++            END IF;
++        END IF;
++    ELSE
++        v_result := jsonb_build_object('error', 'Unknown operation type: ' || p_operation_type);
++    END IF;
++
++    -- 4. Save Terminal Result
++    IF NOT (v_result ? 'error') THEN
++        UPDATE idempotency_records 
++        SET terminal_result = v_result
++        WHERE customer_id = v_actual_customer_id AND client_request_id = p_client_request_id;
++    END IF;
++
++    RETURN v_result;
++END;
++$$;
++
++REVOKE EXECUTE ON FUNCTION execute_ticket_mutation_with_outbox FROM public, anon, authenticated;
++GRANT EXECUTE ON FUNCTION execute_ticket_mutation_with_outbox TO service_role;
++
++-- 9. Durable Escalation State (Slice 3.5)
++CREATE TABLE IF NOT EXISTS session_escalation_state (
++    session_id TEXT PRIMARY KEY,
++    customer_id BIGINT NOT NULL,
++    status TEXT NOT NULL DEFAULT 'NONE',
++    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
++    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
++    CONSTRAINT valid_status CHECK (status IN ('NONE', 'ACTIVE', 'RELEASED'))
++);
++
++ALTER TABLE public.session_escalation_state ENABLE ROW LEVEL SECURITY;
++REVOKE ALL ON public.session_escalation_state FROM anon, authenticated;
++GRANT SELECT, INSERT, UPDATE, DELETE ON public.session_escalation_state TO service_role;
++
++-- 10. Escalation Events (Slice 3.5.2)
++CREATE TABLE IF NOT EXISTS escalation_events (
++    escalation_event_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
++    session_id TEXT NOT NULL REFERENCES session_escalation_state(session_id),
++    customer_id BIGINT NOT NULL REFERENCES customers(id),
++    ticket_id BIGINT REFERENCES tickets(id) ON DELETE SET NULL,
++    client_request_id UUID NOT NULL,
++    payload_hash TEXT NOT NULL,
++    sentiment TEXT,
++    urgency TEXT,
++    last_message TEXT,
++    customer_notification_required BOOLEAN DEFAULT FALSE,
++    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
++);
++
++ALTER TABLE public.escalation_events ENABLE ROW LEVEL SECURITY;
++REVOKE ALL ON public.escalation_events FROM anon, authenticated;
++GRANT SELECT, INSERT, UPDATE, DELETE ON public.escalation_events TO service_role;
++
++
++-- 11. Escalation Transaction RPC (Slice 3.5.2)
++CREATE EXTENSION IF NOT EXISTS pgcrypto;
++
++CREATE OR REPLACE FUNCTION execute_escalation_transition(
++    p_customer_id BIGINT,
++    p_client_request_id UUID,
++    p_session_id TEXT,
++    p_payload_hash TEXT,
++    p_payload JSONB,
++    p_escalation_event_id UUID
++) RETURNS JSONB
++LANGUAGE plpgsql
++AS $$
++DECLARE
++    v_existing_type TEXT;
++    v_existing_target TEXT;
++    v_existing_hash TEXT;
++    v_existing_result JSONB;
++    
++    v_state_customer_id BIGINT;
++    v_current_status TEXT;
++    
++    v_result JSONB;
++    v_cust_email TEXT;
++    v_cust_name TEXT;
++    v_support_email TEXT := 'support@example.com'; -- fallback/template logic
++    
++    v_support_identity_string TEXT;
++    v_support_outbox_hash TEXT;
++    
++    v_customer_identity_string TEXT;
++    v_customer_outbox_hash TEXT;
++BEGIN
++    -- 1. Lock the single durable escalation-state row
++    SELECT customer_id, status INTO v_state_customer_id, v_current_status
++    FROM session_escalation_state
++    WHERE session_id = p_session_id
++    FOR UPDATE;
++
++    IF NOT FOUND THEN
++        RETURN jsonb_build_object('error', 'Session state not initialized for ' || p_session_id);
++    END IF;
++
++    -- 2. Authorization
++    IF v_state_customer_id != p_customer_id THEN
++        RETURN jsonb_build_object('error', 'Session belongs to a different customer.');
++    END IF;
++
++    -- 3. Request Idempotency Validation (escalate_session)
++    SELECT operation_type, canonical_target, payload_hash, terminal_result
++    INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
++    FROM idempotency_records
++    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
++    FOR UPDATE;
++
++    IF FOUND THEN
++        IF v_existing_type != 'escalate_session' OR v_existing_target != p_session_id OR v_existing_hash != p_payload_hash THEN
++            RETURN jsonb_build_object(
++                'error', 'IdempotencyConflict',
++                'message', 'Request ID already used for a different operation/payload.',
++                'previous_result', v_existing_result
++            );
++        END IF;
++        -- EXACT REPLAY
++        RETURN v_existing_result;
++    END IF;
++
++    -- Insert Idempotency Record
++    BEGIN
++        INSERT INTO idempotency_records (
++            customer_id, client_request_id, operation_type, canonical_target, payload_hash
++        ) VALUES (
++            p_customer_id, p_client_request_id, 'escalate_session', p_session_id, p_payload_hash
++        );
++    EXCEPTION WHEN unique_violation THEN
++        SELECT operation_type, canonical_target, payload_hash, terminal_result
++        INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
++        FROM idempotency_records
++        WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
++        FOR UPDATE;
++        
++        IF v_existing_type != 'escalate_session' OR v_existing_target != p_session_id OR v_existing_hash != p_payload_hash THEN
++            RETURN jsonb_build_object('error', 'IdempotencyConflict', 'previous_result', v_existing_result);
++        END IF;
++        RETURN v_existing_result;
++    END;
++
++    -- 4. Lifecycle transition validation
++    IF v_current_status = 'ACTIVE' THEN
++        -- Bypassed
++        v_result := jsonb_build_object(
++            'status', 'bypassed',
++            'message', 'Session is already ACTIVE. Escalation bypassed.',
++            'session_id', p_session_id
++        );
++    ELSIF v_current_status = 'NONE' OR v_current_status = 'RELEASED' THEN
++        -- E1 or E2: Insert Event
++        INSERT INTO escalation_events (
++            escalation_event_id, session_id, customer_id, ticket_id, client_request_id, payload_hash,
++            sentiment, urgency, last_message, customer_notification_required
++        ) VALUES (
++            p_escalation_event_id,
++            p_session_id,
++            p_customer_id,
++            (p_payload->>'ticket_id')::BIGINT,
++            p_client_request_id,
++            p_payload_hash,
++            p_payload->>'sentiment',
++            p_payload->>'urgency',
++            p_payload->>'last_message',
++            (p_payload->>'customer_notification_required')::BOOLEAN
++        );
++
++        -- Update State
++        UPDATE session_escalation_state
++        SET status = 'ACTIVE', updated_at = NOW()
++        WHERE session_id = p_session_id;
++
++        -- Generate authoritative Slice 3.1 LogicalNotificationIdentity hashes internally
++        v_support_identity_string := '["v1","escalation:' || p_escalation_event_id::TEXT || '","ESCALATION_TEAM","support-team:default"]';
++        v_support_outbox_hash := encode(digest(v_support_identity_string, 'sha256'), 'hex');
++
++        -- Outbox Support Notification
++        PERFORM enqueue_outbox_event(
++            v_support_outbox_hash,
++            p_escalation_event_id::TEXT,
++            'ESCALATION_TEAM',
++            'support_team',
++            v_support_email,
++            jsonb_build_object(
++                'session_id', p_session_id,
++                'sentiment', p_payload->>'sentiment',
++                'urgency', p_payload->>'urgency',
++                'ticket_id', p_payload->>'ticket_id',
++                'customer_id', p_customer_id
++            )
++        );
++
++        -- Conditionally Enqueue Customer Outbox Notification
++        IF (p_payload->>'customer_notification_required')::BOOLEAN THEN
++            v_customer_identity_string := '["v1","escalation:' || p_escalation_event_id::TEXT || '","ESCALATION_CUSTOMER","customer:' || p_customer_id::TEXT || '"]';
++            v_customer_outbox_hash := encode(digest(v_customer_identity_string, 'sha256'), 'hex');
++
++            SELECT email, name INTO v_cust_email, v_cust_name FROM customers WHERE id = p_customer_id;
++            PERFORM enqueue_outbox_event(
++                v_customer_outbox_hash,
++                p_escalation_event_id::TEXT,
++                'ESCALATION_CUSTOMER',
++                'customer:' || p_customer_id,
++                v_cust_email,
++                jsonb_build_object(
++                    'session_id', p_session_id,
++                    'customer_name', v_cust_name
++                )
++            );
++        END IF;
++
++        v_result := jsonb_build_object(
++            'status', 'success',
++            'message', 'Escalation triggered successfully.',
++            'escalation_event_id', p_escalation_event_id,
++            'session_id', p_session_id
++        );
++    ELSE
++        v_result := jsonb_build_object('error', 'Unknown status: ' || v_current_status);
++    END IF;
++
++    -- 5. Save Terminal Result
++    IF NOT (v_result ? 'error') THEN
++        UPDATE idempotency_records 
++        SET terminal_result = v_result
++        WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id;
++    END IF;
++
++    RETURN v_result;
++END;
++$$;
++
++REVOKE EXECUTE ON FUNCTION execute_escalation_transition FROM public, anon, authenticated;
++GRANT EXECUTE ON FUNCTION execute_escalation_transition TO service_role;
++
++-- 12. Durable Release Transaction RPC (Slice 3.5.4)
++CREATE OR REPLACE FUNCTION execute_release_transition(
++    p_customer_id BIGINT,
++    p_client_request_id UUID,
++    p_session_id TEXT,
++    p_payload_hash TEXT,
++    p_payload JSONB
++) RETURNS JSONB
++LANGUAGE plpgsql
++AS $$
++DECLARE
++    v_existing_type TEXT;
++    v_existing_target TEXT;
++    v_existing_hash TEXT;
++    v_existing_result JSONB;
++    
++    v_state_customer_id BIGINT;
++    v_current_status TEXT;
++    v_result JSONB;
++BEGIN
++    -- 1. Lock the single durable escalation-state row
++    SELECT customer_id, status INTO v_state_customer_id, v_current_status
++    FROM session_escalation_state
++    WHERE session_id = p_session_id
++    FOR UPDATE;
++
++    IF NOT FOUND THEN
++        RETURN jsonb_build_object('error', 'Session state not initialized for ' || p_session_id);
++    END IF;
++
++    -- 2. Authorization
++    IF v_state_customer_id != p_customer_id THEN
++        RETURN jsonb_build_object('error', 'Session belongs to a different customer.');
++    END IF;
++
++    -- 3. Idempotency Validation (release_session)
++    SELECT operation_type, canonical_target, payload_hash, terminal_result
++    INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
++    FROM idempotency_records
++    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
++    FOR UPDATE;
++
++    IF FOUND THEN
++        IF v_existing_type != 'release_session' OR v_existing_target != p_session_id OR v_existing_hash != p_payload_hash THEN
++            RETURN jsonb_build_object(
++                'error', 'IdempotencyConflict',
++                'message', 'Request ID already used for a different operation/payload.',
++                'previous_result', v_existing_result
++            );
++        END IF;
++        -- EXACT REPLAY
++        RETURN v_existing_result;
++    END IF;
++
++    -- Insert Idempotency Record
++    BEGIN
++        INSERT INTO idempotency_records (
++            customer_id, client_request_id, operation_type, canonical_target, payload_hash
++        ) VALUES (
++            p_customer_id, p_client_request_id, 'release_session', p_session_id, p_payload_hash
++        );
++    EXCEPTION WHEN unique_violation THEN
++        SELECT operation_type, canonical_target, payload_hash, terminal_result
++        INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
++        FROM idempotency_records
++        WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
++        FOR UPDATE;
++        
++        IF v_existing_type != 'release_session' OR v_existing_target != p_session_id OR v_existing_hash != p_payload_hash THEN
++            RETURN jsonb_build_object('error', 'IdempotencyConflict', 'previous_result', v_existing_result);
++        END IF;
++        RETURN v_existing_result;
++    END;
++
++    -- 4. Lifecycle transition validation
++    IF v_current_status = 'RELEASED' THEN
++        -- Deterministic already-released
++        v_result := jsonb_build_object(
++            'status', 'success',
++            'message', 'Session is already RELEASED.',
++            'session_id', p_session_id
++        );
++    ELSIF v_current_status = 'NONE' THEN
++        v_result := jsonb_build_object(
++            'error', 'Cannot release a session that is not escalated.',
++            'status', 'failed'
++        );
++    ELSIF v_current_status = 'ACTIVE' THEN
++        -- Mutate durable state
++        UPDATE session_escalation_state
++        SET status = 'RELEASED', updated_at = NOW()
++        WHERE session_id = p_session_id;
++
++        v_result := jsonb_build_object(
++            'status', 'success',
++            'message', 'Session released successfully.',
++            'session_id', p_session_id
++        );
++    END IF;
++
++    -- 5. Terminal Idempotency Result
++    UPDATE idempotency_records
++    SET terminal_result = v_result
++    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id;
++
++    RETURN v_result;
++END;
++$$;
++
++REVOKE EXECUTE ON FUNCTION execute_release_transition FROM public, anon, authenticated;
++GRANT EXECUTE ON FUNCTION execute_release_transition TO service_role;
++
++
++-- 9. Custom Email Outbox Event RPC (Slice 3.6)
++CREATE OR REPLACE FUNCTION enqueue_custom_email_outbox_event(
++    p_customer_id BIGINT,
++    p_client_request_id UUID,
++    p_ticket_id BIGINT,
++    p_recipient_email TEXT,
++    p_payload JSONB,
++    p_payload_hash TEXT,
++    p_outbox_logical_identity_hash TEXT,
++    p_outbox_source_event_id TEXT,
++    p_outbox_notification_type TEXT,
++    p_outbox_recipient_identity TEXT
++) RETURNS JSONB
++LANGUAGE plpgsql
++AS $$
++DECLARE
++    v_ticket_owner BIGINT;
++    v_payload JSONB;
++    v_payload_hash TEXT;
++    v_source_event_id TEXT;
++    v_logical_identity TEXT;
++    v_logical_identity_hash TEXT;
++    v_existing_type TEXT;
++    v_existing_target TEXT;
++    v_existing_hash TEXT;
++    v_existing_result JSONB;
++    v_outbox_event_id UUID;
++    v_result JSONB;
++BEGIN
++    -- 1. Verify Ticket Ownership
++    SELECT customer_id INTO v_ticket_owner
++    FROM tickets WHERE id = p_ticket_id;
++    
++    IF NOT FOUND OR v_ticket_owner != p_customer_id THEN
++        RETURN jsonb_build_object('error', 'Ticket #' || p_ticket_id || ' not found or does not belong to you');
++    END IF;
++
++    -- The canonical hashes (idempotency p_payload_hash and outbox p_outbox_logical_identity_hash)
++    -- are computed in Python to preserve the single canonicalization convention.
++    
++    -- 3. Idempotency Check (Row Lock)
++    SELECT operation_type, canonical_target, payload_hash, terminal_result
++    INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
++    FROM idempotency_records
++    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
++    FOR UPDATE;
++
++    IF FOUND THEN
++        IF v_existing_type != 'custom_email' OR v_existing_target != p_ticket_id::TEXT OR v_existing_hash != p_payload_hash THEN
++            RETURN jsonb_build_object(
++                'error', 'IdempotencyConflict',
++                'message', 'This request ID was already used for a different operation.',
++                'previous_result', v_existing_result
++            );
++        END IF;
++        RETURN v_existing_result;
++    END IF;
++
++    -- 4. Insert to establish operation and claim the request_id.
++    BEGIN
++        INSERT INTO idempotency_records (
++            customer_id, client_request_id, operation_type, canonical_target, payload_hash, terminal_result
++        ) VALUES (
++            p_customer_id, p_client_request_id, 'custom_email', p_ticket_id::TEXT, p_payload_hash, NULL
++        );
++    EXCEPTION WHEN unique_violation THEN
++        SELECT operation_type, canonical_target, payload_hash, terminal_result
++        INTO v_existing_type, v_existing_target, v_existing_hash, v_existing_result
++        FROM idempotency_records
++        WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
++        FOR UPDATE;
++        
++        IF v_existing_type != 'custom_email' OR v_existing_target != p_ticket_id::TEXT OR v_existing_hash != p_payload_hash THEN
++            RETURN jsonb_build_object(
++                'error', 'IdempotencyConflict',
++                'message', 'This request ID was already used for a different operation.',
++                'previous_result', v_existing_result
++            );
++        END IF;
++        RETURN v_existing_result;
++    END;
++
++    -- 5. Create outbox event
++    INSERT INTO outbox_events (
++        logical_identity_hash, source_event_id, notification_type, 
++        recipient_identity, recipient_address, payload, status
++    ) VALUES (
++        p_outbox_logical_identity_hash, p_outbox_source_event_id, p_outbox_notification_type, 
++        p_outbox_recipient_identity, p_recipient_email, p_payload, 'PENDING'
++    )
++    ON CONFLICT (logical_identity_hash) DO NOTHING
++    RETURNING event_id INTO v_outbox_event_id;
++
++    v_result := jsonb_build_object(
++        'status', 'success',
++        'message', 'Custom email to ' || p_recipient_email || ' enqueued successfully',
++        'outbox_event_id', v_outbox_event_id
++    );
++
++    -- 6. Save terminal result
++    UPDATE idempotency_records
++    SET terminal_result = v_result
++    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id;
++    
++    RETURN v_result;
++END;
++$$;
++
++REVOKE EXECUTE ON FUNCTION enqueue_custom_email_outbox_event FROM public, anon, authenticated;
++GRANT EXECUTE ON FUNCTION enqueue_custom_email_outbox_event TO service_role;
++
++-- Force PostgREST to reload schema cache so changes are immediately visible
++NOTIFY pgrst, 'reload schema';
