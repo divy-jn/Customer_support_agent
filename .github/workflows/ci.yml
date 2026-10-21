@@ -58,13 +58,12 @@ jobs:
           with psycopg2.connect(dsn) as conn:
               conn.autocommit = True
               with conn.cursor() as cur:
+                  from psycopg2 import sql
+
                   for role in ("anon", "authenticated", "service_role"):
-                      cur.execute(
-                          "DO $ BEGIN IF NOT EXISTS "
-                          "(SELECT FROM pg_catalog.pg_roles WHERE rolname = %s) "
-                          "THEN EXECUTE 'CREATE ROLE ' || quote_ident(%s); END IF; END $;",
-                          (role, role),
-                      )
+                      cur.execute("SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = %s", (role,))
+                      if cur.fetchone() is None:
+                          cur.execute(sql.SQL("CREATE ROLE {}").format(sql.Identifier(role)))
                   with open("scripts/schema.sql", encoding="utf-8") as schema_file:
                       cur.execute(schema_file.read())
           print("PostgreSQL integration-test schema initialized.")
