@@ -215,8 +215,6 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }, session_id)
 
-    import time
-    msg_timestamps = []
     rate_limit_window = 60
     rate_limit_max = settings.ws_message_rate_limit
 
@@ -229,18 +227,23 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 logger.warning(f"WebSocket {session_id} receive_text failed (likely disconnected already).")
                 break
 
-            now = time.time()
-            # Sliding window in-memory rate limiting
-            # #review: Rate limit state is per-socket connection; reconnecting creates a new loop and resets the limit.
-            # Using Redis-backed sliding window prevents rate limit bypass via reconnection.
-            msg_timestamps = [t for t in msg_timestamps if now - t < rate_limit_window]
-            if len(msg_timestamps) >= rate_limit_max:
+            # Limit by authenticated customer identity, not socket/session ID, so
+            # reconnecting or opening another tab cannot reset the message budget.
+            from app.websocket.rate_limiter import consume_customer_message
+            rate_limit_identity = (
+                f"customer:{customer_id}" if customer_id is not None else f"session:{session_id}"
+            )
+            allowed = await consume_customer_message(
+                rate_limit_identity,
+                limit=rate_limit_max,
+                window_seconds=rate_limit_window,
+            )
+            if not allowed:
                 await websocket.send_text(json.dumps({
                     "type": "error",
                     "message": "Rate limit exceeded. Please wait a moment before sending more messages."
                 }))
                 continue
-            msg_timestamps.append(now)
 
             try:
                 data = json.loads(raw)
