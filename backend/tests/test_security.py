@@ -246,3 +246,38 @@ def test_ws_rejects_untrusted_browser_origin_for_customer_and_agent(monkeypatch)
             f"/ws/agent/origin-check?token={agent_token}", headers=headers
         ) as websocket:
             websocket.receive_json()
+
+
+def test_ws_cannot_claim_cached_ownerless_conversation(monkeypatch):
+    token = create_mock_jwt(1)
+    from app.websocket.chat_handler import session_store
+
+    session_id = "legacy-ownerless-conversation"
+    import asyncio
+    asyncio.run(session_store.save_session(session_id, {
+        "session_id": session_id,
+        "customer_id": None,
+        "conversation_history": [{"role": "customer", "content": "private legacy message"}],
+        "workflow_state": {},
+    }))
+
+    class EmptyConversationQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            from types import SimpleNamespace
+            return SimpleNamespace(data=[])
+
+    monkeypatch.setattr("app.tools.supabase.table", lambda _name: EmptyConversationQuery())
+
+    with pytest.raises(Exception):
+        with client.websocket_connect(
+            f"/ws/chat/{session_id}?token={token}"
+        ) as websocket:
+            websocket.receive_json()
+
+    asyncio.run(session_store.get_session(session_id))

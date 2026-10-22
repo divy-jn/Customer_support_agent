@@ -168,13 +168,31 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 .eq("session_id", session_id)
                 .execute
             )
-            if res.data and res.data[0].get("customer_id") is not None:
-                if res.data[0]["customer_id"] != authenticated_customer_id:
+            persisted_rows = res.data or []
+            if persisted_rows:
+                persisted_owner = persisted_rows[0].get("customer_id")
+                if persisted_owner is not None and persisted_owner != authenticated_customer_id:
                     await websocket.close(
                         code=status.WS_1008_POLICY_VIOLATION,
                         reason="Session belongs to a different customer.",
                     )
                     return
+                if persisted_owner is None and cached_owner is None:
+                    # Never let a customer claim a persisted conversation whose
+                    # identity cannot be established, even if the row is legacy.
+                    await websocket.close(
+                        code=status.WS_1008_POLICY_VIOLATION,
+                        reason="Session ownership could not be verified.",
+                    )
+                    return
+            elif cached_session is not None and cached_owner is None:
+                # Do not bind ownerless cached state that may include another
+                # user's history merely because the persistent index has no row.
+                await websocket.close(
+                    code=status.WS_1008_POLICY_VIOLATION,
+                    reason="Session ownership could not be verified.",
+                )
+                return
         except Exception:
             if cached_owner == authenticated_customer_id:
                 logger.warning(
