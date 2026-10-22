@@ -131,7 +131,7 @@ async def test_guardian_escalates_without_mutation_when_ticket_history_is_unavai
 ):
     mock_cases.return_value = '{"error": "database unavailable"}'
     result = await guardian_response_node({
-        "message": "I need a manager about this warranty",
+        "message": "The device still does not turn on after troubleshooting.",
         "response": None,
         "semantic_domain": "product",
         "intent": "product_warranty",
