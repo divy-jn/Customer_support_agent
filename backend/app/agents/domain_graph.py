@@ -221,8 +221,12 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         domain=domain,
         intent=state.get("intent", ""),
         customer_requests_human=_requests_human(state["message"]),
-        # A failed skill is not safe to silently retry as an automated answer.
-        requires_human=bool(state.get("requires_human")) or state.get("response") is None or domain == "escalation",
+        # A failed domain skill requires handoff, but a one-off human keyword
+        # routed to Guardian is not itself proof that automation has failed.
+        requires_human=bool(state.get("requires_human")) or (
+            state.get("response") is None
+            and state.get("supervisor_action") != SupervisorAction.ESCALATE.value
+        ),
         safety_or_legal_issue=_safety_or_legal_issue(state["message"]),
         domain_can_resolve=state.get("response") is not None,
         unresolved_attempts=prior_attempts,
@@ -248,6 +252,8 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
     response = state.get("response") or "I need additional help with this request."
     if mutation_error:
         response += " I couldn’t register the support request just now. Please try again."
+    elif decision.action is GuardianAction.CONTINUE and state.get("response") is None:
+        response = "I can try to help with the issue here first. What would you like me to look into?"
     else:
         response = compose_response(response, decision)
     return {

@@ -83,8 +83,7 @@ class Guardian:
             )
 
         if (
-            facts.domain == "escalation"
-            or facts.urgency.lower() == "critical"
+            facts.urgency.lower() == "critical"
             or (facts.sentiment.lower() == "negative" and facts.urgency.lower() == "high")
         ):
             return GuardianDecision(
@@ -127,10 +126,13 @@ class Guardian:
                 reason="The request needs human intervention and no matching active ticket exists.",
             )
 
-        if facts.customer_requests_human and facts.domain_can_resolve:
+        if facts.customer_requests_human:
             return GuardianDecision(
                 action=GuardianAction.CONTINUE,
-                reason="The domain agent can complete this authorized request before a handoff is needed.",
+                reason=(
+                    "A single human-assistance request is not an escalation trigger by itself; "
+                    "continue triage or ask a clarifying question."
+                ),
             )
 
         return GuardianDecision(

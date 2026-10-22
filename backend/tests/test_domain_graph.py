@@ -144,3 +144,26 @@ async def test_guardian_escalates_without_mutation_when_ticket_history_is_unavai
     assert result["escalated"] is True
     assert "history could not be verified" in result["guardian_reason"].lower()
     mock_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("app.agents.domain_graph.create_ticket")
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+async def test_one_off_human_keyword_does_not_trigger_handoff_by_itself(mock_cases, mock_create):
+    result = await guardian_response_node({
+        "message": "I want to speak to a human",
+        "response": None,
+        "semantic_domain": "escalation",
+        "intent": "human_handoff",
+        "sentiment": "neutral",
+        "urgency": "medium",
+        "supervisor_action": "escalate",
+        "customer_id": 7,
+        "conversation_history": [],
+        "workflow_state": {"turn_count": 1},
+    })
+
+    assert result["guardian_action"] == "continue"
+    assert result["escalated"] is False
+    assert "What would you like me to look into?" in result["response"]
+    mock_create.assert_not_called()
