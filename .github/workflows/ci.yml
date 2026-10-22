@@ -66,6 +66,36 @@ jobs:
                           cur.execute(sql.SQL("CREATE ROLE {}").format(sql.Identifier(role)))
                   with open("scripts/schema.sql", encoding="utf-8") as schema_file:
                       cur.execute(schema_file.read())
+                  # Minimal deterministic records for PostgreSQL integration tests.
+                  # This is an ephemeral CI database, not application/customer data.
+                  cur.execute("""
+                      INSERT INTO public.customers (id, name, email)
+                      VALUES
+                          (1, 'CI Customer One', 'ci-customer-one@example.test'),
+                          (2, 'CI Customer Two', 'ci-customer-two@example.test')
+                      ON CONFLICT (id) DO NOTHING
+                  """)
+                  cur.execute("""
+                      INSERT INTO public.products (id, name, category, price, stock, description)
+                      VALUES (1, 'CI Test Product', 'general', 100.00, 10, 'Fixture product')
+                      ON CONFLICT (id) DO NOTHING
+                  """)
+                  cur.execute("""
+                      INSERT INTO public.orders (id, customer_id, product_id, status, tracking_number)
+                      VALUES (1, 1, 1, 'active', 'CI-TRACKING-001')
+                      ON CONFLICT (id) DO NOTHING
+                  """)
+                  cur.execute("""
+                      INSERT INTO public.payment_records
+                          (order_id, customer_id, transaction_reference, status, amount, currency, payment_method)
+                      VALUES (1, 1, 'CI-TRANSACTION-001', 'captured', 100.00, 'INR', 'UPI')
+                      ON CONFLICT (order_id) DO NOTHING
+                  """)
+                  for table in ("customers", "products", "orders"):
+                      cur.execute(
+                          f"SELECT setval(pg_get_serial_sequence('public.{table}', 'id'), "
+                          f"(SELECT GREATEST(COALESCE(MAX(id), 1), 1) FROM public.{table}), true)"
+                      )
           print("PostgreSQL integration-test schema initialized.")
           PY
       - name: Compile application and tests

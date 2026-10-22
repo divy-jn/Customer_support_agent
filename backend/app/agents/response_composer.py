@@ -8,7 +8,7 @@ def compose_response(agent_response: str, decision: GuardianDecision) -> str:
     suffixes = {
         GuardianAction.UPDATE_EXISTING_TICKET: (
             f" There is already an open support request for this issue (Ticket #{decision.ticket_id}), "
-            "so I added your latest details there instead of creating a duplicate."
+            "so I added your latest details there and won’t create a duplicate support request."
         ),
         GuardianAction.CREATE_TICKET: (
             " I’m passing this to a support specialist so they can continue helping you."

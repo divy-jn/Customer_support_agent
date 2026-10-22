@@ -54,24 +54,23 @@ def parse_and_validate_router_output(raw_text: str) -> dict:
     if missing:
         raise ValueError(f"Missing required fields: {missing}")
 
-    sentiment = result["sentiment"] if result["sentiment"] in valid_sentiments else "neutral"
-    urgency = result["urgency"] if result["urgency"] in valid_urgencies else "medium"
-    proposed_route = result["route_to"] if result["route_to"] in valid_routes else "rag_agent"
+    invalid_fields = []
+    for field, valid_values in (
+        ("intent", valid_intents),
+        ("sentiment", valid_sentiments),
+        ("urgency", valid_urgencies),
+        ("route_to", valid_routes),
+    ):
+        value = result[field]
+        if not isinstance(value, str) or value not in valid_values:
+            invalid_fields.append(f"{field}={value!r}")
+    if invalid_fields:
+        raise ValueError(f"Invalid enum values: {invalid_fields}")
+
+    sentiment = result["sentiment"]
+    urgency = result["urgency"]
+    proposed_route = result["route_to"]
     intent = result["intent"]
-    if intent not in valid_intents:
-        # Gracefully handle ticket or order related variations
-        if "ticket" in intent:
-            intent = "ticket_status"
-        elif "order" in intent:
-            intent = "order_tracking"
-        elif "refund" in intent or "money" in intent:
-            intent = "refund"
-        elif "cancel" in intent:
-            intent = "order_cancellation"
-        elif proposed_route == "db_agent":
-            intent = "account_management"
-        else:
-            intent = "general"
 
     CANONICAL_INTENT_ROUTE = {
         "faq": "rag_agent",

@@ -77,16 +77,18 @@ class TestCORS:
 class TestRESTEndpoints:
     """Test REST API endpoints."""
 
-    def test_get_customers(self, agent_token):
+    def test_get_customers(self, agent_token, monkeypatch):
         """GET /api/v1/customers should return customer list."""
+        monkeypatch.setattr("app.routes.get_all_customers", lambda **_kwargs: "[]")
         client = TestClient(app)
         response = client.get("/api/v1/customers?limit=5", headers={"Authorization": f"Bearer {agent_token}"})
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
 
-    def test_get_tickets(self, agent_token):
+    def test_get_tickets(self, agent_token, monkeypatch):
         """GET /api/v1/tickets should return ticket list."""
+        monkeypatch.setattr("app.routes.get_all_tickets", lambda **_kwargs: "[]")
         client = TestClient(app)
         response = client.get("/api/v1/tickets?limit=5", headers={"Authorization": f"Bearer {agent_token}"})
         assert response.status_code == 200
@@ -99,8 +101,9 @@ class TestRESTEndpoints:
         response = client.get("/api/v1/customers/search?q=", headers={"Authorization": f"Bearer {agent_token}"})
         assert response.status_code == 400
 
-    def test_dashboard_stats(self):
+    def test_dashboard_stats(self, monkeypatch):
         """GET /api/v1/dashboard/stats should return statistics."""
+        monkeypatch.setattr("app.routes.get_dashboard_stats", lambda: json.dumps({"total_tickets": 0}))
         client = TestClient(app)
         response = client.get("/api/v1/dashboard/stats", headers={"X-Agent-Token": "test-agent-secret"})
         assert response.status_code == 200

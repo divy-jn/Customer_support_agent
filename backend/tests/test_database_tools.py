@@ -15,6 +15,16 @@ import pytest
 # Add parent to path for imports
 import sys
 import os
+
+# This module deliberately tests against a seeded live Supabase dataset. CI has
+# placeholder credentials and must not mistake external-service unavailability
+# for application regression. Run locally with RUN_SUPABASE_INTEGRATION=true.
+pytestmark = pytest.mark.skipif(
+    os.getenv("CI", "").lower() == "true"
+    and os.getenv("RUN_SUPABASE_INTEGRATION", "").lower() != "true",
+    reason="Requires a configured Supabase project and seeded Indian test dataset.",
+)
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.tools import (

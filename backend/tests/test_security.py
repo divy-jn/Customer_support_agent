@@ -82,7 +82,24 @@ def test_valid_customer_jwt(auth_headers_a):
     response = client.get("/api/v1/customers/1/history", headers=auth_headers_a)
     assert response.status_code == 200
 
-def test_dev_login_rejects_nonexistent():
+def test_dev_login_rejects_nonexistent(monkeypatch):
+    # Keep this an isolated auth test: no live Supabase credentials/network needed.
+    class EmptyQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            from types import SimpleNamespace
+            return SimpleNamespace(data=[])
+
+    class EmptySupabase:
+        def table(self, _table_name):
+            return EmptyQuery()
+
+    monkeypatch.setattr("app.tools.supabase", EmptySupabase())
     response = client.post("/api/v1/auth/dev-login?email=invalid@example.com")
     assert response.status_code == 404
 

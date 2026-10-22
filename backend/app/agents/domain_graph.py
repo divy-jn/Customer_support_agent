@@ -171,24 +171,30 @@ def _case_intent(ticket: dict) -> str | None:
     return subject[7:].split(" - ", 1)[0].lower().replace(" ", "_") or None
 
 
-def _recent_cases(customer_id: int | None) -> list[SupportCase]:
-    """Read a narrow, recent ticket projection; DB trouble must not leak data."""
+def _recent_cases(customer_id: int | None) -> tuple[list[SupportCase], bool]:
+    """Return recent tickets and whether the lookup failed.
+
+    An empty successful result is materially different from an unavailable
+    source: Guardian must not create a duplicate ticket when history is unknown.
+    """
     if not customer_id:
-        return []
+        return [], False
     since = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
     try:
         payload = json.loads(find_customer_support_cases(customer_id, created_since=since))
         if not isinstance(payload, dict) or payload.get("error"):
-            return []
-        return [
+            return [], True
+        cases = [
             SupportCase(
                 id=case["id"], status=case["status"], domain=_case_domain(case),
                 intent=_case_intent(case), priority=case.get("priority"),
             )
             for case in payload.get("cases", [])
         ]
+        return cases, False
     except (TypeError, ValueError, KeyError, json.JSONDecodeError):
-        return []
+        logger.exception("Guardian ticket-history lookup failed")
+        return [], True
 
 
 async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
@@ -196,6 +202,7 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
     workflow = state.get("workflow_state") or {}
     domain = state.get("semantic_domain", "general")
     prior_attempts = max(0, int(workflow.get("turn_count", 0)) - 1)
+    recent_cases, ticket_history_lookup_failed = _recent_cases(state.get("customer_id"))
     decision = Guardian.decide(GuardianInput(
         domain=domain,
         intent=state.get("intent", ""),
@@ -205,8 +212,19 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         safety_or_legal_issue=_safety_or_legal_issue(state["message"]),
         domain_can_resolve=state.get("response") is not None,
         unresolved_attempts=prior_attempts,
-        recent_cases=_recent_cases(state.get("customer_id")),
+        recent_cases=recent_cases,
     ))
+    if ticket_history_lookup_failed and decision.action in {
+        GuardianAction.CREATE_TICKET, GuardianAction.UPDATE_EXISTING_TICKET,
+    }:
+        # Route to human review without mutating ticket state on incomplete history.
+        decision = GuardianDecision(
+            action=GuardianAction.ESCALATE,
+            reason=(
+                "Ticket history could not be verified; hand off for human review "
+                "without creating a potentially duplicate ticket."
+            ),
+        )
     ticket_id, mutation_error = await _apply_guardian_ticket_decision(state, decision)
     response = state.get("response") or "I need additional help with this request."
     if mutation_error:
