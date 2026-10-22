@@ -1,10 +1,23 @@
 """Authentication & authorization dependency functions for FastAPI routes/websockets."""
 
-from fastapi import Depends, HTTPException, status, Header, Query, WebSocketException
+from fastapi import Depends, HTTPException, status, Header, Query, WebSocket, WebSocketException
 from typing import Optional
 import jwt
 from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
 from app.config import settings
+
+
+def _validate_websocket_origin(websocket: WebSocket) -> None:
+    """Reject browser WebSocket handshakes from origins outside configured CORS origins."""
+    origin = websocket.headers.get("origin")
+    # Non-browser clients may omit Origin; they still must pass token auth.
+    if not origin:
+        return
+    if origin not in set(settings.cors_origins_list):
+        raise WebSocketException(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="Untrusted WebSocket origin",
+        )
 
 def verify_admin_key(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
@@ -62,10 +75,12 @@ def verify_agent_token(
     )
 
 async def verify_agent_ws_token(
+    websocket: WebSocket,
     agent_secret: Optional[str] = Query(None),
     token: Optional[str] = Query(None),
 ) -> bool:
-    """Verify agent secret or agent JWT token for WebSocket connections."""
+    """Verify the origin and then agent credentials for WebSocket connections."""
+    _validate_websocket_origin(websocket)
     candidate = agent_secret or token
 
     # Match static agent secret
@@ -143,8 +158,9 @@ def verify_any_token(
 
     raise HTTPException(status_code=401, detail="Valid authentication is required")
 
-async def verify_customer_ws_token(token: str = Query(None)) -> int:
-    """Verify customer JWT token from WebSocket query parameters."""
+async def verify_customer_ws_token(websocket: WebSocket, token: str = Query(None)) -> int:
+    """Verify WebSocket origin and customer JWT token from query parameters."""
+    _validate_websocket_origin(websocket)
     if not token:
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Missing token")
         

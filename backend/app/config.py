@@ -4,7 +4,7 @@ Application configuration loaded from environment variables.
 import os
 import re
 from pydantic_settings import BaseSettings
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pathlib import Path
 
 # backend/ directory — root for resolving relative paths like knowledge_base
@@ -151,10 +151,25 @@ class Settings(BaseSettings):
 
     @field_validator("jwt_secret")
     @classmethod
-    def validate_jwt_secret(cls, v, info):
-        if not v:
-            return "dev-secret-key"  #review: insecure fallback — should enforce in production
-        return v
+    def normalize_jwt_secret(cls, v: str) -> str:
+        return v.strip() if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def validate_auth_security_settings(self) -> "Settings":
+        """Allow an explicit development key only in debug mode; require a strong key otherwise."""
+        if not self.jwt_secret:
+            if self.debug_mode:
+                self.jwt_secret = "dev-secret-key"
+            else:
+                raise ValueError("JWT_SECRET must be set unless DEBUG_MODE=true")
+
+        if not self.debug_mode:
+            if len(self.jwt_secret) < 32:
+                raise ValueError("JWT_SECRET must be at least 32 characters outside DEBUG_MODE")
+            lowered_secret = self.jwt_secret.lower()
+            if lowered_secret in {"dev-secret-key", "your-secure-jwt-secret-key-change-me"} or "change-me" in lowered_secret:
+                raise ValueError("JWT_SECRET must not use a known development/example placeholder")
+        return self
 
     model_config = {
         "env_file": str(_BACKEND_ROOT / ".env"),

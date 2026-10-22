@@ -36,7 +36,7 @@ jobs:
       # settings validation; live credentials are never used in this job.
       SUPABASE_URL: https://ci-placeholder.supabase.co
       SUPABASE_KEY: ci-placeholder-key-123456
-      JWT_SECRET: ci-only-not-a-production-secret
+      JWT_SECRET: ci-only-not-a-production-secret-that-is-long-enough-for-unit-tests
       AGENT_SECRET: ci-agent-secret
       DEBUG_MODE: "false"
       TEST_DB_PASSWORD: postgres

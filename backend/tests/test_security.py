@@ -180,7 +180,20 @@ def test_ws_customer_a_can_connect_own_session():
         data = websocket.receive_json()
         assert data["type"] == "system"
 
-def test_ws_customer_a_cannot_connect_customer_b_session():
+def test_ws_customer_a_cannot_connect_customer_b_session(monkeypatch):
+    # This test exercises in-memory ownership; keep its persistence lookup deterministic.
+    class EmptyConversationQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            from types import SimpleNamespace
+            return SimpleNamespace(data=[])
+
+    monkeypatch.setattr("app.tools.supabase.table", lambda _name: EmptyConversationQuery())
     token_b = create_mock_jwt(2)
     session_id = "test-session-b"
     # create session for B
@@ -213,5 +226,23 @@ def test_ws_persistent_session_ownership_lookup_failure_fails_closed(monkeypatch
     with pytest.raises(Exception):
         with client.websocket_connect(
             f"/ws/chat/persisted-session-during-outage?token={token}"
+        ) as websocket:
+            websocket.receive_json()
+
+
+def test_ws_rejects_untrusted_browser_origin_for_customer_and_agent(monkeypatch):
+    customer_token = create_mock_jwt(1)
+    agent_token = create_mock_jwt(1, role="agent")
+    headers = {"Origin": "https://attacker.example"}
+
+    with pytest.raises(Exception):
+        with client.websocket_connect(
+            f"/ws/chat?token={customer_token}", headers=headers
+        ) as websocket:
+            websocket.receive_json()
+
+    with pytest.raises(Exception):
+        with client.websocket_connect(
+            f"/ws/agent/origin-check?token={agent_token}", headers=headers
         ) as websocket:
             websocket.receive_json()
