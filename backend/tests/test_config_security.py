@@ -38,3 +38,21 @@ def test_valid_strong_jwt_secret_is_accepted_outside_debug_mode():
         DEBUG_MODE=False,
     )
     assert settings.jwt_secret == "unit-test-strong-secret-with-32-plus-characters"
+
+
+def test_direct_postgres_urls_never_fall_back_to_supabase_api_key():
+    settings = _settings(DATABASE_PASSWORD="")
+
+    with pytest.raises(ValueError, match="DATABASE_PASSWORD is required"):
+        _ = settings.database_url
+
+    with pytest.raises(ValueError, match="DATABASE_PASSWORD is required"):
+        _ = settings.database_url_sync
+
+
+def test_direct_postgres_urls_use_only_explicit_database_password():
+    settings = _settings(DATABASE_PASSWORD="explicit-db-password")
+
+    assert "explicit-db-password" in settings.database_url
+    assert "explicit-db-password" in settings.database_url_sync
+    assert "unit-test-key-long-enough" not in settings.database_url

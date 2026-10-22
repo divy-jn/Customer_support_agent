@@ -104,16 +104,18 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         """Async PostgreSQL connection string for SQLAlchemy (asyncpg)."""
+        if not self.database_password:
+            raise ValueError("DATABASE_PASSWORD is required for direct PostgreSQL connections; SUPABASE_KEY is not a database password")
         host = f"db.{self._supabase_host}.supabase.co"
-        pw = self.database_password or self.supabase_key  #review: using API key as DB password is risky
-        return f"postgresql+asyncpg://postgres:{pw}@{host}:5432/postgres"
+        return f"postgresql+asyncpg://postgres:{self.database_password}@{host}:5432/postgres"
 
     @property
     def database_url_sync(self) -> str:
         """Sync PostgreSQL connection string for SQLAlchemy (psycopg2)."""
+        if not self.database_password:
+            raise ValueError("DATABASE_PASSWORD is required for direct PostgreSQL connections; SUPABASE_KEY is not a database password")
         host = f"db.{self._supabase_host}.supabase.co"
-        pw = self.database_password or self.supabase_key
-        return f"postgresql+psycopg2://postgres:{pw}@{host}:5432/postgres"
+        return f"postgresql+psycopg2://postgres:{self.database_password}@{host}:5432/postgres"
 
     @field_validator("supabase_url")
     @classmethod
