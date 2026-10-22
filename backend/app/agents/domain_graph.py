@@ -150,6 +150,20 @@ def _requests_human(message: str) -> bool:
     return bool(re.search(r"\b(human|manager|representative|real person|agent)\b", message, re.IGNORECASE))
 
 
+def _previously_requested_human(history: list[dict[str, Any]], current_message: str) -> bool:
+    """Return whether the customer asked for a human on a prior turn."""
+    current = current_message.strip().casefold()
+    for item in history[-10:]:
+        if item.get("role") not in {"customer", "user"}:
+            continue
+        content = str(item.get("content", "")).strip()
+        if not content or content.casefold() == current:
+            continue
+        if _requests_human(content):
+            return True
+    return False
+
+
 def _safety_or_legal_issue(message: str) -> bool:
     return bool(re.search(r"\b(safety|unsafe|injury|legal|lawyer|police)\b", message, re.IGNORECASE))
 
@@ -213,6 +227,11 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         domain_can_resolve=state.get("response") is not None,
         unresolved_attempts=prior_attempts,
         recent_cases=recent_cases,
+        sentiment=state.get("sentiment", "neutral"),
+        urgency=state.get("urgency", "low"),
+        customer_repeats_human_request=_previously_requested_human(
+            state.get("conversation_history", []), state["message"],
+        ),
     ))
     if ticket_history_lookup_failed and decision.action in {
         GuardianAction.CREATE_TICKET, GuardianAction.UPDATE_EXISTING_TICKET,
