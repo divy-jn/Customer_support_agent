@@ -8,6 +8,9 @@ def _settings(**overrides):
     values = {
         "SUPABASE_URL": "https://ci-project.supabase.co",
         "SUPABASE_KEY": "unit-test-key-long-enough",
+        # Do not inherit CI or developer-machine static credentials in config tests.
+        "AGENT_SECRET": "",
+        "ADMIN_API_KEY": "",
         "_env_file": None,
     }
     values.update(overrides)
