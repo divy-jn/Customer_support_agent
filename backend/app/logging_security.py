@@ -7,7 +7,7 @@ from typing import Any
 
 # Match only credential-like query keys, retaining the name and delimiters.
 _SENSITIVE_QUERY_VALUE = re.compile(
-    r"(?i)([?&](?:token|access_token|refresh_token|agent_secret|api_key|x_api_key|secret|password|authorization)=)[^&#\\s\"'<>]*"
+    r"(?i)([?&](?:token|access_token|refresh_token|agent_secret|api_key|x_api_key|secret|password|authorization)=)[^&#\s\"'<>]*"
 )
 
 

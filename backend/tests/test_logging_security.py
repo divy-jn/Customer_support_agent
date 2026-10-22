@@ -8,11 +8,9 @@ def test_redact_sensitive_query_values_but_keep_non_sensitive_query_fields():
 
     redacted = redact_sensitive_query(value)
 
+    assert redacted == "/ws/chat?token=[REDACTED]&session_id=session-12&agent_secret=[REDACTED]"
     assert "customer-jwt-secret" not in redacted
     assert "static-key" not in redacted
-    assert "token=[REDACTED]" in redacted
-    assert "agent_secret=[REDACTED]" in redacted
-    assert "session_id=session-12" in redacted
 
 
 def test_logging_filter_redacts_access_log_format_args_and_structured_url():
