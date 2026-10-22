@@ -174,6 +174,22 @@ class Settings(BaseSettings):
             lowered_secret = self.jwt_secret.lower()
             if lowered_secret in {"dev-secret-key", "your-secure-jwt-secret-key-change-me"} or "change-me" in lowered_secret:
                 raise ValueError("JWT_SECRET must not use a known development/example placeholder")
+
+            # Static bearer-style secrets are optional when agents use JWTs, but
+            # any configured value must not be a guessable demo credential.
+            for name, secret in (
+                ("AGENT_SECRET", self.agent_secret),
+                ("ADMIN_API_KEY", self.admin_api_key),
+            ):
+                if secret and (
+                    len(secret) < 32
+                    or secret.lower() in {"test-agent-secret", "admin", "changeme"}
+                    or "replace-with" in secret.lower()
+                    or "change-me" in secret.lower()
+                ):
+                    raise ValueError(
+                        f"{name} must be at least 32 characters and must not use a demo/example value outside DEBUG_MODE"
+                    )
         return self
 
     model_config = {

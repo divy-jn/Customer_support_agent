@@ -63,3 +63,28 @@ def test_direct_postgres_urls_encode_special_password_characters():
 
     assert "p%40ss%3Aword%2Fpath" in settings.database_url
     assert "p%40ss%3Aword%2Fpath" in settings.database_url_sync
+
+
+def test_configured_static_agent_and_admin_secrets_must_be_strong_outside_debug_mode():
+    with pytest.raises(ValidationError, match="AGENT_SECRET must be at least 32 characters"):
+        _settings(
+            JWT_SECRET="unit-test-strong-secret-with-32-plus-characters",
+            AGENT_SECRET="test-agent-secret",
+            DEBUG_MODE=False,
+        )
+
+    with pytest.raises(ValidationError, match="ADMIN_API_KEY must be at least 32 characters"):
+        _settings(
+            JWT_SECRET="unit-test-strong-secret-with-32-plus-characters",
+            ADMIN_API_KEY="short-admin-key",
+            DEBUG_MODE=False,
+        )
+
+
+def test_static_agent_secret_can_be_omitted_when_using_jwt_auth():
+    settings = _settings(
+        JWT_SECRET="unit-test-strong-secret-with-32-plus-characters",
+        AGENT_SECRET="",
+        DEBUG_MODE=False,
+    )
+    assert settings.agent_secret == ""
