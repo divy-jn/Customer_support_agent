@@ -13,6 +13,9 @@ _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
+    # Explicitly distinguishes development from non-debug hosted environments.
+    app_environment: str = Field(default="development", alias="APP_ENVIRONMENT")
+
     # --- Database (Supabase) ---
     supabase_url: str = Field(..., alias="SUPABASE_URL")       # required, validated below
     supabase_key: str = Field(..., alias="SUPABASE_KEY")       # required, min 10 chars
@@ -154,6 +157,15 @@ class Settings(BaseSettings):
             )
         return normalized
 
+    @field_validator("app_environment")
+    @classmethod
+    def normalize_app_environment(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        valid = {"development", "test", "staging", "production"}
+        if normalized not in valid:
+            raise ValueError(f"APP_ENVIRONMENT must be one of {sorted(valid)}")
+        return normalized
+
     @field_validator("jwt_secret")
     @classmethod
     def normalize_jwt_secret(cls, v: str) -> str:
@@ -162,6 +174,12 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_auth_security_settings(self) -> "Settings":
         """Allow an explicit development key only in debug mode; require a strong key otherwise."""
+        if self.app_environment in {"staging", "production"} and self.debug_mode:
+            raise ValueError("DEBUG_MODE must be false when APP_ENVIRONMENT is staging or production")
+
+        if self.app_environment == "production" and not self.database_password:
+            raise ValueError("DATABASE_PASSWORD must be configured when APP_ENVIRONMENT=production")
+
         if not self.jwt_secret:
             if self.debug_mode:
                 self.jwt_secret = "dev-secret-key"

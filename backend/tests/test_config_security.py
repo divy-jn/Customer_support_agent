@@ -91,3 +91,38 @@ def test_static_agent_secret_can_be_omitted_when_using_jwt_auth():
         DEBUG_MODE=False,
     )
     assert settings.agent_secret == ""
+
+
+def test_staging_and_production_cannot_enable_debug_mode():
+    strong_secret = "unit-test-strong-secret-with-32-plus-characters"
+    for environment in ("staging", "production"):
+        with pytest.raises(ValidationError, match="DEBUG_MODE must be false"):
+            _settings(
+                APP_ENVIRONMENT=environment,
+                DEBUG_MODE=True,
+                JWT_SECRET=strong_secret,
+                DATABASE_PASSWORD="explicit-db-password",
+            )
+
+
+def test_production_requires_database_password_for_durable_workers():
+    with pytest.raises(ValidationError, match="DATABASE_PASSWORD must be configured"):
+        _settings(
+            APP_ENVIRONMENT="production",
+            DEBUG_MODE=False,
+            JWT_SECRET="unit-test-strong-secret-with-32-plus-characters",
+            DATABASE_PASSWORD="",
+        )
+
+
+def test_production_accepts_explicit_strong_secrets_and_database_password():
+    settings = _settings(
+        APP_ENVIRONMENT="production",
+        DEBUG_MODE=False,
+        JWT_SECRET="unit-test-strong-secret-with-32-plus-characters",
+        DATABASE_PASSWORD="explicit-db-password",
+        AGENT_SECRET="",
+        ADMIN_API_KEY="",
+    )
+    assert settings.app_environment == "production"
+    assert settings.debug_mode is False
