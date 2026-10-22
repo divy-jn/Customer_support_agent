@@ -139,20 +139,41 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
     Main handler for customer WebSocket connections.
     Receives messages, processes them through LangGraph, and sends responses.
     """
+    caller_supplied_session_id = session_id is not None
     if not session_id:
         session_id = str(uuid.uuid4())
 
-    if authenticated_customer_id is not None:
+    # A caller-supplied ID may refer to a persisted conversation that is not in
+    # local/Redis session state. Verify ownership before connecting; if the
+    # authoritative lookup is unavailable, fail closed rather than recreating
+    # the session under the caller's identity. Fresh server-generated IDs do
+    # not need this round-trip.
+    if authenticated_customer_id is not None and caller_supplied_session_id:
         try:
             from app.tools import supabase
-            res = await asyncio.to_thread(supabase.table("conversations").select("customer_id").eq("session_id", session_id).execute)
+            res = await asyncio.to_thread(
+                supabase.table("conversations")
+                .select("customer_id")
+                .eq("session_id", session_id)
+                .execute
+            )
             if res.data and res.data[0].get("customer_id") is not None:
                 if res.data[0]["customer_id"] != authenticated_customer_id:
-                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=f"Session {session_id} belongs to a different customer.")
+                    await websocket.close(
+                        code=status.WS_1008_POLICY_VIOLATION,
+                        reason="Session belongs to a different customer.",
+                    )
                     return
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Failed to verify persistent session ownership: {e}")
+        except Exception:
+            logger.exception(
+                "Persistent session ownership could not be verified; rejecting WebSocket",
+                extra={"session_id": session_id},
+            )
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Session ownership could not be verified.",
+            )
+            return
 
     await manager.connect_customer(websocket, session_id)
 

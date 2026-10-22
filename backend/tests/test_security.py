@@ -191,3 +191,27 @@ def test_ws_customer_a_cannot_connect_customer_b_session():
     with pytest.raises(Exception):
         with client.websocket_connect(f"/ws/chat/{session_id}?token={token_a}") as ws_a:
             ws_a.receive_json()
+
+
+def test_ws_persistent_session_ownership_lookup_failure_fails_closed(monkeypatch):
+    token = create_mock_jwt(1)
+
+    class BrokenQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr("app.tools.supabase.table", lambda _name: BrokenQuery())
+
+    # Reusing a supplied session ID must not create a fresh session when we
+    # cannot verify whether its persistent conversation belongs to another user.
+    with pytest.raises(Exception):
+        with client.websocket_connect(
+            f"/ws/chat/persisted-session-during-outage?token={token}"
+        ) as websocket:
+            websocket.receive_json()
