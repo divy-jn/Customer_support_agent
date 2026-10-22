@@ -167,3 +167,48 @@ async def test_one_off_human_keyword_does_not_trigger_handoff_by_itself(mock_cas
     assert result["escalated"] is False
     assert "What would you like me to look into?" in result["response"]
     mock_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+async def test_turn_count_alone_never_triggers_unresolved_attempt_escalation(mock_cases):
+    result = await guardian_response_node({
+        "message": "Can you confirm the order is on its way?",
+        "response": "Your order is in transit.",
+        "semantic_domain": "order",
+        "intent": "tracking",
+        "customer_id": 7,
+        "workflow_state": {
+            "session_id": "many-successful-turns",
+            "turn_count": 12,
+            "unresolved_attempts": 0,
+        },
+    })
+
+    assert result["guardian_action"] == "resolve"
+    assert result["escalated"] is False
+    assert result["workflow_state"]["unresolved_attempts"] == 0
+
+
+@pytest.mark.asyncio
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+async def test_third_actual_unresolved_attempt_triggers_escalation_and_persists_count(mock_cases):
+    result = await guardian_response_node({
+        "message": "The device still does not turn on.",
+        "response": None,
+        "semantic_domain": "product",
+        "intent": "technical_support",
+        "sentiment": "negative",
+        "urgency": "medium",
+        "customer_id": 7,
+        "client_request_id": "unresolved-third-attempt",
+        "workflow_state": {
+            "session_id": "repeated-failure-session",
+            "turn_count": 8,
+            "unresolved_attempts": 2,
+        },
+    })
+
+    assert result["guardian_action"] == "escalate"
+    assert result["escalated"] is True
+    assert result["workflow_state"]["unresolved_attempts"] == 3

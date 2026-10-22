@@ -386,6 +386,8 @@ class WorkflowState(BaseModel):
 
     # ─── Shared Lifecycle ───
     turn_count: int = 0
+    # Consecutive unresolved/problem turns; distinct from total conversation turns.
+    unresolved_attempts: int = Field(default=0, ge=0, le=100)
     updated_at: datetime | None = None
 
     @classmethod
@@ -576,6 +578,7 @@ class WorkflowState(BaseModel):
             payment_state=payment_state,
             global_status=cls._map_legacy_global_status(legacy_dict.get("workflow_status", WorkflowStatus.IDLE), bool(domain_enum)),
             turn_count=legacy_dict.get("turn_count", 0),
+            unresolved_attempts=legacy_dict.get("unresolved_attempts", 0),
             updated_at=legacy_dict.get("updated_at")
         )
 

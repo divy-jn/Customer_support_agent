@@ -215,27 +215,38 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
     """Apply deterministic policy after the domain result and compose output."""
     workflow = state.get("workflow_state") or {}
     domain = state.get("semantic_domain", "general")
-    prior_attempts = max(0, int(workflow.get("turn_count", 0)) - 1)
+    prior_attempts = max(0, int(workflow.get("unresolved_attempts", 0)))
     recent_cases, ticket_history_lookup_failed = _recent_cases(state.get("customer_id"))
+    customer_requests_human = _requests_human(state["message"])
+    previously_requested_human = _previously_requested_human(
+        state.get("conversation_history", []), state["message"],
+    )
+    one_off_human_request = (
+        customer_requests_human
+        and not previously_requested_human
+        and not _safety_or_legal_issue(state["message"])
+        and state.get("urgency", "low").lower() not in {"high", "critical"}
+    )
+    domain_failed = bool(state.get("requires_human")) or (
+        state.get("response") is None
+        and not one_off_human_request
+        and state.get("supervisor_action") != SupervisorAction.ESCALATE.value
+    )
+    attempts_for_decision = prior_attempts + int(domain_failed)
     decision = Guardian.decide(GuardianInput(
         domain=domain,
         intent=state.get("intent", ""),
-        customer_requests_human=_requests_human(state["message"]),
+        customer_requests_human=customer_requests_human,
         # A failed domain skill requires handoff, but a one-off human keyword
         # routed to Guardian is not itself proof that automation has failed.
-        requires_human=bool(state.get("requires_human")) or (
-            state.get("response") is None
-            and state.get("supervisor_action") != SupervisorAction.ESCALATE.value
-        ),
+        requires_human=domain_failed,
         safety_or_legal_issue=_safety_or_legal_issue(state["message"]),
         domain_can_resolve=state.get("response") is not None,
-        unresolved_attempts=prior_attempts,
+        unresolved_attempts=attempts_for_decision,
         recent_cases=recent_cases,
         sentiment=state.get("sentiment", "neutral"),
         urgency=state.get("urgency", "low"),
-        customer_repeats_human_request=_previously_requested_human(
-            state.get("conversation_history", []), state["message"],
-        ),
+        customer_repeats_human_request=previously_requested_human,
     ))
     if ticket_history_lookup_failed and decision.action in {
         GuardianAction.CREATE_TICKET, GuardianAction.UPDATE_EXISTING_TICKET,
@@ -256,8 +267,17 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         response = "I can try to help with the issue here first. What would you like me to look into?"
     else:
         response = compose_response(response, decision)
+    if decision.action in {GuardianAction.RESOLVE, GuardianAction.CONTINUE}:
+        next_unresolved_attempts = 0 if state.get("response") is not None else prior_attempts
+    else:
+        next_unresolved_attempts = attempts_for_decision if domain_failed else prior_attempts
+
+    updated_workflow = dict(workflow)
+    updated_workflow["unresolved_attempts"] = min(next_unresolved_attempts, 100)
+
     return {
         "response": response,
+        "workflow_state": updated_workflow,
         "guardian_action": decision.action.value,
         "guardian_reason": decision.reason,
         "guardian_ticket_id": ticket_id or decision.ticket_id,
