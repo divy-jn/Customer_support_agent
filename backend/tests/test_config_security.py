@@ -56,3 +56,10 @@ def test_direct_postgres_urls_use_only_explicit_database_password():
     assert "explicit-db-password" in settings.database_url
     assert "explicit-db-password" in settings.database_url_sync
     assert "unit-test-key-long-enough" not in settings.database_url
+
+
+def test_direct_postgres_urls_encode_special_password_characters():
+    settings = _settings(DATABASE_PASSWORD="p@ss:word/path")
+
+    assert "p%40ss%3Aword%2Fpath" in settings.database_url
+    assert "p%40ss%3Aword%2Fpath" in settings.database_url_sync

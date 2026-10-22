@@ -6,6 +6,7 @@ import re
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator, model_validator
 from pathlib import Path
+from urllib.parse import quote
 
 # backend/ directory — root for resolving relative paths like knowledge_base
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -107,7 +108,8 @@ class Settings(BaseSettings):
         if not self.database_password:
             raise ValueError("DATABASE_PASSWORD is required for direct PostgreSQL connections; SUPABASE_KEY is not a database password")
         host = f"db.{self._supabase_host}.supabase.co"
-        return f"postgresql+asyncpg://postgres:{self.database_password}@{host}:5432/postgres"
+        password = quote(self.database_password, safe="")
+        return f"postgresql+asyncpg://postgres:{password}@{host}:5432/postgres"
 
     @property
     def database_url_sync(self) -> str:
@@ -115,7 +117,8 @@ class Settings(BaseSettings):
         if not self.database_password:
             raise ValueError("DATABASE_PASSWORD is required for direct PostgreSQL connections; SUPABASE_KEY is not a database password")
         host = f"db.{self._supabase_host}.supabase.co"
-        return f"postgresql+psycopg2://postgres:{self.database_password}@{host}:5432/postgres"
+        password = quote(self.database_password, safe="")
+        return f"postgresql+psycopg2://postgres:{password}@{host}:5432/postgres"
 
     @field_validator("supabase_url")
     @classmethod
