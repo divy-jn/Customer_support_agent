@@ -149,6 +149,17 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
     # the session under the caller's identity. Fresh server-generated IDs do
     # not need this round-trip.
     if authenticated_customer_id is not None and caller_supplied_session_id:
+        # A cached session that already has an owner is itself an authoritative
+        # session-store record. Reject a mismatch immediately, even if the DB is down.
+        cached_session = await session_store.get_session(session_id)
+        cached_owner = cached_session.get("customer_id") if cached_session else None
+        if cached_owner is not None and cached_owner != authenticated_customer_id:
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Session belongs to a different customer.",
+            )
+            return
+
         try:
             from app.tools import supabase
             res = await asyncio.to_thread(
@@ -165,15 +176,21 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     )
                     return
         except Exception:
-            logger.exception(
-                "Persistent session ownership could not be verified; rejecting WebSocket",
-                extra={"session_id": session_id},
-            )
-            await websocket.close(
-                code=status.WS_1008_POLICY_VIOLATION,
-                reason="Session ownership could not be verified.",
-            )
-            return
+            if cached_owner == authenticated_customer_id:
+                logger.warning(
+                    "Persistent session ownership lookup unavailable; relying on owner-bound session state",
+                    extra={"session_id": session_id},
+                )
+            else:
+                logger.exception(
+                    "Persistent session ownership could not be verified; rejecting WebSocket",
+                    extra={"session_id": session_id},
+                )
+                await websocket.close(
+                    code=status.WS_1008_POLICY_VIOLATION,
+                    reason="Session ownership could not be verified.",
+                )
+                return
 
     await manager.connect_customer(websocket, session_id)
 

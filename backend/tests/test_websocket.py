@@ -20,6 +20,21 @@ from unittest.mock import patch, AsyncMock, MagicMock
 from app.main import app
 
 
+def _mock_empty_conversation_lookup(monkeypatch):
+    class EmptyConversationQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            from types import SimpleNamespace
+            return SimpleNamespace(data=[])
+
+    monkeypatch.setattr("app.tools.supabase.table", lambda _name: EmptyConversationQuery())
+
+
 class TestHealthEndpoint:
     """Test the health check endpoint."""
 
@@ -173,8 +188,9 @@ class TestWebSocketConnection:
             assert "Welcome" in data["message"] or "Hello" in data["message"]
 
     @patch("app.persistence.escalation.ensure_durable_escalation_state", new_callable=MagicMock)
-    def test_websocket_connect_with_session(self, mock_get_session_state, auth_token):
+    def test_websocket_connect_with_session(self, mock_get_session_state, auth_token, monkeypatch):
         from app.models import EscalationLifecycleStatus
+        _mock_empty_conversation_lookup(monkeypatch)
         mock_get_session_state.return_value = EscalationLifecycleStatus.NONE
         """WebSocket should connect with a specific session ID."""
         client = TestClient(app)
@@ -301,8 +317,9 @@ class TestWebSocketConnection:
                 assert "Take over the conversation before sending" in err2["message"]
 
     @patch("app.persistence.escalation.ensure_durable_escalation_state")
-    def test_reconnect_reads_persisted_state_correctly(self, mock_get_session_state, auth_token):
+    def test_reconnect_reads_persisted_state_correctly(self, mock_get_session_state, auth_token, monkeypatch):
         from app.models import EscalationLifecycleStatus
+        _mock_empty_conversation_lookup(monkeypatch)
         # Suppose the DB already says this session is ACTIVE (escalated)
         mock_get_session_state.return_value = EscalationLifecycleStatus.ACTIVE
         
@@ -321,8 +338,9 @@ class TestWebSocketConnection:
                 mock_call_agent.assert_not_called()
 
     @patch("app.persistence.escalation.ensure_durable_escalation_state", new_callable=MagicMock)
-    def test_websocket_reconnection_race_condition(self, mock_get_session_state, auth_token):
+    def test_websocket_reconnection_race_condition(self, mock_get_session_state, auth_token, monkeypatch):
         from app.models import EscalationLifecycleStatus
+        _mock_empty_conversation_lookup(monkeypatch)
         mock_get_session_state.return_value = EscalationLifecycleStatus.NONE
         """
         Regression test:
