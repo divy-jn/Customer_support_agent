@@ -83,7 +83,7 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
                 "supervisor_action": decision.action.value,
                 "supervisor_reason": decision.transition_reason,
                 "workflow_state": workflow.model_dump(mode="json"),
-                "architecture_mode": "v2_product",
+                "architecture_mode": settings.agent_architecture_mode,
             }
     except (ValueError, TypeError):
         # A malformed persisted workflow must never create a new V2 state.
@@ -95,7 +95,7 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
         "semantic_confidence": 0.0,
         "supervisor_action": "legacy_fallback",
         "supervisor_reason": "Semantic routing or workflow validation failed.",
-        "architecture_mode": "v2_product",
+        "architecture_mode": settings.agent_architecture_mode,
     }
 
 
@@ -277,6 +277,9 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
 
     return {
         "response": response,
+        # Domain agents can propose approval-gated actions; preserve this field so
+        # chat_handler can persist the approval request and execute only on "yes".
+        "pending_approval": state.get("pending_approval"),
         "workflow_state": updated_workflow,
         "guardian_action": decision.action.value,
         "guardian_reason": decision.reason,

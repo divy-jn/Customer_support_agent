@@ -212,3 +212,51 @@ async def test_third_actual_unresolved_attempt_triggers_escalation_and_persists_
     assert result["guardian_action"] == "escalate"
     assert result["escalated"] is True
     assert result["workflow_state"]["unresolved_attempts"] == 3
+
+
+@pytest.mark.asyncio
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+async def test_guardian_preserves_order_cancellation_approval_request(mock_cases):
+    pending = {
+        "action": "cancel_order",
+        "params": {"order_id": 123},
+        "message": "I’d like to cancel order #123. Shall I go ahead?",
+        "customer_id": 7,
+        "session_id": "approval-session",
+    }
+    result = await guardian_response_node({
+        "message": "Cancel order 123",
+        "response": pending["message"],
+        "semantic_domain": "order",
+        "intent": "order_cancellation",
+        "customer_id": 7,
+        "client_request_id": "approval-request-123",
+        "pending_approval": pending,
+        "workflow_state": {
+            "session_id": "approval-session",
+            "customer_id": 7,
+            "turn_count": 1,
+            "unresolved_attempts": 0,
+        },
+    })
+
+    assert result["pending_approval"] == pending
+    assert result["guardian_action"] == "resolve"
+    assert result["escalated"] is False
+
+
+@pytest.mark.asyncio
+@patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
+async def test_semantic_supervisor_reports_actual_rollout_mode(mock_classify, monkeypatch):
+    monkeypatch.setattr(settings, "agent_architecture_mode", "v2_all")
+    mock_classify.return_value = _semantic("general", "faq")
+
+    result = await semantic_supervisor_node({
+        "message": "What is your return policy?",
+        "conversation_history": [],
+        "session_id": "mode-test-session",
+        "customer_id": 7,
+        "workflow_state": {"session_id": "mode-test-session", "customer_id": 7},
+    })
+
+    assert result["architecture_mode"] == "v2_all"
