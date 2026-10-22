@@ -290,7 +290,9 @@ def update_ticket(
     """Update a ticket's status, priority, resolution, or assigned agent."""
     try:
         _validate_positive_int(ticket_id, "ticket_id")
-        
+        if not client_request_id:
+            return json.dumps({"error": "client_request_id is required for mutating operations"})
+
         # Enforce customer ownership and fetch description for append
         existing_desc = ""
         if customer_id is not None:
@@ -344,9 +346,6 @@ def update_ticket(
         if order_id is not None: payload["order_id"] = order_id
         if description_append: payload["description_append"] = description_append
 
-        if not client_request_id:
-            return json.dumps({"error": "client_request_id is required for mutating operations"})
-            
         import hashlib
         payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         
