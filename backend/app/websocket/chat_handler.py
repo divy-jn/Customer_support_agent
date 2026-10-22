@@ -326,6 +326,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     execute_state: AgentState = {
                         "customer_id": customer_id,
                         "session_id": session_id,
+                        "client_request_id": client_request_id,
                         "message": pending.get("original_message", message),
                         "conversation_history": session["conversation_history"],
                         "intent": pending.get("intent", ""),

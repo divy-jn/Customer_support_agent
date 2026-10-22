@@ -535,3 +535,107 @@ class TestIdempotency:
         import json
         res_data = json.loads(res)
         assert "client_request_id is required" in res_data["error"]
+
+
+@pytest.mark.asyncio
+async def test_v2_pending_approval_executes_with_confirmation_request_id(monkeypatch):
+    import uuid
+    from types import SimpleNamespace
+    from app.models import EscalationLifecycleStatus
+    from app.config import settings
+    from app.websocket.chat_handler import handle_customer_ws, session_store
+    from app.agents.graph import db_execute_node as real_db_execute_node
+
+    session_id = f"approval_{uuid.uuid4().hex}"
+    first_request_id = str(uuid.uuid4())
+    approval_request_id = str(uuid.uuid4())
+    pending = {
+        "action": "cancel_order",
+        "params": {"order_id": 123},
+        "message": "I'd like to cancel order #123. Shall I go ahead?",
+        "customer_id": 7,
+        "session_id": session_id,
+    }
+    session = {
+        "session_id": session_id,
+        "customer_id": 7,
+        "mode": "ai",
+        "conversation_history": [],
+        "workflow_state": {
+            "session_id": session_id, "customer_id": 7,
+            "turn_count": 0, "unresolved_attempts": 0,
+        },
+    }
+
+    class Query:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def upsert(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[])
+
+    class FakeSupabase:
+        def table(self, _name):
+            return Query()
+
+    async def fake_get_session(_session_id, authenticated_customer_id=None):
+        return session
+
+    async def fake_mutate(_session_id, mutator_fn, allow_retry=True, customer_id=None):
+        changed = mutator_fn(session)
+        return session, bool(changed)
+
+    class FakeDomainGraph:
+        def __init__(self):
+            self.ainvoke = AsyncMock(return_value={
+                "response": pending["message"],
+                "pending_approval": dict(pending),
+                "intent": "order_cancellation",
+                "semantic_domain": "order",
+                "escalated": False,
+                "guardian_action": "resolve",
+                "workflow_state": dict(session["workflow_state"]),
+            })
+
+    websocket = AsyncMock()
+    websocket.receive_text.side_effect = [
+        json.dumps({"message": "Cancel order 123", "client_request_id": first_request_id}),
+        json.dumps({"message": "yes", "client_request_id": approval_request_id}),
+        RuntimeError("disconnect"),
+    ]
+
+    real_mode = settings.agent_architecture_mode
+    monkeypatch.setattr(settings, "agent_architecture_mode", "v2_all")
+    monkeypatch.setattr("app.tools.supabase", FakeSupabase())
+    monkeypatch.setattr("app.websocket.chat_handler._get_session", fake_get_session)
+    monkeypatch.setattr("app.websocket.chat_handler._mutate_session", fake_mutate)
+    monkeypatch.setattr("app.websocket.chat_handler.domain_support_graph", FakeDomainGraph())
+    monkeypatch.setattr("app.websocket.chat_handler.manager.connect_customer", AsyncMock())
+    monkeypatch.setattr("app.websocket.chat_handler.manager.send_personal_message", AsyncMock())
+    monkeypatch.setattr("app.websocket.chat_handler.manager.broadcast_to_agents", AsyncMock())
+    monkeypatch.setattr("app.websocket.chat_handler.manager.disconnect_customer", AsyncMock())
+    monkeypatch.setattr(
+        "app.persistence.escalation.ensure_durable_escalation_state",
+        lambda *_args, **_kwargs: EscalationLifecycleStatus.NONE,
+    )
+    monkeypatch.setattr(
+        "app.persistence.escalation.get_durable_escalation_state",
+        lambda *_args, **_kwargs: EscalationLifecycleStatus.NONE,
+    )
+    execute = AsyncMock(return_value={"response": "Order #123 was cancelled."})
+    monkeypatch.setattr("app.agents.graph.db_execute_node", execute)
+
+    await handle_customer_ws(websocket, session_id=session_id, authenticated_customer_id=7)
+
+    execute.assert_awaited_once()
+    execute_state = execute.await_args.args[0]
+    assert execute_state["approval_granted"] is True
+    assert execute_state["pending_approval"]["action"] == "cancel_order"
+    assert execute_state["client_request_id"] == approval_request_id
+    assert "pending_approval" not in session
