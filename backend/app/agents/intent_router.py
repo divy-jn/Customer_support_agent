@@ -55,15 +55,15 @@ def parse_and_validate_router_output(raw_text: str) -> dict:
         raise ValueError(f"Missing required fields: {missing}")
 
     invalid_fields = []
-    if result["intent"] not in valid_intents:
-        invalid_fields.append(f"intent={result['intent']}")
-    if result["sentiment"] not in valid_sentiments:
-        invalid_fields.append(f"sentiment={result['sentiment']}")
-    if result["urgency"] not in valid_urgencies:
-        invalid_fields.append(f"urgency={result['urgency']}")
-    if result["route_to"] not in valid_routes:
-        invalid_fields.append(f"route_to={result['route_to']}")
-
+    for field, valid_values in (
+        ("intent", valid_intents),
+        ("sentiment", valid_sentiments),
+        ("urgency", valid_urgencies),
+        ("route_to", valid_routes),
+    ):
+        value = result[field]
+        if not isinstance(value, str) or value not in valid_values:
+            invalid_fields.append(f"{field}={value!r}")
     if invalid_fields:
         raise ValueError(f"Invalid enum values: {invalid_fields}")
 

@@ -328,3 +328,14 @@ def test_unrelated_typed_suspended_domains_preserved():
     assert deserialized.active_domain == OrchestrationDomain.ORDER
     assert OrchestrationDomain.PRODUCT in deserialized.suspended_domains
     assert deserialized.product_state.domain_status == DomainWorkflowStatus.SUSPENDED
+
+
+def test_legacy_adapter_preserves_unresolved_attempt_count():
+    state = WorkflowState.from_legacy({
+        "session_id": "unresolved-counter-migration",
+        "turn_count": 12,
+        "unresolved_attempts": 2,
+    })
+
+    assert state.turn_count == 12
+    assert state.unresolved_attempts == 2

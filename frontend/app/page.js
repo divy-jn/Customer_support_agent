@@ -251,9 +251,18 @@ export default function CustomerChatPage() {
   }, [connectWebSocket]);
 
   useEffect(() => {
-    connectWebSocket();
+    // Start the connection after the effect commits. This keeps state updates
+    // in the connection lifecycle out of the synchronous effect body.
+    const connectTimer = setTimeout(() => {
+      void connectWebSocket();
+    }, 0);
+
     return () => {
-      if (reconnectTimerRef.current) clearInterval(reconnectTimerRef.current);
+      clearTimeout(connectTimer);
+      if (reconnectTimerRef.current) {
+        clearInterval(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       wsRef.current?.close();
     };
   }, [connectWebSocket]);

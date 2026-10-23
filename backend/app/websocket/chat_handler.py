@@ -147,20 +147,76 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
     Main handler for customer WebSocket connections.
     Receives messages, processes them through LangGraph, and sends responses.
     """
+    caller_supplied_session_id = session_id is not None
     if not session_id:
         session_id = str(uuid.uuid4())
 
-    if authenticated_customer_id is not None:
+    # A caller-supplied ID may refer to a persisted conversation that is not in
+    # local/Redis session state. Verify ownership before connecting; if the
+    # authoritative lookup is unavailable, fail closed rather than recreating
+    # the session under the caller's identity. Fresh server-generated IDs do
+    # not need this round-trip.
+    if authenticated_customer_id is not None and caller_supplied_session_id:
+        # A cached session that already has an owner is itself an authoritative
+        # session-store record. Reject a mismatch immediately, even if the DB is down.
+        cached_session = await session_store.get_session(session_id)
+        cached_owner = cached_session.get("customer_id") if cached_session else None
+        if cached_owner is not None and cached_owner != authenticated_customer_id:
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Session belongs to a different customer.",
+            )
+            return
+
         try:
             from app.tools import supabase
-            res = await asyncio.to_thread(supabase.table("conversations").select("customer_id").eq("session_id", session_id).execute)
-            if res.data and res.data[0].get("customer_id") is not None:
-                if res.data[0]["customer_id"] != authenticated_customer_id:
-                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=f"Session {session_id} belongs to a different customer.")
+            res = await asyncio.to_thread(
+                supabase.table("conversations")
+                .select("customer_id")
+                .eq("session_id", session_id)
+                .execute
+            )
+            persisted_rows = res.data or []
+            if persisted_rows:
+                persisted_owner = persisted_rows[0].get("customer_id")
+                if persisted_owner is not None and persisted_owner != authenticated_customer_id:
+                    await websocket.close(
+                        code=status.WS_1008_POLICY_VIOLATION,
+                        reason="Session belongs to a different customer.",
+                    )
                     return
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Failed to verify persistent session ownership: {e}")
+                if persisted_owner is None and cached_owner is None:
+                    # Never let a customer claim a persisted conversation whose
+                    # identity cannot be established, even if the row is legacy.
+                    await websocket.close(
+                        code=status.WS_1008_POLICY_VIOLATION,
+                        reason="Session ownership could not be verified.",
+                    )
+                    return
+            elif cached_session is not None and cached_owner is None:
+                # Do not bind ownerless cached state that may include another
+                # user's history merely because the persistent index has no row.
+                await websocket.close(
+                    code=status.WS_1008_POLICY_VIOLATION,
+                    reason="Session ownership could not be verified.",
+                )
+                return
+        except Exception:
+            if cached_owner == authenticated_customer_id:
+                logger.warning(
+                    "Persistent session ownership lookup unavailable; relying on owner-bound session state",
+                    extra={"session_id": session_id},
+                )
+            else:
+                logger.exception(
+                    "Persistent session ownership could not be verified; rejecting WebSocket",
+                    extra={"session_id": session_id},
+                )
+                await websocket.close(
+                    code=status.WS_1008_POLICY_VIOLATION,
+                    reason="Session ownership could not be verified.",
+                )
+                return
 
     await manager.connect_customer(websocket, session_id)
 
@@ -201,8 +257,6 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }, session_id)
 
-    import time
-    msg_timestamps = []
     rate_limit_window = 60
     rate_limit_max = settings.ws_message_rate_limit
 
@@ -215,18 +269,23 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 logger.warning(f"WebSocket {session_id} receive_text failed (likely disconnected already).")
                 break
 
-            now = time.time()
-            # Sliding window in-memory rate limiting
-            # #review: Rate limit state is per-socket connection; reconnecting creates a new loop and resets the limit.
-            # Using Redis-backed sliding window prevents rate limit bypass via reconnection.
-            msg_timestamps = [t for t in msg_timestamps if now - t < rate_limit_window]
-            if len(msg_timestamps) >= rate_limit_max:
+            # Limit by authenticated customer identity, not socket/session ID, so
+            # reconnecting or opening another tab cannot reset the message budget.
+            from app.websocket.rate_limiter import consume_customer_message
+            rate_limit_identity = (
+                f"customer:{customer_id}" if customer_id is not None else f"session:{session_id}"
+            )
+            allowed = await consume_customer_message(
+                rate_limit_identity,
+                limit=rate_limit_max,
+                window_seconds=rate_limit_window,
+            )
+            if not allowed:
                 await websocket.send_text(json.dumps({
                     "type": "error",
                     "message": "Rate limit exceeded. Please wait a moment before sending more messages."
                 }))
                 continue
-            msg_timestamps.append(now)
 
             try:
                 data = json.loads(raw)

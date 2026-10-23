@@ -60,7 +60,6 @@ class TestDuplicatePrevention:
     def test_active_ticket_matching_domain_and_intent_is_updated(self):
         decision = Guardian.decide(GuardianInput(
             domain="product", intent="warranty_claim",
-            safety_or_legal_issue=True,  # safety should be overridden by existing ticket
             recent_cases=[SupportCase(id=786, status="open", domain="product", intent="warranty_claim")],
         ))
         assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET
@@ -101,8 +100,20 @@ class TestDuplicatePrevention:
         ))
         assert decision.action is GuardianAction.CREATE_TICKET
 
-    def test_multiple_active_tickets_uses_newest(self):
-        """Repository returns newest first; Guardian should select the first match."""
+    def test_multiple_tickets_uses_newest_active(self):
+        """Repository returns newest first; Guardian should select the first active match."""
+        decision = Guardian.decide(GuardianInput(
+            domain="product", intent="technical_support",
+            recent_cases=[
+                SupportCase(id=500, status="open", domain="product", intent="technical_support"),
+                SupportCase(id=400, status="closed", domain="product", intent="technical_support"),
+            ],
+        ))
+        assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET
+        assert decision.ticket_id == 500  # newest first
+
+    def test_multiple_active_tickets_escalates_and_links_newest(self):
+        """Multiple active tickets trigger human review while referencing the newest match."""
         decision = Guardian.decide(GuardianInput(
             domain="product", intent="technical_support",
             recent_cases=[
@@ -110,8 +121,8 @@ class TestDuplicatePrevention:
                 SupportCase(id=400, status="in_progress", domain="product", intent="technical_support"),
             ],
         ))
-        assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET
-        assert decision.ticket_id == 500  # newest first
+        assert decision.action is GuardianAction.ESCALATE
+        assert decision.ticket_id == 500
 
     def test_all_active_statuses_are_recognized(self):
         for status in ("open", "in_progress", "pending_customer", "escalated"):
@@ -134,14 +145,14 @@ class TestSafetyLegal:
         ))
         assert decision.action is GuardianAction.ESCALATE
 
-    def test_safety_issue_updates_active_ticket_before_escalating(self):
-        """Duplicate prevention takes priority even over safety."""
+    def test_safety_issue_escalates_and_attaches_active_ticket(self):
+        """Safety issues require immediate human escalation even when active ticket exists."""
         decision = Guardian.decide(GuardianInput(
             domain="product", intent="product_issue",
             safety_or_legal_issue=True,
             recent_cases=[SupportCase(id=999, status="open", domain="product", intent="product_issue")],
         ))
-        assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET
+        assert decision.action is GuardianAction.ESCALATE
         assert decision.ticket_id == 999
 
     def test_legal_issue_escalates(self):
@@ -178,14 +189,14 @@ class TestRepeatedAttempts:
         ))
         assert decision.action is GuardianAction.RESOLVE
 
-    def test_repeated_attempts_with_active_ticket_updates_instead(self):
-        """Even with >=3 attempts, an existing ticket should be updated, not duplicated."""
+    def test_repeated_attempts_with_active_ticket_escalates(self):
+        """With >=3 attempts, escalate to human review while attaching the active ticket."""
         decision = Guardian.decide(GuardianInput(
             domain="product", intent="technical_support",
             unresolved_attempts=3,
             recent_cases=[SupportCase(id=42, status="open", domain="product", intent="technical_support")],
         ))
-        assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET
+        assert decision.action is GuardianAction.ESCALATE
         assert decision.ticket_id == 42
 
 
@@ -220,8 +231,8 @@ class TestHumanRequest:
             customer_requests_human=True,
             domain_can_resolve=False,
         ))
-        # Not requires_human and not safety → falls through to RESOLVE
-        assert decision.action is GuardianAction.RESOLVE
+        # Single human request without repeated flag returns CONTINUE to clarify
+        assert decision.action is GuardianAction.CONTINUE
 
     def test_requires_human_without_customer_request_creates_ticket(self):
         """Domain agent signals it needs human help, even without customer asking."""
@@ -272,7 +283,7 @@ class TestTicketHistoryEdgeCases:
             requires_human=True,
             recent_cases=[
                 SupportCase(id=1, status="open", domain="order", intent="tracking"),
-                SupportCase(id=2, status="open", domain="product", intent="warranty"),
+                SupportCase(id=2, status="closed", domain="product", intent="warranty"),
             ],
         ))
         assert decision.action is GuardianAction.CREATE_TICKET
@@ -316,8 +327,8 @@ class TestTicketHistoryEdgeCases:
 # ──────────────────────────────────────────────
 
 class TestPriorityOrdering:
-    def test_active_ticket_takes_priority_over_safety_escalation(self):
-        """Duplicate prevention is the highest priority."""
+    def test_safety_escalation_takes_priority_over_existing_ticket(self):
+        """Safety issues take priority, escalating to human review while attaching the active ticket."""
         decision = Guardian.decide(GuardianInput(
             domain="product", intent="safety_concern",
             safety_or_legal_issue=True,
@@ -325,7 +336,8 @@ class TestPriorityOrdering:
             requires_human=True,
             recent_cases=[SupportCase(id=999, status="open", domain="product", intent="safety_concern")],
         ))
-        assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET
+        assert decision.action is GuardianAction.ESCALATE
+        assert decision.ticket_id == 999
 
     def test_safety_takes_priority_over_repeated_attempts_when_no_ticket(self):
         decision = Guardian.decide(GuardianInput(

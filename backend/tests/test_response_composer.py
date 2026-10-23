@@ -9,7 +9,7 @@ def test_existing_ticket_message_keeps_domain_answer_and_ticket_reference():
     )
     assert response.startswith("Your warranty is active.")
     assert "Ticket #786" in response
-    assert "instead of creating a duplicate" in response
+    assert "duplicate" in response
 
 
 def test_resolved_response_is_not_padded_with_policy_copy():

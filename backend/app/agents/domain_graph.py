@@ -193,6 +193,20 @@ def _requests_human(message: str) -> bool:
     return bool(re.search(r"\b(human|manager|representative|real person|agent)\b", message, re.IGNORECASE))
 
 
+def _previously_requested_human(history: list[dict[str, Any]], current_message: str) -> bool:
+    """Return whether the customer asked for a human on a prior turn."""
+    current = current_message.strip().casefold()
+    for item in history[-10:]:
+        if item.get("role") not in {"customer", "user"}:
+            continue
+        content = str(item.get("content", "")).strip()
+        if not content or content.casefold() == current:
+            continue
+        if _requests_human(content):
+            return True
+    return False
+
+
 def _safety_or_legal_issue(message: str) -> bool:
     return bool(re.search(r"\b(safety|unsafe|injury|legal|lawyer|police)\b", message, re.IGNORECASE))
 
@@ -261,42 +275,69 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         new_workflow = {}
 
     domain = state.get("semantic_domain", "general")
-    prior_attempts = int(new_workflow.get("unresolved_attempts", 0))
-    cannot_resolve = (
-        bool(state.get("requires_human"))
-        or state.get("response") is None
-        or domain == "escalation"
+    prior_attempts = max(0, int(new_workflow.get("unresolved_attempts", 0)))
+    recent_cases, ticket_history_lookup_failed = _recent_cases(state.get("customer_id"))
+    customer_requests_human = _requests_human(state["message"])
+    previously_requested_human = _previously_requested_human(
+        state.get("conversation_history", []), state["message"],
     )
-    # A turn that cannot resolve increments the consecutive unresolved count
-    effective_attempts = prior_attempts + 1 if cannot_resolve else prior_attempts
-
-    cases, history_lookup_failed = _recent_cases(state.get("customer_id"))
+    one_off_human_request = (
+        customer_requests_human
+        and not previously_requested_human
+        and not _safety_or_legal_issue(state["message"])
+        and state.get("urgency", "low").lower() not in {"high", "critical"}
+        and (domain == "escalation" or state.get("supervisor_action") == SupervisorAction.ESCALATE.value)
+    )
+    domain_failed = bool(state.get("requires_human")) or (
+        state.get("response") is None
+        and not one_off_human_request
+        and state.get("supervisor_action") != SupervisorAction.ESCALATE.value
+    )
+    attempts_for_decision = prior_attempts + int(domain_failed)
     decision = Guardian.decide(GuardianInput(
         domain=domain,
         intent=state.get("intent", ""),
-        customer_requests_human=_requests_human(state["message"]),
-        # A failed skill is not safe to silently retry as an automated answer.
-        requires_human=cannot_resolve,
+        customer_requests_human=customer_requests_human,
+        # A failed domain skill requires handoff, but a one-off human keyword
+        # routed to Guardian is not itself proof that automation has failed.
+        requires_human=domain_failed,
         safety_or_legal_issue=_safety_or_legal_issue(state["message"]),
         domain_can_resolve=state.get("response") is not None,
-        unresolved_attempts=effective_attempts,
-        recent_cases=cases,
-        history_lookup_failed=history_lookup_failed,
+        unresolved_attempts=attempts_for_decision,
+        recent_cases=recent_cases,
+        history_lookup_failed=ticket_history_lookup_failed,
+        sentiment=state.get("sentiment", "neutral"),
+        urgency=state.get("urgency", "low"),
+        customer_repeats_human_request=previously_requested_human,
     ))
+    if ticket_history_lookup_failed and decision.action in {
+        GuardianAction.CREATE_TICKET, GuardianAction.UPDATE_EXISTING_TICKET,
+    }:
+        # Route to human review without mutating ticket state on incomplete history.
+        decision = GuardianDecision(
+            action=GuardianAction.ESCALATE,
+            reason=(
+                "Ticket history could not be verified; hand off for human review "
+                "without creating a potentially duplicate ticket."
+            ),
+        )
     ticket_id, mutation_error = await _apply_guardian_ticket_decision(
-        {**state, "history_lookup_failed": history_lookup_failed}, decision
+        {**state, "history_lookup_failed": ticket_history_lookup_failed}, decision
     )
     response = state.get("response") or "I need additional help with this request."
     if mutation_error:
         response += " I couldn’t register the support request just now. Please try again."
+    elif decision.action is GuardianAction.CONTINUE and state.get("response") is None:
+        response = "I can try to help with the issue here first. What would you like me to look into?"
     else:
         response = compose_response(response, decision)
 
-    if decision.action == GuardianAction.RESOLVE:
-        new_workflow["unresolved_attempts"] = 0
+    if decision.action in {GuardianAction.RESOLVE, GuardianAction.CONTINUE}:
+        next_unresolved_attempts = 0 if state.get("response") is not None else prior_attempts
     else:
-        new_workflow["unresolved_attempts"] = effective_attempts
+        next_unresolved_attempts = attempts_for_decision if domain_failed else prior_attempts
 
+    new_workflow["unresolved_attempts"] = min(next_unresolved_attempts, 100)
     new_workflow["turn_count"] = int(new_workflow.get("turn_count", 0)) + 1
     new_workflow["updated_at"] = datetime.now(timezone.utc).isoformat()
     if decision.action == GuardianAction.ESCALATE:
@@ -317,9 +358,6 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         "resumed_domain": state.get("resumed_domain"),
         "suspended_domain": state.get("suspended_domain"),
         "workflow_state": new_workflow,
-        # CREATE_TICKET has no automated resolution path in this slice, so it
-        # enters the existing durable human-handoff flow rather than claiming a
-        # ticket was created before the transaction succeeds.
         "escalated": decision.action in {GuardianAction.ESCALATE, GuardianAction.CREATE_TICKET},
     }
 

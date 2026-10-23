@@ -47,6 +47,28 @@ if not conn_string:
     )
 
 @pytest.fixture(autouse=True)
+def mock_conversation_ownership_lookup(monkeypatch):
+    class EmptyConversationQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            from types import SimpleNamespace
+            return SimpleNamespace(data=[])
+
+    original_table = supabase.table
+    def table(name):
+        if name == "conversations":
+            return EmptyConversationQuery()
+        return original_table(name)
+
+    monkeypatch.setattr(supabase, "table", table)
+
+
+@pytest.fixture(autouse=True)
 def clean_db():
     conn = psycopg2.connect(conn_string)
     conn.autocommit = True

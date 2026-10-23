@@ -43,6 +43,9 @@ class GuardianInput(BaseModel):
     unresolved_attempts: int = Field(default=0, ge=0)
     recent_cases: list[SupportCase] = Field(default_factory=list)
     history_lookup_failed: bool = False
+    sentiment: str = "neutral"
+    urgency: str = "low"
+    customer_repeats_human_request: bool = False
 
 
 class GuardianDecision(BaseModel):
@@ -70,23 +73,52 @@ class Guardian:
     @classmethod
     def decide(cls, facts: GuardianInput) -> GuardianDecision:
         existing = cls._matching_active_case(facts)
-        if existing:
-            return GuardianDecision(
-                action=GuardianAction.UPDATE_EXISTING_TICKET,
-                ticket_id=existing.id,
-                reason="An active ticket already covers this domain and intent; do not create a duplicate.",
-            )
+        active_recent_cases = [case for case in facts.recent_cases if case.is_active]
 
+        # Safety/legal and severe distress always outrank duplicate prevention.
         if facts.safety_or_legal_issue:
             return GuardianDecision(
                 action=GuardianAction.ESCALATE,
+                ticket_id=existing.id if existing else None,
                 reason="Safety or legal issues require immediate human escalation.",
+            )
+
+        if (
+            facts.urgency.lower() == "critical"
+            or (facts.sentiment.lower() == "negative" and facts.urgency.lower() == "high")
+        ):
+            return GuardianDecision(
+                action=GuardianAction.ESCALATE,
+                ticket_id=existing.id if existing else None,
+                reason="High-severity or critical customer concerns require human escalation.",
             )
 
         if facts.unresolved_attempts >= 3:
             return GuardianDecision(
                 action=GuardianAction.ESCALATE,
+                ticket_id=existing.id if existing else None,
                 reason="Three or more unresolved attempts require human escalation.",
+            )
+
+        if len(active_recent_cases) >= 2:
+            return GuardianDecision(
+                action=GuardianAction.ESCALATE,
+                ticket_id=existing.id if existing else None,
+                reason="Multiple active recent support tickets require human review.",
+            )
+
+        if facts.customer_requests_human and facts.customer_repeats_human_request:
+            return GuardianDecision(
+                action=GuardianAction.ESCALATE,
+                ticket_id=existing.id if existing else None,
+                reason="The customer repeated a request for human assistance.",
+            )
+
+        if existing:
+            return GuardianDecision(
+                action=GuardianAction.UPDATE_EXISTING_TICKET,
+                ticket_id=existing.id,
+                reason="An active ticket already covers this domain and intent; do not create a duplicate.",
             )
 
         if facts.requires_human:
@@ -100,10 +132,13 @@ class Guardian:
                 reason="The request needs human intervention and no matching active ticket exists.",
             )
 
-        if facts.customer_requests_human and facts.domain_can_resolve:
+        if facts.customer_requests_human:
             return GuardianDecision(
                 action=GuardianAction.CONTINUE,
-                reason="The domain agent can complete this authorized request before a handoff is needed.",
+                reason=(
+                    "A single human-assistance request is not an escalation trigger by itself; "
+                    "continue triage or ask a clarifying question."
+                ),
             )
 
         if facts.customer_requests_human and facts.history_lookup_failed:

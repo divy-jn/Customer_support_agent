@@ -420,7 +420,8 @@ class WorkflowState(BaseModel):
 
     # ─── Shared Lifecycle ───
     turn_count: int = 0
-    unresolved_attempts: int = Field(default=0, ge=0)
+    # Consecutive unresolved/problem turns; distinct from total conversation turns.
+    unresolved_attempts: int = Field(default=0, ge=0, le=100)
     updated_at: datetime | None = None
 
     @classmethod

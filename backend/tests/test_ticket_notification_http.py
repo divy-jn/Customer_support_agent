@@ -73,8 +73,13 @@ class TestTicketNotificationHTTP:
     @pytest.mark.requires_postgres
     def test_update_ticket_http_resolution(self):
         from tests.test_ticket_notification_transaction import get_outbox_events_for_source
+        from types import SimpleNamespace
         from unittest.mock import patch
-        with patch('app.tools.supabase.rpc', side_effect=mock_supabase_rpc_to_real_db):
+        with patch('app.tools.supabase.rpc', side_effect=mock_supabase_rpc_to_real_db), \
+             patch('app.tools.supabase.table') as mock_table:
+            mock_table.return_value.select.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+                data=[{"description": "To be closed"}]
+            )
             
             # Setup: Create a ticket first in DB so we can resolve it
             req_id = str(uuid.uuid4())

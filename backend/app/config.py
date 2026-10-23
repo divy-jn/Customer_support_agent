@@ -4,14 +4,18 @@ Application configuration loaded from environment variables.
 import os
 import re
 from pydantic_settings import BaseSettings
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pathlib import Path
+from urllib.parse import quote
 
 # backend/ directory — root for resolving relative paths like knowledge_base
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
+    # Explicitly distinguishes development from non-debug hosted environments.
+    app_environment: str = Field(default="development", alias="APP_ENVIRONMENT")
+
     # --- Database (Supabase) ---
     supabase_url: str = Field(..., alias="SUPABASE_URL")       # required, validated below
     supabase_key: str = Field(..., alias="SUPABASE_KEY")       # required, min 10 chars
@@ -114,16 +118,20 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         """Async PostgreSQL connection string for SQLAlchemy (asyncpg)."""
+        if not self.database_password:
+            raise ValueError("DATABASE_PASSWORD is required for direct PostgreSQL connections; SUPABASE_KEY is not a database password")
         host = f"db.{self._supabase_host}.supabase.co"
-        pw = self.database_password or self.supabase_key  #review: using API key as DB password is risky
-        return f"postgresql+asyncpg://postgres:{pw}@{host}:5432/postgres"
+        password = quote(self.database_password, safe="")
+        return f"postgresql+asyncpg://postgres:{password}@{host}:5432/postgres"
 
     @property
     def database_url_sync(self) -> str:
         """Sync PostgreSQL connection string for SQLAlchemy (psycopg2)."""
+        if not self.database_password:
+            raise ValueError("DATABASE_PASSWORD is required for direct PostgreSQL connections; SUPABASE_KEY is not a database password")
         host = f"db.{self._supabase_host}.supabase.co"
-        pw = self.database_password or self.supabase_key
-        return f"postgresql+psycopg2://postgres:{pw}@{host}:5432/postgres"
+        password = quote(self.database_password, safe="")
+        return f"postgresql+psycopg2://postgres:{password}@{host}:5432/postgres"
 
     @field_validator("supabase_url")
     @classmethod
@@ -169,12 +177,58 @@ class Settings(BaseSettings):
             raise ValueError(f"OUTBOX_WORKER_MODE must be one of {sorted(valid)}")
         return normalized
 
+    @field_validator("app_environment")
+    @classmethod
+    def normalize_app_environment(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        valid = {"development", "test", "staging", "production"}
+        if normalized not in valid:
+            raise ValueError(f"APP_ENVIRONMENT must be one of {sorted(valid)}")
+        return normalized
+
     @field_validator("jwt_secret")
     @classmethod
-    def validate_jwt_secret(cls, v, info):
-        if not v:
-            return "dev-secret-key"  #review: insecure fallback — should enforce in production
-        return v
+    def normalize_jwt_secret(cls, v: str) -> str:
+        return v.strip() if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def validate_auth_security_settings(self) -> "Settings":
+        """Allow an explicit development key only in debug mode; require a strong key otherwise."""
+        if self.app_environment in {"staging", "production"} and self.debug_mode:
+            raise ValueError("DEBUG_MODE must be false when APP_ENVIRONMENT is staging or production")
+
+        if self.app_environment == "production" and not self.database_password:
+            raise ValueError("DATABASE_PASSWORD must be configured when APP_ENVIRONMENT=production")
+
+        if not self.jwt_secret:
+            if self.debug_mode:
+                self.jwt_secret = "dev-secret-key"
+            else:
+                raise ValueError("JWT_SECRET must be set unless DEBUG_MODE=true")
+
+        if not self.debug_mode:
+            if len(self.jwt_secret) < 32:
+                raise ValueError("JWT_SECRET must be at least 32 characters outside DEBUG_MODE")
+            lowered_secret = self.jwt_secret.lower()
+            if lowered_secret in {"dev-secret-key", "your-secure-jwt-secret-key-change-me"} or "change-me" in lowered_secret:
+                raise ValueError("JWT_SECRET must not use a known development/example placeholder")
+
+            # Static bearer-style secrets are optional when agents use JWTs, but
+            # any configured value must not be a guessable demo credential.
+            for name, secret in (
+                ("AGENT_SECRET", self.agent_secret),
+                ("ADMIN_API_KEY", self.admin_api_key),
+            ):
+                if secret and (
+                    len(secret) < 32
+                    or secret.lower() in {"test-agent-secret", "admin", "changeme"}
+                    or "replace-with" in secret.lower()
+                    or "change-me" in secret.lower()
+                ):
+                    raise ValueError(
+                        f"{name} must be at least 32 characters and must not use a demo/example value outside DEBUG_MODE"
+                    )
+        return self
 
     model_config = {
         "env_file": str(_BACKEND_ROOT / ".env"),

@@ -29,6 +29,14 @@ from app.dependencies import verify_agent_ws_token
 #  Logging
 # ──────────────────────────────────────────────
 setup_logger(log_level=settings.log_level)
+
+# Query-string authentication is retained for browser WebSockets, so prevent
+# bearer tokens and static credentials from leaking into access/error logs.
+from app.logging_security import QuerySecretRedactionFilter
+_query_secret_filter = QuerySecretRedactionFilter()
+for _logger_name in ("uvicorn.access", "uvicorn.error", "customer_support", "tracking"):
+    logging.getLogger(_logger_name).addFilter(_query_secret_filter)
+
 logger = logging.getLogger("customer_support")
 
 

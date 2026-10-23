@@ -45,6 +45,7 @@ ragas>=0.2.0
 datasets>=3.0.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
+pytest-mock>=3.14.0
 
 # === Google APIs ===
 google-api-python-client

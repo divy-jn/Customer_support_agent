@@ -290,13 +290,14 @@ async def test_product_agent_extraction():
 async def test_chat_handler_session_persistence(mock_get_session_state):
     from app.models import EscalationLifecycleStatus
     mock_get_session_state.return_value = EscalationLifecycleStatus.NONE
-    # Mock WebSocket
+    # Mock WebSocket with the same request envelope used by the frontend.
+    import uuid
     mock_ws = AsyncMock(spec=WebSocket)
-    # Give it exactly two messages to simulate two turns
-    # Turn 1: Product issue. Turn 2: Order ID follow-up
+    # Give it exactly two messages to simulate two turns.
+    # Turn 1: Product issue. Turn 2: Order ID follow-up.
     mock_ws.receive_text.side_effect = [
-        json.dumps({"message": "My SuperPhone broke", "client_request_id": "req-turn-1"}),
-        json.dumps({"message": "It is order 123", "client_request_id": "req-turn-2"}),
+        json.dumps({"message": "My SuperPhone broke", "client_request_id": str(uuid.uuid4())}),
+        json.dumps({"message": "It is order 123", "client_request_id": str(uuid.uuid4())}),
         Exception("disconnect"),
     ]
     
@@ -320,7 +321,6 @@ async def test_chat_handler_session_persistence(mock_get_session_state):
             mock_llm.side_effect = mock_invoke
             
             # Run the handler
-            import uuid
             session_id = f"test_sess_pers_{uuid.uuid4().hex}"
             
             # Seed the session with a customer_id so TicketLifecycleService creates a ticket

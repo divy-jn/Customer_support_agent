@@ -64,7 +64,8 @@ async def test_guardian_updates_existing_ticket_instead_of_creating_duplicate(mo
     mock_update.return_value = '{"status": "success"}'
     result = await guardian_response_node({
         "message": "I need a manager about the warranty", "response": "Your warranty is active.",
-        "semantic_domain": "product", "intent": "product_warranty", "customer_id": 7, "client_request_id": "request-1", "workflow_state": {"turn_count": 1},
+        "semantic_domain": "product", "intent": "product_warranty", "customer_id": 7,
+        "client_request_id": "request-1", "workflow_state": {"turn_count": 1},
     })
 
     assert result["guardian_action"] == "update_existing_ticket"
@@ -141,5 +142,144 @@ async def test_guardian_handles_history_lookup_failure_safely_without_duplicate_
     assert result["guardian_action"] == "escalate"
     assert result["escalated"] is True
     assert result["guardian_ticket_id"] is None
-    assert "escalating this to a human support specialist" in result["response"]
+    assert "history could not be verified" in result["guardian_reason"].lower()
     mock_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("app.agents.domain_graph.create_ticket")
+@patch("app.agents.domain_graph.find_customer_support_cases")
+async def test_guardian_escalates_without_mutation_when_ticket_history_is_unavailable(
+    mock_cases, mock_create,
+):
+    mock_cases.return_value = '{"error": "database unavailable"}'
+    result = await guardian_response_node({
+        "message": "The device still does not turn on after troubleshooting.",
+        "response": None,
+        "semantic_domain": "product",
+        "intent": "product_warranty",
+        "customer_id": 7,
+        "client_request_id": "history-outage-request",
+        "workflow_state": {"turn_count": 1},
+    })
+
+    assert result["guardian_action"] == "escalate"
+    assert result["escalated"] is True
+    assert "history could not be verified" in result["guardian_reason"].lower()
+    mock_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("app.agents.domain_graph.create_ticket")
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+async def test_one_off_human_keyword_does_not_trigger_handoff_by_itself(mock_cases, mock_create):
+    result = await guardian_response_node({
+        "message": "I want to speak to a human",
+        "response": None,
+        "semantic_domain": "escalation",
+        "intent": "human_handoff",
+        "sentiment": "neutral",
+        "urgency": "medium",
+        "supervisor_action": "escalate",
+        "customer_id": 7,
+        "conversation_history": [],
+        "workflow_state": {"turn_count": 1},
+    })
+
+    assert result["guardian_action"] == "continue"
+    assert result["escalated"] is False
+    assert "What would you like me to look into?" in result["response"]
+    mock_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+async def test_turn_count_alone_never_triggers_unresolved_attempt_escalation(mock_cases):
+    result = await guardian_response_node({
+        "message": "Can you confirm the order is on its way?",
+        "response": "Your order is in transit.",
+        "semantic_domain": "order",
+        "intent": "tracking",
+        "customer_id": 7,
+        "workflow_state": {
+            "session_id": "many-successful-turns",
+            "turn_count": 12,
+            "unresolved_attempts": 0,
+        },
+    })
+
+    assert result["guardian_action"] == "resolve"
+    assert result["escalated"] is False
+    assert result["workflow_state"]["unresolved_attempts"] == 0
+
+
+@pytest.mark.asyncio
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+async def test_third_actual_unresolved_attempt_triggers_escalation_and_persists_count(mock_cases):
+    result = await guardian_response_node({
+        "message": "The device still does not turn on.",
+        "response": None,
+        "semantic_domain": "product",
+        "intent": "technical_support",
+        "sentiment": "negative",
+        "urgency": "medium",
+        "customer_id": 7,
+        "client_request_id": "unresolved-third-attempt",
+        "workflow_state": {
+            "session_id": "repeated-failure-session",
+            "turn_count": 8,
+            "unresolved_attempts": 2,
+        },
+    })
+
+    assert result["guardian_action"] == "escalate"
+    assert result["escalated"] is True
+    assert result["workflow_state"]["unresolved_attempts"] == 3
+
+
+@pytest.mark.asyncio
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+async def test_guardian_preserves_order_cancellation_approval_request(mock_cases):
+    pending = {
+        "action": "cancel_order",
+        "params": {"order_id": 123},
+        "message": "I’d like to cancel order #123. Shall I go ahead?",
+        "customer_id": 7,
+        "session_id": "approval-session",
+    }
+    result = await guardian_response_node({
+        "message": "Cancel order 123",
+        "response": pending["message"],
+        "semantic_domain": "order",
+        "intent": "order_cancellation",
+        "customer_id": 7,
+        "client_request_id": "approval-request-123",
+        "pending_approval": pending,
+        "workflow_state": {
+            "session_id": "approval-session",
+            "customer_id": 7,
+            "turn_count": 1,
+            "unresolved_attempts": 0,
+        },
+    })
+
+    assert result["pending_approval"] == pending
+    assert result["guardian_action"] == "resolve"
+    assert result["escalated"] is False
+
+
+@pytest.mark.asyncio
+@patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
+async def test_semantic_supervisor_reports_actual_rollout_mode(mock_classify, monkeypatch):
+    monkeypatch.setattr(settings, "agent_architecture_mode", "v2_all")
+    mock_classify.return_value = _semantic("general", "faq")
+
+    result = await semantic_supervisor_node({
+        "message": "What is your return policy?",
+        "conversation_history": [],
+        "session_id": "mode-test-session",
+        "customer_id": 7,
+        "workflow_state": {"session_id": "mode-test-session", "customer_id": 7},
+    })
+
+    assert result["architecture_mode"] == "v2_all"

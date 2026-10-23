@@ -14,6 +14,20 @@ jobs:
   backend:
     name: Backend unit and architecture checks
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -22,9 +36,10 @@ jobs:
       # settings validation; live credentials are never used in this job.
       SUPABASE_URL: https://ci-placeholder.supabase.co
       SUPABASE_KEY: ci-placeholder-key-123456
-      JWT_SECRET: ci-only-not-a-production-secret
-      AGENT_SECRET: ci-agent-secret
+      JWT_SECRET: ci-only-not-a-production-secret-that-is-long-enough-for-unit-tests
+      AGENT_SECRET: ci-agent-secret-for-unit-tests-only-long-enough
       DEBUG_MODE: "false"
+      TEST_DB_PASSWORD: postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,6 +49,55 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Initialize PostgreSQL integration-test schema
+        run: |
+          python - <<'PY'
+          import psycopg2
+
+          dsn = "dbname=postgres user=postgres host=localhost port=5433 password=postgres"
+          with psycopg2.connect(dsn) as conn:
+              conn.autocommit = True
+              with conn.cursor() as cur:
+                  from psycopg2 import sql
+
+                  for role in ("anon", "authenticated", "service_role"):
+                      cur.execute("SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = %s", (role,))
+                      if cur.fetchone() is None:
+                          cur.execute(sql.SQL("CREATE ROLE {}").format(sql.Identifier(role)))
+                  with open("scripts/schema.sql", encoding="utf-8") as schema_file:
+                      cur.execute(schema_file.read())
+                  # Minimal deterministic records for PostgreSQL integration tests.
+                  # This is an ephemeral CI database, not application/customer data.
+                  cur.execute("""
+                      INSERT INTO public.customers (id, name, email)
+                      VALUES
+                          (1, 'CI Customer One', 'ci-customer-one@example.test'),
+                          (2, 'CI Customer Two', 'ci-customer-two@example.test')
+                      ON CONFLICT (id) DO NOTHING
+                  """)
+                  cur.execute("""
+                      INSERT INTO public.products (id, name, category, price, stock, description)
+                      VALUES (1, 'CI Test Product', 'general', 100.00, 10, 'Fixture product')
+                      ON CONFLICT (id) DO NOTHING
+                  """)
+                  cur.execute("""
+                      INSERT INTO public.orders (id, customer_id, product_id, status, tracking_number)
+                      VALUES (1, 1, 1, 'active', 'CI-TRACKING-001')
+                      ON CONFLICT (id) DO NOTHING
+                  """)
+                  cur.execute("""
+                      INSERT INTO public.payment_records
+                          (order_id, customer_id, transaction_reference, status, amount, currency, payment_method)
+                      VALUES (1, 1, 'CI-TRANSACTION-001', 'captured', 100.00, 'INR', 'UPI')
+                      ON CONFLICT (order_id) DO NOTHING
+                  """)
+                  for table in ("customers", "products", "orders"):
+                      cur.execute(
+                          f"SELECT setval(pg_get_serial_sequence('public.{table}', 'id'), "
+                          f"(SELECT GREATEST(COALESCE(MAX(id), 1), 1) FROM public.{table}), true)"
+                      )
+          print("PostgreSQL integration-test schema initialized.")
+          PY
       - name: Compile application and tests
         run: python -m compileall app tests -q
       - name: Run deterministic tests
