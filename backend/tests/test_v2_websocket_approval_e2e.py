@@ -42,6 +42,18 @@ TEST_SIGNING_SECRET = "test-approval-signing-secret-key-for-hmac-32chars"
 @pytest.fixture(autouse=True)
 def setup_test_environment(monkeypatch):
     """Configure in-memory session store and secrets for test isolation."""
+    class EmptyConversationQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            from types import SimpleNamespace
+            return SimpleNamespace(data=[])
+
+    monkeypatch.setattr("app.tools.supabase.table", lambda _name: EmptyConversationQuery())
     monkeypatch.setattr("app.persistence.session.redis_client", None)
     monkeypatch.setattr("app.persistence.escalation.ensure_durable_escalation_state", lambda _s, _c: EscalationLifecycleStatus.NONE)
     monkeypatch.setattr(settings, "jwt_secret", TEST_JWT_SECRET)
