@@ -60,6 +60,11 @@ from app.websocket.chat_handler import handle_customer_ws, manager
 def in_memory_session_store(monkeypatch):
     """Ensure tests run against in-memory session store rather than external network."""
     monkeypatch.setattr("app.persistence.session.redis_client", None)
+    from app.models import EscalationLifecycleStatus
+    monkeypatch.setattr(
+        "app.persistence.escalation.ensure_durable_escalation_state",
+        lambda _s, _c: EscalationLifecycleStatus.NONE,
+    )
     session_store.clear()
 
 
