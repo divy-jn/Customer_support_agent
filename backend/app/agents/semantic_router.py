@@ -47,6 +47,9 @@ def get_semantic_router_llm():
 def parse_and_validate_semantic_output(raw_text: str, latency_ms: int) -> SemanticRouteResult:
     """Parses LLM output, enforcing the SemanticRouteResult schema and capturing failures."""
     text = raw_text.strip()
+    # Strip markdown fences if present at boundary
+    # #review: If LLM produces conversational pre-text before ```json, startswith check will fail.
+    # A regex search for the JSON block is more resilient against conversational LLM output.
     if text.startswith("```json"):
         text = text[7:]
     elif text.startswith("```"):
@@ -137,6 +140,7 @@ async def classify_semantic_intent(message: str, conversation_history: list[dict
     """
     llm = get_semantic_router_llm()
 
+    # Pass recent 6 turns for conversational disambiguation
     context = ""
     if conversation_history:
         recent = conversation_history[-6:]
@@ -168,10 +172,12 @@ Classify this message and respond with a JSON object."""
         error_type = type(e).__name__
         
         # Categorize the exception based on common error names
+        # #review: Vertex AI / Google GenAI exceptions (e.g. ResourceExhausted, GoogleAPICallError)
+        # default to INTERNAL_ERROR instead of RATE_LIMIT_ERROR / TRANSPORT_ERROR.
         failure_type = RouterFailureType.INTERNAL_ERROR
-        if error_type in ("OpenAIAuthenticationError", "AuthenticationError", "PermissionDeniedError"):
+        if error_type in ("OpenAIAuthenticationError", "AuthenticationError", "PermissionDeniedError", "PermissionDenied"):
             failure_type = RouterFailureType.AUTHENTICATION_ERROR
-        elif error_type in ("RateLimitError",):
+        elif error_type in ("RateLimitError", "ResourceExhausted"):
             failure_type = RouterFailureType.RATE_LIMIT_ERROR
         elif error_type in ("APITimeoutError", "ReadTimeout", "Timeout", "TimeoutError"):
             failure_type = RouterFailureType.TIMEOUT_ERROR

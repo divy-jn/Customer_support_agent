@@ -41,7 +41,9 @@ def web_search(query: str, num_results: int = 5) -> str:
     num_results = min(num_results, 10)
 
     try:
-        # Use DuckDuckGo Instant Answer API (free, no API key required)
+        # #review: DuckDuckGo Instant Answer API only returns structured wikipedia-like zero-click summaries.
+        # It frequently returns empty for specific product troubleshooting, e-commerce, or recent queries.
+        # A full search API (like Tavily, Serper, or Google Programmable Search) provides broader coverage.
         encoded_query = urllib.parse.quote(query)
         url = f"https://api.duckduckgo.com/?q={encoded_query}&format=json&no_html=1&skip_disambig=1"
 

@@ -55,10 +55,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Callable
 
 import psycopg2
 import psycopg2.extras
@@ -68,13 +69,44 @@ from app.outbox.sender import EmailSender, SendOutcome, SendResult
 logger = logging.getLogger("outbox.worker")
 
 
+def sanitize_error_message(msg: Optional[str], max_length: int = 500) -> str:
+    """Sanitize error messages to scrub secrets, credentials, tokens, and cap length."""
+    if not msg:
+        return "unknown"
+    cleaned = str(msg)
+    # Scrub connection strings: postgresql://user:password@host:port/db
+    cleaned = re.sub(r"://([^:]+):([^@]+)@", r"://\1:[REDACTED]@", cleaned)
+    # Scrub bearer tokens
+    cleaned = re.sub(r"Bearer\s+[A-Za-z0-9\-\._~\+\/]+=*", "Bearer [REDACTED]", cleaned, flags=re.IGNORECASE)
+    # Scrub key-value secrets (password: xyz, apiKey: xyz, secret=xyz, token: xyz)
+    cleaned = re.sub(
+        r"(\b(?:password|passwd|secret|token|api[_-]?key|authorization)\b\s*[:=]\s*['\"]?)([^'\";\s,]+)(['\"]?)",
+        r"\1[REDACTED]\3",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned[:max_length]
+
+
+def emit_outbox_telemetry(event_name: str, payload: dict) -> None:
+    """Emit sanitized operational telemetry for outbox worker events."""
+    sanitized_payload = {
+        k: v for k, v in payload.items()
+        if k not in ("payload", "password", "secret", "token", "access_token", "html_body")
+    }
+    logger.info(
+        f"outbox_metric:{event_name}",
+        extra={"telemetry_event": event_name, **sanitized_payload},
+    )
+
+
 # ──────────────────────────────────────────────
 #  Retry Policy
 # ──────────────────────────────────────────────
 
 class RetryPolicy:
     """
-    Deterministic retry configuration.
+    Deterministic retry configuration with injectable clock.
 
     Backoff formula:
         delay = min(base_delay_seconds * (2 ** (attempt - 1)), max_backoff_seconds)
@@ -100,10 +132,12 @@ class RetryPolicy:
         max_attempts: int = 5,
         base_delay_seconds: float = 30.0,
         max_backoff_seconds: float = 3600.0,  # 1 hour cap
+        clock: Optional[Callable[[], datetime]] = None,
     ):
         self.max_attempts = max_attempts
         self.base_delay_seconds = base_delay_seconds
         self.max_backoff_seconds = max_backoff_seconds
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     def compute_next_attempt_delay(self, attempt_count: int) -> float:
         """
@@ -114,6 +148,12 @@ class RetryPolicy:
         exponent = max(0, attempt_count - 1)
         delay = self.base_delay_seconds * (2 ** exponent)
         return min(delay, self.max_backoff_seconds)
+
+    def compute_next_attempt_time(self, attempt_count: int, now: Optional[datetime] = None) -> datetime:
+        """Compute the deterministic datetime for next attempt using injected clock."""
+        from datetime import timedelta
+        ref_time = now or self.clock()
+        return ref_time + timedelta(seconds=self.compute_next_attempt_delay(attempt_count))
         
     def compute_outage_delay(self) -> float:
         """
@@ -135,6 +175,7 @@ class RetryPolicy:
     def has_exceeded_max_attempts(self, attempt_count: int) -> bool:
         """True if the row has been attempted too many times."""
         return attempt_count >= self.max_attempts
+
 
 
 # ──────────────────────────────────────────────
@@ -249,15 +290,12 @@ def render_notification(notification_type: str, payload: dict) -> tuple[str, str
     This enforces the boundary that the outbox stores structured data + template IDs,
     NOT pre-rendered HTML.
     """
-    # In a full implementation, this would load templates (e.g. Jinja2) and render them.
-    # We provide a strict deterministic implementation for Slice 3.3.
-    
     if not isinstance(payload, dict):
         raise ValueError("Payload must be a dictionary")
         
     valid_types = {
         "TICKET_CREATED", "TICKET_UPDATED", "TICKET_RESOLVED", 
-        "ORDER_UPDATED", "ESCALATION_TEAM", "CUSTOM_EMAIL"
+        "ORDER_UPDATED", "ESCALATION_TEAM", "ESCALATION_CUSTOMER", "CUSTOM_EMAIL"
     }
     
     if notification_type not in valid_types:
@@ -269,18 +307,21 @@ def render_notification(notification_type: str, payload: dict) -> tuple[str, str
     if notification_type in ("TICKET_CREATED", "TICKET_UPDATED", "TICKET_RESOLVED", "ESCALATION_TEAM"):
         if "ticket_id" not in payload:
             raise ValueError(f"Missing required field 'ticket_id' for {notification_type}")
-        subject = f"Update on Ticket #{payload['ticket_id']}"
+        subject = payload.get("subject") or f"Update on Ticket #{payload['ticket_id']}"
         body += f"<h1>Ticket #{payload['ticket_id']}</h1>"
+    elif notification_type == "ESCALATION_CUSTOMER":
+        subject = payload.get("subject", "Update regarding your support request")
+        body += "<h1>Support Escalation Update</h1>"
     elif notification_type == "ORDER_UPDATED":
         if "order_id" not in payload:
             raise ValueError(f"Missing required field 'order_id' for {notification_type}")
-        subject = f"Update on Order #{payload['order_id']}"
+        subject = payload.get("subject") or f"Update on Order #{payload['order_id']}"
         body += f"<h1>Order #{payload['order_id']}</h1>"
     elif notification_type == "CUSTOM_EMAIL":
-        if "ticket_id" not in payload:
-            raise ValueError(f"Missing required field 'ticket_id' for {notification_type}")
-        subject = f"Custom Email for Ticket #{payload['ticket_id']}"
-        body += f"<h1>Custom Email</h1>"
+        subject = payload.get("subject") or (f"Custom Email for Ticket #{payload['ticket_id']}" if "ticket_id" in payload else "Customer Notification")
+        body += f"<h1>{subject}</h1>"
+        if "message_content" in payload:
+            body += f"<p>{payload['message_content']}</p>"
         
     if "message" in payload:
         body += f"<p>{payload['message']}</p>"
@@ -323,15 +364,17 @@ class OutboxWorker:
         stale_threshold_seconds: float = DEFAULT_STALE_THRESHOLD_SECONDS,
         recovery_interval_seconds: float = 60.0,
         worker_id: Optional[str] = None,
+        clock: Optional[Callable[[], datetime]] = None,
     ):
         self.dsn = dsn
         self.sender = sender
         self.poll_interval_seconds = poll_interval_seconds
         self.batch_size = batch_size
-        self.retry_policy = retry_policy or RetryPolicy()
+        self.retry_policy = retry_policy or RetryPolicy(clock=clock)
         self.stale_threshold_seconds = stale_threshold_seconds
         self.recovery_interval_seconds = recovery_interval_seconds
         self.worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}-{os.getpid()}"
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
 
         self._stop_event = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
@@ -456,9 +499,17 @@ class OutboxWorker:
                 extra={"worker_id": self.worker_id},
             )
 
-            # 2. Process each claimed row
+            # 2. Process each claimed row with poison-pill isolation
             for row in claimed_rows:
-                self._process_row(conn, row)
+                try:
+                    self._process_row(conn, row)
+                except Exception as ex:
+                    logger.exception(
+                        "Unexpected error processing claimed row %s: %s",
+                        row.get("event_id"),
+                        ex,
+                        extra={"worker_id": self.worker_id, "event_id": str(row.get("event_id"))},
+                    )
 
             return len(claimed_rows)
 
@@ -568,6 +619,11 @@ class OutboxWorker:
             cur.execute(MARK_SENT_SQL, (event_id, claim_token))
             if cur.rowcount == 0:
                 logger.warning("Lease lost: outbox event %s could not be marked SENT", event_id)
+                emit_outbox_telemetry("lease_lost", {
+                    "worker_id": self.worker_id,
+                    "event_id": event_id,
+                    "attempted_transition": "SENT",
+                })
                 return
         conn.commit()
         logger.info(
@@ -580,18 +636,29 @@ class OutboxWorker:
                 "state_transition": "PROCESSING -> SENT",
             },
         )
+        emit_outbox_telemetry("event_sent", {
+            "worker_id": self.worker_id,
+            "event_id": event_id,
+            "notification_type": ntype,
+            "logical_identity_hash": logical_hash,
+        })
 
     def _mark_retryable(
         self, conn, event_id: str, claim_token: str, logical_hash: str, ntype: str,
         delay_seconds: float, error_msg: str, is_provider_outage: bool = False,
     ) -> None:
-        sanitized = error_msg[:500] if error_msg else "unknown"
+        sanitized = sanitize_error_message(error_msg)
         # If provider outage, decrement the attempt count we added on claim
         attempt_penalty = 1 if is_provider_outage else 0
         with conn.cursor() as cur:
             cur.execute(MARK_RETRYABLE_SQL, (delay_seconds, sanitized, attempt_penalty, event_id, claim_token))
             if cur.rowcount == 0:
                 logger.warning("Lease lost: outbox event %s could not be marked RETRYABLE", event_id)
+                emit_outbox_telemetry("lease_lost", {
+                    "worker_id": self.worker_id,
+                    "event_id": event_id,
+                    "attempted_transition": "RETRYABLE",
+                })
                 return
         conn.commit()
         logger.warning(
@@ -606,15 +673,27 @@ class OutboxWorker:
                 "sanitized_error": sanitized,
             },
         )
+        emit_outbox_telemetry("event_retryable", {
+            "worker_id": self.worker_id,
+            "event_id": event_id,
+            "notification_type": ntype,
+            "delay_seconds": delay_seconds,
+            "sanitized_error": sanitized,
+        })
 
     def _mark_failed(
         self, conn, event_id: str, claim_token: str, logical_hash: str, ntype: str, error_msg: str,
     ) -> None:
-        sanitized = error_msg[:500] if error_msg else "unknown"
+        sanitized = sanitize_error_message(error_msg)
         with conn.cursor() as cur:
             cur.execute(MARK_FAILED_SQL, (sanitized, event_id, claim_token))
             if cur.rowcount == 0:
                 logger.warning("Lease lost: outbox event %s could not be marked FAILED", event_id)
+                emit_outbox_telemetry("lease_lost", {
+                    "worker_id": self.worker_id,
+                    "event_id": event_id,
+                    "attempted_transition": "FAILED",
+                })
                 return
         conn.commit()
         logger.error(
@@ -628,6 +707,12 @@ class OutboxWorker:
                 "sanitized_error": sanitized,
             },
         )
+        emit_outbox_telemetry("event_failed", {
+            "worker_id": self.worker_id,
+            "event_id": event_id,
+            "notification_type": ntype,
+            "sanitized_error": sanitized,
+        })
 
     # ── Stale Recovery (sync) ─────────────────
 
@@ -679,6 +764,10 @@ class OutboxWorker:
                         "recovered_count": len(recovered),
                     },
                 )
+                emit_outbox_telemetry("stale_recovery_complete", {
+                    "worker_id": self.worker_id,
+                    "recovered_count": len(recovered),
+                })
 
             return len(recovered)
 
@@ -702,7 +791,7 @@ class OutboxWorker:
 
     # ── Standalone Execution ──────────────────
 
-    async def run_forever(self) -> None:
+    async def run_forever(self, stop_event: Optional[asyncio.Event] = None) -> None:
         """
         Entry point for running as a dedicated process.
 
@@ -720,8 +809,33 @@ class OutboxWorker:
         """
         await self.start()
         try:
-            await self._stop_event.wait()
+            if stop_event is not None:
+                # Wait for either internal stop event or external stop event
+                done, _ = await asyncio.wait(
+                    [
+                        asyncio.create_task(self._stop_event.wait()),
+                        asyncio.create_task(stop_event.wait()),
+                    ],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            else:
+                await self._stop_event.wait()
         except asyncio.CancelledError:
             pass
         finally:
             await self.stop()
+
+    def run_once(self) -> tuple[int, int]:
+        """
+        Execute a single claim-and-process cycle and a single stale-recovery cycle.
+        Returns (processed_count, recovered_count).
+        Useful for deterministic testing, batch jobs, and CLI '--once'.
+        """
+        recovered = self._recover_stale_rows()
+        processed = self._claim_and_process()
+        return processed, recovered
+
+
+if __name__ == "__main__":
+    from app.outbox.standalone import main
+    main()

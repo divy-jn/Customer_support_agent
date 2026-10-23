@@ -40,6 +40,7 @@ def retrieve(query: str, top_k: int = 5) -> list[dict]:
     pc, index = _get_index()
     
     # Use Pinecone's free Inference API for Integrated Embeddings
+    # #review: Synchronous network call to Pinecone inference without explicit timeout parameter
     embedding_response = pc.inference.embed(
         model="llama-text-embed-v2",
         inputs=[query],
@@ -47,6 +48,7 @@ def retrieve(query: str, top_k: int = 5) -> list[dict]:
     )
     query_vector = embedding_response[0].values
 
+    # Query vector index for top_k semantic neighbors
     results = index.query(
         vector=query_vector,
         top_k=top_k,

@@ -6,14 +6,17 @@ import psycopg2
 import hashlib
 from app.notification_identity import SourceEventIdentity, LogicalNotificationIdentity, NotificationType, RecipientIdentity
 
-def get_db_connection():
-    return psycopg2.connect(
-        dbname="postgres",
-        user="postgres",
-        password=os.environ.get("TEST_DB_PASSWORD", "postgres"),
-        host="localhost",
-        port="5433"
+from tests.conftest import get_test_postgres_dsn
+
+conn_string = get_test_postgres_dsn()
+if not conn_string:
+    pytest.skip(
+        "Real PostgreSQL test database required (set TEST_POSTGRES_URL or TEST_DB_PASSWORD).",
+        allow_module_level=True,
     )
+
+def get_db_connection():
+    return psycopg2.connect(conn_string)
 
 @pytest.fixture
 def real_db_cursor():

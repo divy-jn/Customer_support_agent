@@ -26,6 +26,7 @@ def get_db_llm():
     return get_llm(model=settings.llm_model, temperature=0.3)
 
 
+# Pydantic schema for structured DB action planning
 class DBPlannerOutput(BaseModel):
     action: Literal[
         "track_order", "cancel_order", "process_refund", 
@@ -48,6 +49,8 @@ def determine_db_action(message: str, intent: str, customer_id: int = None) -> d
     Uses a structured LLM planner.
     """
     llm = get_db_llm()
+    # Structured output forces model to map parameters directly to DBPlannerOutput
+    # #review: If the LLM provider fails to produce structured output, exception is caught below.
     structured_llm = llm.with_structured_output(DBPlannerOutput, include_raw=False)
     
     prompt = f"""Customer's message: "{message}"
@@ -60,6 +63,7 @@ Do NOT invent IDs.
 """
 
     try:
+        # Track LLM latency and token telemetry
         with track_llm_call(settings.llm_model, "db_plan", prompt) as tracker:
             result = structured_llm.invoke([
                 {"role": "system", "content": DB_AGENT_SYSTEM_PROMPT},
@@ -72,7 +76,7 @@ Do NOT invent IDs.
         action = result.action
         params = {}
         
-        # Post-parse validation
+        # Post-parse validation: ensure extracted parameters are actually present
         if action in ["track_order", "cancel_order", "process_refund"]:
             if not result.order_id:
                 action = "missing_argument"
@@ -82,6 +86,7 @@ Do NOT invent IDs.
             if not result.subject or not result.description:
                 action = "missing_argument"
             else:
+                # #review: Defaulting customer_id to 1 if missing can assign tickets to wrong customer or leak account 1
                 params["customer_id"] = result.customer_id or customer_id or 1
                 params["subject"] = result.subject
                 params["description"] = result.description
@@ -116,6 +121,7 @@ Do NOT invent IDs.
         return {"action": action, "params": params}
             
     except Exception as e:
+        # #review: Silently swallowing exceptions here hides LLM call failures and returns generic missing_argument
         return {"action": "missing_argument", "params": {}}
 
 
@@ -140,6 +146,7 @@ async def generate_response(
     """
     llm = get_db_llm()
 
+    # Only include the last 4 messages to save tokens and stay focused on recent context
     history_text = ""
     if conversation_history:
         recent = conversation_history[-4:]
@@ -147,6 +154,7 @@ async def generate_response(
             role = "Customer" if msg.get("role") == "customer" else "Agent"
             history_text += f"{role}: {msg.get('content', '')}\n"
 
+    # Assemble grounding context with DB tool results
     user_prompt = f"""Customer's message: "{message}"
 Intent classified as: {intent}
 {f"Customer Name: {customer_name}" if customer_name else ""}
@@ -159,6 +167,7 @@ TOOL RESULTS from database:
 Based on the tool results above, provide a helpful response to the customer."""
 
     try:
+        # LLM call with system prompt containing DB skills policy
         with track_llm_call(settings.llm_model, "db_node", user_prompt) as tracker:
             response = await llm.ainvoke([
                 {"role": "system", "content": DB_AGENT_SYSTEM_PROMPT},
@@ -167,6 +176,7 @@ Based on the tool results above, provide a helpful response to the customer."""
             tracker["output_text"] = response.content
         return {"response": response.content}
     except Exception as e:
+        # #review: Fallback message triggers human escalation recommendation when DB LLM call fails
         return {
             "response": "I apologize, but I'm having trouble accessing your account information right now. Let me connect you with a human agent who can assist.",
             "error": str(e),

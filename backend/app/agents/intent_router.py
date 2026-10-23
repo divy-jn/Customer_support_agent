@@ -26,8 +26,8 @@ def get_router_llm():
 def parse_and_validate_router_output(raw_text: str) -> dict:
     """
     Deterministic parsing boundary to handle markdown-wrapped JSON from the provider.
-    Limitation: The current LLM provider wraps structured JSON in markdown fences, breaking 
-    LangChain's native with_structured_output. This function strips the fences before parsing.
+    #review: current LLM wraps JSON in markdown fences, breaking with_structured_output.
+    This function strips the fences before parsing.
     """
     text = raw_text.strip()
     if text.startswith("```json"):
@@ -37,11 +37,14 @@ def parse_and_validate_router_output(raw_text: str) -> dict:
     if text.endswith("```"):
         text = text[:-3]
     text = text.strip()
-    
+
     result = json.loads(text)
     
-    valid_intents = ["faq", "technical_support", "billing", "refund", "order_tracking",
-                     "order_cancellation", "account_management", "product_inquiry", "complaint", "general"]
+    valid_intents = [
+        "faq", "technical_support", "billing", "refund", "order_tracking",
+        "order_cancellation", "account_management", "product_inquiry", "complaint", "general",
+        "ticket_status", "ticket_management", "order_status"
+    ]
     valid_sentiments = ["positive", "neutral", "negative"]
     valid_urgencies = ["low", "medium", "high", "critical"]
     valid_routes = ["rag_agent", "db_agent", "web_agent", "escalation"]
@@ -52,18 +55,23 @@ def parse_and_validate_router_output(raw_text: str) -> dict:
         raise ValueError(f"Missing required fields: {missing}")
 
     invalid_fields = []
-    if result["intent"] not in valid_intents:
-        invalid_fields.append(f"intent={result['intent']}")
-    if result["sentiment"] not in valid_sentiments:
-        invalid_fields.append(f"sentiment={result['sentiment']}")
-    if result["urgency"] not in valid_urgencies:
-        invalid_fields.append(f"urgency={result['urgency']}")
-    if result["route_to"] not in valid_routes:
-        invalid_fields.append(f"route_to={result['route_to']}")
-        
+    for field, valid_values in (
+        ("intent", valid_intents),
+        ("sentiment", valid_sentiments),
+        ("urgency", valid_urgencies),
+        ("route_to", valid_routes),
+    ):
+        value = result[field]
+        if not isinstance(value, str) or value not in valid_values:
+            invalid_fields.append(f"{field}={value!r}")
     if invalid_fields:
         raise ValueError(f"Invalid enum values: {invalid_fields}")
-        
+
+    intent = result["intent"]
+    sentiment = result["sentiment"]
+    urgency = result["urgency"]
+    proposed_route = result["route_to"]
+
     CANONICAL_INTENT_ROUTE = {
         "faq": "rag_agent",
         "technical_support": "rag_agent",
@@ -72,17 +80,22 @@ def parse_and_validate_router_output(raw_text: str) -> dict:
         "billing": "db_agent",
         "refund": "db_agent",
         "order_tracking": "db_agent",
+        "order_status": "db_agent",
         "order_cancellation": "db_agent",
         "account_management": "db_agent",
+        "ticket_status": "db_agent",
+        "ticket_management": "db_agent",
         "complaint": "escalation",
     }
         
+    canonical_route = CANONICAL_INTENT_ROUTE.get(intent, proposed_route)
+
     return {
-        "intent": result["intent"],
-        "sentiment": result["sentiment"],
-        "urgency": result["urgency"],
-        "route_to": CANONICAL_INTENT_ROUTE[result["intent"]],
-        "llm_proposed_route": result["route_to"],
+        "intent": intent,
+        "sentiment": sentiment,
+        "urgency": urgency,
+        "route_to": canonical_route,
+        "llm_proposed_route": proposed_route,
         "reasoning": result.get("reasoning", "")
     }
 
@@ -158,7 +171,7 @@ Classify this message and respond with a JSON object."""
         else:
             router_internal_failure = True
 
-        print(f"ROUTER EXCEPTION [{error_type}]: {router_error_message[:200]}")
+        print(f"ROUTER EXCEPTION [{error_type}]: {router_error_message[:200]}")  #review: use logger instead of print
         
         # Fallback classification
         return {

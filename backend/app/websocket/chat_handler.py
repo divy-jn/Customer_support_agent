@@ -7,6 +7,8 @@ import uuid
 import json
 import asyncio
 import logging
+import time
+import re
 from datetime import datetime, timezone
 
 from fastapi import WebSocket, WebSocketDisconnect, status
@@ -14,9 +16,18 @@ from fastapi import WebSocket, WebSocketDisconnect, status
 from app.config import settings
 from app.websocket.connection import manager
 from app.agents.graph import customer_support_graph, AgentState
+from app.agents.domain_graph import domain_support_graph
+from app.agents.approval_service import (
+    execute_approved_action,
+    validate_approval,
+    claim_pending_approval_in_session,
+    ApprovalClaimOutcome,
+)
+from app.models import ApprovalStatus, PendingApproval
 from app.email_service import send_escalation_email
 from app.tools import lookup_customer
 from app.guardrails import validate_input, validate_output, get_rejection_message
+from app.middleware.tracking import emit_workflow_turn
 
 from app.persistence.session import session_store
 
@@ -136,20 +147,76 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
     Main handler for customer WebSocket connections.
     Receives messages, processes them through LangGraph, and sends responses.
     """
+    caller_supplied_session_id = session_id is not None
     if not session_id:
         session_id = str(uuid.uuid4())
 
-    if authenticated_customer_id is not None:
+    # A caller-supplied ID may refer to a persisted conversation that is not in
+    # local/Redis session state. Verify ownership before connecting; if the
+    # authoritative lookup is unavailable, fail closed rather than recreating
+    # the session under the caller's identity. Fresh server-generated IDs do
+    # not need this round-trip.
+    if authenticated_customer_id is not None and caller_supplied_session_id:
+        # A cached session that already has an owner is itself an authoritative
+        # session-store record. Reject a mismatch immediately, even if the DB is down.
+        cached_session = await session_store.get_session(session_id)
+        cached_owner = cached_session.get("customer_id") if cached_session else None
+        if cached_owner is not None and cached_owner != authenticated_customer_id:
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Session belongs to a different customer.",
+            )
+            return
+
         try:
             from app.tools import supabase
-            res = await asyncio.to_thread(supabase.table("conversations").select("customer_id").eq("session_id", session_id).execute)
-            if res.data and res.data[0].get("customer_id") is not None:
-                if res.data[0]["customer_id"] != authenticated_customer_id:
-                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=f"Session {session_id} belongs to a different customer.")
+            res = await asyncio.to_thread(
+                supabase.table("conversations")
+                .select("customer_id")
+                .eq("session_id", session_id)
+                .execute
+            )
+            persisted_rows = res.data or []
+            if persisted_rows:
+                persisted_owner = persisted_rows[0].get("customer_id")
+                if persisted_owner is not None and persisted_owner != authenticated_customer_id:
+                    await websocket.close(
+                        code=status.WS_1008_POLICY_VIOLATION,
+                        reason="Session belongs to a different customer.",
+                    )
                     return
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Failed to verify persistent session ownership: {e}")
+                if persisted_owner is None and cached_owner is None:
+                    # Never let a customer claim a persisted conversation whose
+                    # identity cannot be established, even if the row is legacy.
+                    await websocket.close(
+                        code=status.WS_1008_POLICY_VIOLATION,
+                        reason="Session ownership could not be verified.",
+                    )
+                    return
+            elif cached_session is not None and cached_owner is None:
+                # Do not bind ownerless cached state that may include another
+                # user's history merely because the persistent index has no row.
+                await websocket.close(
+                    code=status.WS_1008_POLICY_VIOLATION,
+                    reason="Session ownership could not be verified.",
+                )
+                return
+        except Exception:
+            if cached_owner == authenticated_customer_id:
+                logger.warning(
+                    "Persistent session ownership lookup unavailable; relying on owner-bound session state",
+                    extra={"session_id": session_id},
+                )
+            else:
+                logger.exception(
+                    "Persistent session ownership could not be verified; rejecting WebSocket",
+                    extra={"session_id": session_id},
+                )
+                await websocket.close(
+                    code=status.WS_1008_POLICY_VIOLATION,
+                    reason="Session ownership could not be verified.",
+                )
+                return
 
     await manager.connect_customer(websocket, session_id)
 
@@ -161,7 +228,23 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
         return
 
     customer_id = authenticated_customer_id
-    history = session.get("conversation_history", [])
+    history = list(session.get("conversation_history", []))
+    pending_app = session.get("pending_approval")
+    if pending_app and pending_app.get("status") == "pending":
+        has_approval = any(msg.get("approval") for msg in history if isinstance(msg, dict))
+        if not has_approval:
+            history.append({
+                "role": "agent",
+                "content": pending_app.get("message") or "Confirmation required for your request.",
+                "timestamp": pending_app.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                "approval": {
+                    "approval_id": pending_app.get("approval_id"),
+                    "action": pending_app.get("action"),
+                    "params": pending_app.get("params"),
+                    "status": "pending",
+                    "message": pending_app.get("message"),
+                }
+            })
 
     # Send welcome message with session ID and history
     await manager.send_personal_message({
@@ -174,8 +257,6 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }, session_id)
 
-    import time
-    msg_timestamps = []
     rate_limit_window = 60
     rate_limit_max = settings.ws_message_rate_limit
 
@@ -188,15 +269,23 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 logger.warning(f"WebSocket {session_id} receive_text failed (likely disconnected already).")
                 break
 
-            now = time.time()
-            msg_timestamps = [t for t in msg_timestamps if now - t < rate_limit_window]
-            if len(msg_timestamps) >= rate_limit_max:
+            # Limit by authenticated customer identity, not socket/session ID, so
+            # reconnecting or opening another tab cannot reset the message budget.
+            from app.websocket.rate_limiter import consume_customer_message
+            rate_limit_identity = (
+                f"customer:{customer_id}" if customer_id is not None else f"session:{session_id}"
+            )
+            allowed = await consume_customer_message(
+                rate_limit_identity,
+                limit=rate_limit_max,
+                window_seconds=rate_limit_window,
+            )
+            if not allowed:
                 await websocket.send_text(json.dumps({
                     "type": "error",
                     "message": "Rate limit exceeded. Please wait a moment before sending more messages."
                 }))
                 continue
-            msg_timestamps.append(now)
 
             try:
                 data = json.loads(raw)
@@ -208,7 +297,11 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 client_request_id = None
                 
             if not client_request_id:
-                pass # Do NOT silently convert an omitted request ID into a new operation
+                await manager.send_personal_message({
+                    "type": "error",
+                    "message": "Missing client_request_id in payload."
+                }, session_id)
+                continue
 
             customer_id = authenticated_customer_id
 
@@ -305,86 +398,461 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
 
             # Check if this is an approval response for a pending action
             pending = session.get("pending_approval")
-            
-            if pending and message.lower().strip() in ("yes", "yeah", "yep", "sure", "ok", "okay", "go ahead", "proceed", "confirm", "do it"):
-                # Customer approved the pending action — execute it
-                await manager.send_personal_message({
-                    "type": "typing", "agent_name": "Adi",
-                }, session_id)
-                
-                try:
-                    execute_state: AgentState = {
-                        "customer_id": customer_id,
-                        "session_id": session_id,
-                        "message": pending.get("original_message", message),
-                        "conversation_history": session["conversation_history"],
-                        "intent": pending.get("intent", ""),
-                        "sentiment": "",
-                        "urgency": "",
-                        "route_to": "db_agent",
-                        "tool_results": None,
-                        "response": None,
-                        "escalated": False,
-                        "pending_approval": pending,
-                        "approval_granted": True,
-                    }
-                    
-                    from app.agents.graph import customer_support_graph as exec_graph
-                    # Directly invoke the execute node
-                    from app.agents.graph import db_execute_node
-                    result = await db_execute_node(execute_state)
-                    
-                    raw_response = result.get("response", "Done!")
-                    output_guard = validate_output(raw_response)
-                    response_text = output_guard.sanitized_text
-                    
-                    def _approve_execute(s):
-                        s["conversation_history"].append({
-                            "role": "agent", "content": response_text,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        })
-                        s.pop("pending_approval", None)
-                        return True
-                    session, _ = await _mutate_session(session_id, _approve_execute, allow_retry=True)
-                    
-                    await manager.send_personal_message({
-                        "type": "agent_response",
-                        "message": response_text,
-                        "agent_name": "Adi",
-                        "escalated": False,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }, session_id)
-                    
-                except Exception as e:
-                    logger.error(f"Approval execution error: {e}")
-                    await manager.send_personal_message({
-                        "type": "agent_response",
-                        "message": "I'm sorry, something went wrong while processing that. Let me connect you with a human agent.",
-                        "agent_name": "Adi",
-                        "escalated": False,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }, session_id)
-                continue
-            
-            elif pending and message.lower().strip() in ("no", "nope", "nah", "cancel", "don't", "dont", "stop", "never mind"):
-                # Customer rejected the pending action
-                def _approve_reject(s):
-                    s.pop("pending_approval", None)
-                    s["conversation_history"].append({
-                        "role": "agent",
-                        "content": "No problem! I've cancelled that action. Is there anything else I can help with?",
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    })
-                    return True
-                session, _ = await _mutate_session(session_id, _approve_reject, allow_retry=True)
+            clean_msg = message.lower().strip()
+            is_rejection = (
+                clean_msg in ("no", "nope", "nah", "cancel", "don't", "dont", "stop", "never mind")
+                or clean_msg.startswith("no,")
+                or clean_msg.startswith("no ")
+                or "do not" in clean_msg
+                or "don't" in clean_msg
+                or "dont" in clean_msg
+                or "cancel this" in clean_msg
+            )
+            is_confirmation = (
+                not is_rejection and (
+                    clean_msg in ("yes", "yeah", "yep", "sure", "ok", "okay", "go ahead", "proceed", "confirm", "do it")
+                    or clean_msg.startswith("yes,")
+                    or clean_msg.startswith("yes ")
+                    or clean_msg.startswith("confirm ")
+                    or clean_msg.startswith("proceed ")
+                )
+            )
+
+            pending_action = pending.get("action") if pending else None
+            pending_domain = "order" if pending_action == "cancel_order" else "payment" if pending_action == "process_refund" else None
+            ws_state = session.get("workflow_state") or {}
+            active_domain = ws_state.get("active_domain")
+
+            explicitly_matches_pending = False
+            if pending and not is_rejection:
+                oid_param = str(pending.get("params", {}).get("order_id", ""))
+                has_oid = bool(oid_param and oid_param in clean_msg)
+                if pending_action == "cancel_order":
+                    explicitly_matches_pending = bool(has_oid or ("cancel" in clean_msg and "order" in clean_msg))
+                elif pending_action == "process_refund":
+                    explicitly_matches_pending = bool(has_oid or "refund" in clean_msg)
+
+            # Cross-domain Ambiguity Guard:
+            # If active domain does not match the pending approval's domain, a bare confirmation
+            # is ambiguous (customer may be answering an informational turn in product/general).
+            if pending and is_confirmation and active_domain != pending_domain and not explicitly_matches_pending:
+                action_desc = "cancellation" if pending_action == "cancel_order" else "refund"
+                order_ref = pending.get("params", {}).get("order_id")
+                clarification_msg = (
+                    f"You have a pending {action_desc} request for order #{order_ref}. "
+                    f"Did you want to confirm that {action_desc}, or were you referring to our previous discussion?"
+                )
+                emit_workflow_turn({
+                    "session_id": session_id,
+                    "customer_id": customer_id,
+                    "architecture_mode": settings.agent_architecture_mode,
+                    "outcome": "clarification_requested",
+                    "approval_id": pending.get("approval_id"),
+                    "approval_action": pending.get("action"),
+                    "approval_status": "pending",
+                    "pending_approval": True,
+                    "escalated": False,
+                })
                 await manager.send_personal_message({
                     "type": "agent_response",
-                    "message": "No problem! I've cancelled that action. Is there anything else I can help with?",
+                    "message": clarification_msg,
+                    "approval": {
+                        "approval_id": pending.get("approval_id"),
+                        "action": pending.get("action"),
+                        "params": pending.get("params"),
+                        "status": "ambiguous",
+                    },
                     "agent_name": "Adi",
                     "escalated": False,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }, session_id)
                 continue
+
+            # If user sent rejection while in a different domain without referencing the action,
+            # treat it as part of that domain (e.g. "no, thanks" to product agent) rather than cancelling approval.
+            is_valid_rejection = is_rejection and (
+                active_domain == pending_domain
+                or (pending and str(pending.get("params", {}).get("order_id", "")) in clean_msg)
+                or (pending and ("cancel" in clean_msg or "refund" in clean_msg))
+                or (clean_msg in ("no", "nope", "nah", "cancel", "stop", "never mind") and active_domain == pending_domain)
+            )
+
+            if pending and is_valid_rejection:
+                # Customer cancelled the pending action
+                def _approve_reject(s):
+                    p = s.get("pending_approval")
+                    if p:
+                        p["status"] = ApprovalStatus.CANCELLED.value
+                    s.pop("pending_approval", None)
+                    s["conversation_history"].append({
+                        "role": "agent",
+                        "content": "No problem! I've cancelled that action. Is there anything else I can help with?",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "approval": {
+                            "approval_id": pending.get("approval_id"),
+                            "action": pending.get("action"),
+                            "params": pending.get("params"),
+                            "status": "cancelled",
+                        },
+                    })
+                    return True
+                session, _ = await _mutate_session(session_id, _approve_reject, allow_retry=True, customer_id=customer_id)
+                emit_workflow_turn({
+                    "session_id": session_id,
+                    "customer_id": customer_id,
+                    "architecture_mode": settings.agent_architecture_mode,
+                    "outcome": "approval_rejected",
+                    "approval_id": pending.get("approval_id"),
+                    "approval_action": pending.get("action"),
+                    "approval_status": "cancelled",
+                    "pending_approval": False,
+                    "escalated": False,
+                })
+                await manager.send_personal_message({
+                    "type": "agent_response",
+                    "message": "No problem! I've cancelled that action. Is there anything else I can help with?",
+                    "approval": {
+                        "approval_id": pending.get("approval_id"),
+                        "action": pending.get("action"),
+                        "params": pending.get("params"),
+                        "status": "cancelled",
+                    },
+                    "agent_name": "Adi",
+                    "escalated": False,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }, session_id)
+                continue
+
+            elif pending and (is_confirmation or explicitly_matches_pending):
+                # If resuming from a different domain, restore pending domain as active
+                if active_domain and active_domain != pending_domain and pending_domain:
+                    def _resume_pending_domain(s):
+                        ws = s.get("workflow_state")
+                        if isinstance(ws, dict):
+                            old_dom = ws.get("active_domain")
+                            if old_dom in ("product", "order", "payment"):
+                                sus_list = ws.setdefault("suspended_domains", [])
+                                if old_dom not in sus_list:
+                                    sus_list.append(old_dom)
+                            sus_list = ws.get("suspended_domains", [])
+                            if pending_domain in sus_list:
+                                sus_list.remove(pending_domain)
+                            ws["active_domain"] = pending_domain
+                            ws["resumed_domain"] = pending_domain
+                            if pending_domain == "order" and isinstance(ws.get("order_state"), dict):
+                                ws["order_state"]["domain_status"] = "in_progress"
+                            elif pending_domain == "payment" and isinstance(ws.get("payment_state"), dict):
+                                ws["payment_state"]["domain_status"] = "in_progress"
+                            return True
+                        return False
+                    await _mutate_session(session_id, _resume_pending_domain, allow_retry=True, customer_id=customer_id)
+
+                # Authoritative single trusted claim entrypoint
+                claim_outcome: ApprovalClaimOutcome | None = None
+                claim_reason: str | None = None
+
+                def _claim_mutator(s):
+                    nonlocal claim_outcome, claim_reason
+                    outcome, reason = claim_pending_approval_in_session(
+                        session_data=s,
+                        authenticated_customer_id=customer_id,
+                        session_id=session_id,
+                    )
+                    claim_outcome = outcome
+                    claim_reason = reason
+                    return outcome == ApprovalClaimOutcome.CLAIMED
+
+                try:
+                    session, claimed = await _mutate_session(session_id, _claim_mutator, allow_retry=False, customer_id=customer_id)
+                except RuntimeError as e:
+                    if "Concurrency conflict" in str(e):
+                        claimed = False
+                        session = await session_store.get_session(session_id) or {}
+                        claim_outcome = ApprovalClaimOutcome.ALREADY_CLAIMED
+                    else:
+                        raise e
+
+                if not claimed:
+                    if claim_outcome == ApprovalClaimOutcome.IDENTITY_MISMATCH:
+                        emit_workflow_turn({
+                            "session_id": session_id,
+                            "customer_id": customer_id,
+                            "architecture_mode": settings.agent_architecture_mode,
+                            "outcome": "approval_failed",
+                            "approval_id": pending.get("approval_id"),
+                            "approval_action": pending.get("action"),
+                            "approval_status": "failed",
+                            "pending_approval": False,
+                            "escalated": False,
+                        })
+                        await manager.send_personal_message({
+                            "type": "agent_response",
+                            "message": "Approval blocked: Identity mismatch.",
+                            "approval": {
+                                "approval_id": pending.get("approval_id"),
+                                "action": pending.get("action"),
+                                "params": pending.get("params"),
+                                "status": "failed",
+                                "error": "Identity mismatch",
+                            },
+                            "agent_name": "Adi",
+                            "escalated": False,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }, session_id)
+                        continue
+
+                    if claim_outcome == ApprovalClaimOutcome.SESSION_MISMATCH:
+                        emit_workflow_turn({
+                            "session_id": session_id,
+                            "customer_id": customer_id,
+                            "architecture_mode": settings.agent_architecture_mode,
+                            "outcome": "approval_failed",
+                            "approval_id": pending.get("approval_id"),
+                            "approval_action": pending.get("action"),
+                            "approval_status": "failed",
+                            "pending_approval": False,
+                            "escalated": False,
+                        })
+                        await manager.send_personal_message({
+                            "type": "agent_response",
+                            "message": "Approval blocked: Session mismatch.",
+                            "approval": {
+                                "approval_id": pending.get("approval_id"),
+                                "action": pending.get("action"),
+                                "params": pending.get("params"),
+                                "status": "failed",
+                                "error": "Session mismatch",
+                            },
+                            "agent_name": "Adi",
+                            "escalated": False,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }, session_id)
+                        continue
+
+                    if claim_outcome == ApprovalClaimOutcome.SIGNATURE_FAILED:
+                        emit_workflow_turn({
+                            "session_id": session_id,
+                            "customer_id": customer_id,
+                            "architecture_mode": settings.agent_architecture_mode,
+                            "outcome": "approval_failed",
+                            "approval_id": pending.get("approval_id"),
+                            "approval_action": pending.get("action"),
+                            "approval_status": "failed",
+                            "pending_approval": False,
+                            "escalated": False,
+                        })
+                        await manager.send_personal_message({
+                            "type": "agent_response",
+                            "message": "Approval blocked: Cryptographic signature mismatch or tampering detected.",
+                            "approval": {
+                                "approval_id": pending.get("approval_id"),
+                                "action": pending.get("action"),
+                                "params": pending.get("params"),
+                                "status": "failed",
+                                "error": "Signature mismatch or tampering",
+                            },
+                            "agent_name": "Adi",
+                            "escalated": False,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }, session_id)
+                        continue
+
+                    if claim_outcome == ApprovalClaimOutcome.EXPIRED:
+                        def _cleanup_expired(s):
+                            s.pop("pending_approval", None)
+                            return True
+                        await _mutate_session(session_id, _cleanup_expired, allow_retry=True, customer_id=customer_id)
+                        emit_workflow_turn({
+                            "session_id": session_id,
+                            "customer_id": customer_id,
+                            "architecture_mode": settings.agent_architecture_mode,
+                            "outcome": "approval_failed",
+                            "approval_id": pending.get("approval_id"),
+                            "approval_action": pending.get("action"),
+                            "approval_status": "expired",
+                            "pending_approval": False,
+                            "escalated": False,
+                        })
+                        await manager.send_personal_message({
+                            "type": "agent_response",
+                            "message": "This approval request has expired. Please submit a new request if you still need assistance.",
+                            "approval": {
+                                "approval_id": pending.get("approval_id"),
+                                "action": pending.get("action"),
+                                "params": pending.get("params"),
+                                "status": "expired",
+                            },
+                            "agent_name": "Adi",
+                            "escalated": False,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }, session_id)
+                        continue
+                    else:
+                        emit_workflow_turn({
+                            "session_id": session_id,
+                            "customer_id": customer_id,
+                            "architecture_mode": settings.agent_architecture_mode,
+                            "outcome": "approval_failed",
+                            "approval_id": pending.get("approval_id"),
+                            "approval_action": pending.get("action"),
+                            "approval_status": "already_claimed",
+                            "pending_approval": False,
+                            "escalated": False,
+                        })
+                        await manager.send_personal_message({
+                            "type": "agent_response",
+                            "message": "This action is already being processed or has already been completed.",
+                            "approval": {
+                                "approval_id": pending.get("approval_id"),
+                                "action": pending.get("action"),
+                                "params": pending.get("params"),
+                                "status": "already_claimed",
+                            },
+                            "agent_name": "Adi",
+                            "escalated": False,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }, session_id)
+                        continue
+
+                # 4. Successfully claimed! Execute within trusted boundary
+                emit_workflow_turn({
+                    "session_id": session_id,
+                    "customer_id": customer_id,
+                    "architecture_mode": settings.agent_architecture_mode,
+                    "outcome": "approval_executing",
+                    "approval_id": pending.get("approval_id"),
+                    "approval_action": pending.get("action"),
+                    "approval_status": "executing",
+                    "pending_approval": True,
+                    "escalated": False,
+                })
+                await manager.send_personal_message({
+                    "type": "agent_response",
+                    "message": "Processing your requested action with the authoritative system...",
+                    "approval": {
+                        "approval_id": pending.get("approval_id"),
+                        "action": pending.get("action"),
+                        "params": pending.get("params"),
+                        "status": "executing",
+                    },
+                    "agent_name": "Adi",
+                    "escalated": False,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }, session_id)
+
+                exec_result = await execute_approved_action(
+                    approval=session.get("pending_approval") or pending,
+                    authenticated_customer_id=customer_id,
+                    session_id=session_id,
+                )
+
+                output_guard = validate_output(exec_result.response_text)
+                final_response_text = output_guard.sanitized_text
+
+                if exec_result.success:
+                    def _finalize_success(s):
+                        p = s.get("pending_approval")
+                        if p:
+                            p["status"] = ApprovalStatus.SUCCEEDED.value
+                        s.pop("pending_approval", None)
+                        s["conversation_history"].append({
+                            "role": "agent",
+                            "content": final_response_text,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "approval": {
+                                "approval_id": pending.get("approval_id"),
+                                "action": pending.get("action"),
+                                "params": pending.get("params"),
+                                "status": "succeeded",
+                                "operation_key": pending.get("operation_key"),
+                                "authoritative": True,
+                            },
+                        })
+                        ws = s.get("workflow_state")
+                        if isinstance(ws, dict):
+                            if pending_domain == "order" and isinstance(ws.get("order_state"), dict):
+                                ws["order_state"]["domain_status"] = "completed"
+                            elif pending_domain == "payment" and isinstance(ws.get("payment_state"), dict):
+                                ws["payment_state"]["domain_status"] = "completed"
+                        return True
+                    await _mutate_session(session_id, _finalize_success, allow_retry=True, customer_id=customer_id)
+                    emit_workflow_turn({
+                        "session_id": session_id,
+                        "customer_id": customer_id,
+                        "architecture_mode": settings.agent_architecture_mode,
+                        "outcome": "approval_succeeded",
+                        "approval_id": pending.get("approval_id"),
+                        "approval_action": pending.get("action"),
+                        "approval_status": "succeeded",
+                        "pending_approval": False,
+                        "escalated": False,
+                    })
+                    await manager.send_personal_message({
+                        "type": "agent_response",
+                        "message": final_response_text,
+                        "approval": {
+                            "approval_id": pending.get("approval_id"),
+                            "action": pending.get("action"),
+                            "params": pending.get("params"),
+                            "status": "succeeded",
+                            "operation_key": pending.get("operation_key"),
+                            "authoritative": True,
+                        },
+                        "agent_name": "Adi",
+                        "escalated": False,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }, session_id)
+                else:
+                    def _finalize_failure(s):
+                        p = s.get("pending_approval")
+                        if p:
+                            p["status"] = ApprovalStatus.FAILED.value
+                        s.pop("pending_approval", None)
+                        s["conversation_history"].append({
+                            "role": "agent",
+                            "content": final_response_text,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "approval": {
+                                "approval_id": pending.get("approval_id"),
+                                "action": pending.get("action"),
+                                "params": pending.get("params"),
+                                "status": "uncertain" if exec_result.is_uncertain else "failed",
+                                "error": exec_result.error,
+                                "authoritative": True,
+                            },
+                        })
+                        return True
+                    await _mutate_session(session_id, _finalize_failure, allow_retry=True, customer_id=customer_id)
+                    outcome_name = "approval_uncertain" if exec_result.is_uncertain else "approval_failed"
+                    emit_workflow_turn({
+                        "session_id": session_id,
+                        "customer_id": customer_id,
+                        "architecture_mode": settings.agent_architecture_mode,
+                        "outcome": outcome_name,
+                        "approval_id": pending.get("approval_id"),
+                        "approval_action": pending.get("action"),
+                        "approval_status": "failed",
+                        "pending_approval": False,
+                        "escalated": False,
+                    })
+                    await manager.send_personal_message({
+                        "type": "agent_response",
+                        "message": final_response_text,
+                        "approval": {
+                            "approval_id": pending.get("approval_id"),
+                            "action": pending.get("action"),
+                            "params": pending.get("params"),
+                            "status": "uncertain" if exec_result.is_uncertain else "failed",
+                            "error": exec_result.error,
+                            "authoritative": True,
+                        },
+                        "agent_name": "Adi",
+                        "escalated": False,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }, session_id)
+                continue
+
+
 
             # Send typing indicator (only when AI will actually process)
             await manager.send_personal_message({
@@ -408,7 +876,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     "tool_results": None,
                     "response": None,
                     "escalated": False,
-                    "pending_approval": None,
+                    "pending_approval": session.get("pending_approval"),
                     "approval_granted": None,
                     "workflow_state": session.get("workflow_state", {
                         "session_id": session_id,
@@ -417,15 +885,41 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     }),
                 }
 
-                # Invoke LangGraph with timeout
+                # Invoke LangGraph with timeout and periodic typing keepalive
                 timeout_secs = settings.langgraph_timeout
+                async def _keepalive_typing():
+                    try:
+                        while True:
+                            await asyncio.sleep(4)
+                            await manager.send_personal_message({
+                                "type": "typing",
+                                "agent_name": "Adi",
+                            }, session_id)
+                    except asyncio.CancelledError:
+                        pass
+
+                turn_started = time.perf_counter()
+                typing_task = asyncio.create_task(_keepalive_typing())
                 try:
+                    active_graph = (
+                        domain_support_graph
+                        if settings.agent_architecture_mode.startswith("v2_")
+                        else customer_support_graph
+                    )
                     result = await asyncio.wait_for(
-                        customer_support_graph.ainvoke(initial_state),
+                        active_graph.ainvoke(initial_state),
                         timeout=timeout_secs,
                     )
                 except asyncio.TimeoutError:
                     logger.error(f"LangGraph timed out after {timeout_secs}s for session {session_id}")
+                    emit_workflow_turn({
+                        "session_id": session_id,
+                        "customer_id": customer_id,
+                        "architecture_mode": settings.agent_architecture_mode,
+                        "escalated": False,
+                        "latency_ms": round((time.perf_counter() - turn_started) * 1000, 1),
+                        "outcome": "timeout",
+                    })
                     await manager.send_personal_message({
                         "type": "agent_response",
                         "message": "I'm taking longer than expected to process your request. Please try again or let me connect you with a human agent.",
@@ -434,10 +928,32 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }, session_id)
                     continue
+                finally:
+                    typing_task.cancel()
 
                 # We still re-check mode but the whole mutation must be atomic
                 raw_response = result.get("response", "I'm sorry, I couldn't process your request.")
                 is_escalated = result.get("escalated", False)
+                emit_workflow_turn({
+                    "session_id": session_id,
+                    "customer_id": customer_id,
+                    "architecture_mode": settings.agent_architecture_mode,
+                    "domain": result.get("semantic_domain"),
+                    "intent": result.get("intent"),
+                    "supervisor_action": result.get("supervisor_action"),
+                    "supervisor_reason": result.get("supervisor_reason"),
+                    "guardian_action": result.get("guardian_action"),
+                    "guardian_reason": result.get("guardian_reason"),
+                    "ticket_id": result.get("guardian_ticket_id"),
+                    "guardian_ticket_id": result.get("guardian_ticket_id"),
+                    "pending_approval": bool(result.get("pending_approval")),
+                    "approval_id": (result.get("pending_approval") or {}).get("approval_id"),
+                    "approval_action": (result.get("pending_approval") or {}).get("action"),
+                    "approval_status": "pending" if result.get("pending_approval") else None,
+                    "escalated": is_escalated,
+                    "latency_ms": round((time.perf_counter() - turn_started) * 1000, 1),
+                    "outcome": "approval_proposed" if result.get("pending_approval") else "response_generated",
+                })
 
                 # ── Output Guardrails ──
                 output_guard = validate_output(raw_response)
@@ -460,11 +976,28 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     if result.get("workflow_state"):
                         s["workflow_state"] = result["workflow_state"]
 
-                    s["conversation_history"].append({
+                    s["workflow_outcome"] = {
+                        "domain": result.get("semantic_domain"),
+                        "guardian_action": result.get("guardian_action"),
+                        "guardian_reason": result.get("guardian_reason"),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+
+                    agent_entry = {
                         "role": "agent",
                         "content": response_text,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
-                    })
+                    }
+                    if result.get("pending_approval"):
+                        p = result["pending_approval"]
+                        agent_entry["approval"] = {
+                            "approval_id": p.get("approval_id"),
+                            "action": p.get("action"),
+                            "params": p.get("params"),
+                            "status": "pending",
+                            "message": p.get("message"),
+                        }
+                    s["conversation_history"].append(agent_entry)
                     return True
 
                 try:
@@ -493,10 +1026,22 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     "intent": result.get("intent", ""),
                     "sentiment": result.get("sentiment", ""),
                     "urgency": result.get("urgency", ""),
+                    "domain": result.get("semantic_domain", ""),
+                    "guardian_action": result.get("guardian_action", ""),
+                    "guardian_reason": result.get("guardian_reason", ""),
                     "escalated": is_escalated,
                     "agent_name": "Adi",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
+                if result.get("pending_approval"):
+                    p = result["pending_approval"]
+                    response_payload["approval"] = {
+                        "approval_id": p.get("approval_id"),
+                        "action": p.get("action"),
+                        "params": p.get("params"),
+                        "status": "pending",
+                        "message": p.get("message"),
+                    }
                 await manager.send_personal_message(response_payload, session_id)
 
                 # Broadcast to monitoring agents
@@ -509,7 +1054,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 if is_escalated and customer_id is not None:
                     from app.escalation.service import EscalationService, EscalationRequest, IdempotencyConflict
                     
-                    ticket_id = None
+                    ticket_id = result.get("guardian_ticket_id")
                     ws_state = result.get("workflow_state", {})
                     if ws_state.get("active_domain") == "product" and ws_state.get("product_state"):
                         ticket_id = ws_state["product_state"].get("active_ticket_id")
@@ -569,6 +1114,14 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
 
             except Exception as e:
                 logger.error(f"LangGraph error for session {session_id}: {e}")
+                emit_workflow_turn({
+                    "session_id": session_id,
+                    "customer_id": customer_id,
+                    "architecture_mode": settings.agent_architecture_mode,
+                    "escalated": False,
+                    "latency_ms": round((time.perf_counter() - turn_started) * 1000, 1) if "turn_started" in locals() else 0.0,
+                    "outcome": "error",
+                })
                 await manager.send_personal_message({
                     "type": "error",
                     "message": "I'm experiencing a technical issue. Let me connect you with a human agent.",
@@ -593,9 +1146,10 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
             # Only save if we have initialized the session earlier in the function
             if 'session' in locals() and session and session.get("conversation_history"):
                 was_escalated = "true" if session.get("mode") == "human" or any(
-                    msg.get("escalated") for msg in session.get("conversation_history", [])
+                     msg.get("escalated") for msg in session.get("conversation_history", [])
                 ) else "false"
                 
+                # #review: Defaulting customer_id to 1 assigns transcripts from unauthenticated/anonymous guests to Customer 1 in Supabase
                 data = {
                     "session_id": session_id,
                     "customer_id": session.get("customer_id") or 1,
@@ -609,8 +1163,6 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 # Instead of asyncio.shield (which fails under anyio cancellation),
                 # we spawn a background thread natively so it survives cancellation
                 # and we don't await it here to prevent CancelledError.
-                # This satisfies the requirement of not blocking the event loop
-                # while ensuring the write happens.
                 def save_to_db(save_data):
                     try:
                         supabase.table("conversations").upsert(save_data, on_conflict="session_id").execute()

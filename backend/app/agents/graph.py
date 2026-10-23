@@ -125,6 +125,7 @@ _shadow_tasks = set()
 async def _run_shadow_router(message: str, conversation_history: list, session_id: str, classification: dict):
     """Executes the shadow router and logs the result safely."""
     try:
+        # Phase B shadow router: runs parallel evaluation of the semantic router against legacy router
         semantic_result = await semantic_router.classify_semantic_intent(
             message=message,
             conversation_history=conversation_history
@@ -161,7 +162,7 @@ async def _run_shadow_router(message: str, conversation_history: list, session_i
 async def route_intent_node(state: AgentState) -> dict:
     """Node: Classifies intent and decides routing (with Phase B Shadow Mode)."""
     
-    # Run legacy router (Authoritative)
+    # Run legacy router (Authoritative for production traffic)
     classification = await intent_router.classify_intent(
         message=state["message"],
         conversation_history=state["conversation_history"]
@@ -231,20 +232,28 @@ async def product_node(state: AgentState) -> dict:
         urgency=state.get("urgency", "medium"),
         sentiment=state.get("sentiment", "neutral"),
         workflow_state=WorkflowState.from_legacy(ws),
-        conversation_history=state["conversation_history"]
+        conversation_history=state.get("conversation_history") or [],
+        manage_tickets=state.get("manage_tickets", True),
     )
     
     response = await agent.handle(ctx)
+    tool_results = None
+    if response.workflow_state.product_state and response.workflow_state.product_state.last_tool_result:
+        tool_results = response.workflow_state.product_state.last_tool_result.result
+
     return {
         "response": response.response,
         "workflow_state": response.workflow_state.model_dump(mode="json"),
+        "tool_results": tool_results,
+        "requires_human": response.execution_status in ("llm_failure", "ticket_registration_failed", "max_iterations_exceeded"),
         "escalated": False
     }
 
 
 async def db_plan_node(state: AgentState) -> dict:
     """Node: Determines DB action. If high-risk, pauses for approval."""
-    action_plan = db_agent.determine_db_action(
+    action_plan = await asyncio.to_thread(
+        db_agent.determine_db_action,
         message=state["message"],
         intent=state["intent"],
         customer_id=state["customer_id"]
@@ -336,7 +345,7 @@ def _execute_tool(action: str, params: dict, authenticated_customer_id: int | No
     try:
         # Security Boundary: Force the customer_id for all customer-scoped actions
         # This completely overwrites any customer_id the LLM tried to pass
-        if action in ["get_customer_history", "track_order", "cancel_order", "process_refund", "get_ticket", "create_ticket", "update_ticket", "send_ticket_email_to_customer"]:
+        if action in ["get_customer_history", "track_order", "cancel_order", "process_refund", "get_ticket", "create_ticket", "update_ticket", "send_ticket_email_to_customer", "check_warranty_status"]:
             if authenticated_customer_id:
                 params["customer_id"] = authenticated_customer_id
             if client_request_id and action in ["create_ticket", "update_ticket", "cancel_order", "process_refund", "send_ticket_email_to_customer"]:
@@ -355,7 +364,8 @@ def _execute_tool(action: str, params: dict, authenticated_customer_id: int | No
         elif action == "process_refund":
             return process_refund(**params)
         elif action == "check_inventory":
-            return check_inventory(**params)
+            pname = params.get("product_name") or params.get("product") or ""
+            return check_inventory(product_name=pname)
         elif action == "create_ticket":
             return create_ticket(**params)
         elif action == "update_ticket":
@@ -370,8 +380,10 @@ def _execute_tool(action: str, params: dict, authenticated_customer_id: int | No
             return search_manufacturer_warranty(**params)
         elif action == "check_warranty_status":
             return check_warranty_status(**params)
-        elif action == "retrieve_as_context":
-            return rag_agent.query_pinecone(params.get("query", ""))
+        elif action in ("retrieve_as_context", "search_knowledge_base"):
+            from app.rag.retriever import retrieve_as_context
+            query = params.get("query") or params.get("search_query") or params.get("message") or ""
+            return retrieve_as_context(query)
         else:
             return f"Error: Unknown DB action '{action}'"
     except Exception as e:
@@ -384,7 +396,8 @@ async def web_node(state: AgentState) -> dict:
     params = action_plan.get("params", {})
     
     try:
-        tool_results = web_search(**params)
+        # #review: web_search makes synchronous HTTP requests, run inside asyncio.to_thread to prevent event-loop stalling
+        tool_results = await asyncio.to_thread(web_search, **params)
     except Exception as e:
         tool_results = f"Web search failed: {str(e)}"
         
@@ -443,6 +456,8 @@ def route_after_classification(state: AgentState) -> str:
             import logging
             logging.getLogger(__name__).warning("route_after_classification: invalid workflow_state payload: %s", e)
                 
+    # #review: Hardcoded list of product intents. Any new skill intent added in SKILL.md
+    # or ProductSkillResolver must be duplicated here to be routed to product_node.
     if intent in ["product_inquiry", "product_information", "product_features", "product_specs", "product_details", "product_availability", "product_question", "technical_support", "product_comparison", "warranty_claim", "product_warranty"]:
         return "product_node"
     

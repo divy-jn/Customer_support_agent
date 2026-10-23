@@ -100,6 +100,10 @@ class Supervisor:
 
     @staticmethod
     def decide(semantic_domain: str, semantic_intent: str, state: WorkflowState, message: str) -> SupervisorDecision:
+        """
+        Pure deterministic decision function: inspects workflow state and semantic intent
+        to decide whether to CONTINUE, START_NEW, SUSPEND_AND_SWITCH, RESUME, or ESCALATE.
+        """
         # ── Guard: invalid active_domain ──
         if state.active_domain is not None and not Supervisor._is_valid_domain(state.active_domain):
             return SupervisorDecision(
@@ -117,6 +121,7 @@ class Supervisor:
             )
 
         # ── Guard: invalid/missing semantic domain ──
+        # #review: If semantic router fails or yields unknown domain, defaults to clarification rather than conversational fallback
         if not semantic_domain or not Supervisor._is_valid_domain(semantic_domain):
             return SupervisorDecision(
                 action=SupervisorAction.REQUEST_CLARIFICATION,
@@ -127,6 +132,7 @@ class Supervisor:
         target_domain = OrchestrationDomain(semantic_domain)
 
         # ── Terminal: escalated ──
+        # Once escalated, all further turns remain locked in escalation until human agent intervention
         if state.global_status == GlobalWorkflowStatus.ESCALATED:
             return SupervisorDecision(
                 action=SupervisorAction.ESCALATE,
@@ -376,6 +382,7 @@ class Supervisor:
         Supervisor._validate_decision(state, decision)
 
         new_state = state.model_copy(deep=True)
+        new_state.resumed_domain = None
 
         if decision.action == SupervisorAction.START_NEW:
             # If target was previously in suspended_domains, remove it to
@@ -431,6 +438,7 @@ class Supervisor:
 
         elif decision.action == SupervisorAction.RESUME:
             res_domain = decision.transition_metadata.resumed_domain
+            new_state.resumed_domain = res_domain
             # Remove from suspended_domains
             if res_domain in new_state.suspended_domains:
                 new_state.suspended_domains.remove(res_domain)

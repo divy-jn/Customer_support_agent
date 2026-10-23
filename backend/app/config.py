@@ -4,18 +4,22 @@ Application configuration loaded from environment variables.
 import os
 import re
 from pydantic_settings import BaseSettings
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pathlib import Path
+from urllib.parse import quote
 
-# backend/ directory — the project root for all relative paths
+# backend/ directory — root for resolving relative paths like knowledge_base
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    # --- Database ---
-    supabase_url: str = Field(..., alias="SUPABASE_URL")
-    supabase_key: str = Field(..., alias="SUPABASE_KEY")
-    database_password: str = Field(default="", alias="DATABASE_PASSWORD")
+    # Explicitly distinguishes development from non-debug hosted environments.
+    app_environment: str = Field(default="development", alias="APP_ENVIRONMENT")
+
+    # --- Database (Supabase) ---
+    supabase_url: str = Field(..., alias="SUPABASE_URL")       # required, validated below
+    supabase_key: str = Field(..., alias="SUPABASE_KEY")       # required, min 10 chars
+    database_password: str = Field(default="", alias="DATABASE_PASSWORD")  # falls back to supabase_key
 
     # --- LLM (Vertex AI) ---
     llm_model: str = Field(default="gemini-3.8-flash", alias="LLM_MODEL")
@@ -33,6 +37,7 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(default="", alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     jwt_expiration_minutes: int = Field(default=1440, alias="JWT_EXPIRATION_MINUTES")
+    approval_signing_secret: str = Field(default="", alias="APPROVAL_SIGNING_SECRET")
 
     # --- Redis ---
     upstash_redis_url: str = Field(default="", alias="UPSTASH_REDIS_URL")
@@ -45,7 +50,7 @@ class Settings(BaseSettings):
 
     # --- FastAPI ---
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
-    api_port: int = Field(default=8002, alias="API_PORT")
+    api_port: int = Field(default=8002, alias="API_PORT")  #review: conflicts with mcp_fs_port=8002 above
 
     # --- CORS ---
     cors_origins: str = Field(
@@ -56,6 +61,15 @@ class Settings(BaseSettings):
     # --- Knowledge Base ---
     knowledge_base_dir: str = "./knowledge_base"
 
+    # --- Outbox Worker (Slice 3.3 / Prompt 12) ---
+    outbox_worker_enabled: bool = Field(default=True, alias="OUTBOX_WORKER_ENABLED")
+    outbox_worker_mode: str = Field(default="in_process", alias="OUTBOX_WORKER_MODE")
+    outbox_poll_interval_seconds: float = Field(default=5.0, alias="OUTBOX_POLL_INTERVAL_SECONDS")
+    outbox_batch_size: int = Field(default=10, alias="OUTBOX_BATCH_SIZE")
+    outbox_stale_threshold_seconds: float = Field(default=300.0, alias="OUTBOX_STALE_THRESHOLD_SECONDS")
+    outbox_recovery_interval_seconds: float = Field(default=60.0, alias="OUTBOX_RECOVERY_INTERVAL_SECONDS")
+    outbox_max_attempts: int = Field(default=5, alias="OUTBOX_MAX_ATTEMPTS")
+
     # --- Outbox Reconciliation (Slice 3.7.4) ---
     reconciliation_enabled: bool = Field(default=True, alias="RECONCILIATION_ENABLED")
     reconciliation_interval_seconds: int = Field(default=3600, alias="RECONCILIATION_INTERVAL_SECONDS")
@@ -64,12 +78,12 @@ class Settings(BaseSettings):
     reconciliation_batch_size: int = Field(default=100, alias="RECONCILIATION_BATCH_SIZE")
 
     # --- Email ---
-    gmail_address: str = Field(default="jdivy7151@gmail.com", alias="GMAIL_ADDRESS")
+    gmail_address: str = Field(default="jdivy7151@gmail.com", alias="GMAIL_ADDRESS")  #review: hardcoded personal email in defaults
     gmail_app_password: str = Field(default="", alias="GMAIL_APP_PASSWORD")
     support_team_email: str = Field(default="support@supportteam.com", alias="SUPPORT_TEAM_EMAIL")
     tech_team_email: str = Field(default="tech@supportteam.com", alias="TECH_TEAM_EMAIL")
-    from_email: str = Field(default="jdivy7151@gmail.com", alias="FROM_EMAIL")
-    email_test_recipient: str | None = Field(default="pdfallen0@gmail.com", alias="EMAIL_TEST_RECIPIENT")
+    from_email: str = Field(default="jdivy7151@gmail.com", alias="FROM_EMAIL")  #review: same hardcoded email
+    email_test_recipient: str | None = Field(default="pdfallen0@gmail.com", alias="EMAIL_TEST_RECIPIENT")  #review: test recipient should be None in prod
 
     # --- Logging & Debug ---
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
@@ -81,7 +95,8 @@ class Settings(BaseSettings):
     ws_message_rate_limit: int = Field(default=20, alias="WS_MESSAGE_RATE_LIMIT")  # messages per minute
 
     # --- LangGraph ---
-    langgraph_timeout: int = Field(default=60, alias="LANGGRAPH_TIMEOUT")  # seconds
+    langgraph_timeout: int = Field(default=120, alias="LANGGRAPH_TIMEOUT")  # seconds
+    agent_architecture_mode: str = Field(default="legacy", alias="AGENT_ARCHITECTURE_MODE")
 
     @property
     def cors_origins_list(self) -> list[str]:
@@ -103,16 +118,20 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         """Async PostgreSQL connection string for SQLAlchemy (asyncpg)."""
+        if not self.database_password:
+            raise ValueError("DATABASE_PASSWORD is required for direct PostgreSQL connections; SUPABASE_KEY is not a database password")
         host = f"db.{self._supabase_host}.supabase.co"
-        pw = self.database_password or self.supabase_key
-        return f"postgresql+asyncpg://postgres:{pw}@{host}:5432/postgres"
+        password = quote(self.database_password, safe="")
+        return f"postgresql+asyncpg://postgres:{password}@{host}:5432/postgres"
 
     @property
     def database_url_sync(self) -> str:
         """Sync PostgreSQL connection string for SQLAlchemy (psycopg2)."""
+        if not self.database_password:
+            raise ValueError("DATABASE_PASSWORD is required for direct PostgreSQL connections; SUPABASE_KEY is not a database password")
         host = f"db.{self._supabase_host}.supabase.co"
-        pw = self.database_password or self.supabase_key
-        return f"postgresql+psycopg2://postgres:{pw}@{host}:5432/postgres"
+        password = quote(self.database_password, safe="")
+        return f"postgresql+psycopg2://postgres:{password}@{host}:5432/postgres"
 
     @field_validator("supabase_url")
     @classmethod
@@ -136,12 +155,80 @@ class Settings(BaseSettings):
             raise ValueError(f"LOG_LEVEL must be one of {valid}")
         return v.upper()
 
+    @field_validator("agent_architecture_mode")
+    @classmethod
+    def validate_agent_architecture_mode(cls, v: str) -> str:
+        """Keep architecture rollouts explicit and safely reversible."""
+        valid = {"legacy", "shadow", "v2_product", "v2_product_order", "v2_core", "v2_all"}
+        normalized = v.lower().strip()
+        if normalized not in valid:
+            raise ValueError(
+                f"AGENT_ARCHITECTURE_MODE must be one of {sorted(valid)}"
+            )
+        return normalized
+
+    @field_validator("outbox_worker_mode")
+    @classmethod
+    def validate_outbox_worker_mode(cls, v: str) -> str:
+        """Validate outbox execution mode: in_process, standalone, or disabled."""
+        valid = {"in_process", "standalone", "disabled"}
+        normalized = v.lower().strip()
+        if normalized not in valid:
+            raise ValueError(f"OUTBOX_WORKER_MODE must be one of {sorted(valid)}")
+        return normalized
+
+    @field_validator("app_environment")
+    @classmethod
+    def normalize_app_environment(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        valid = {"development", "test", "staging", "production"}
+        if normalized not in valid:
+            raise ValueError(f"APP_ENVIRONMENT must be one of {sorted(valid)}")
+        return normalized
+
     @field_validator("jwt_secret")
     @classmethod
-    def validate_jwt_secret(cls, v, info):
-        if not v:
-            return "dev-secret-key"
-        return v
+    def normalize_jwt_secret(cls, v: str) -> str:
+        return v.strip() if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def validate_auth_security_settings(self) -> "Settings":
+        """Allow an explicit development key only in debug mode; require a strong key otherwise."""
+        if self.app_environment in {"staging", "production"} and self.debug_mode:
+            raise ValueError("DEBUG_MODE must be false when APP_ENVIRONMENT is staging or production")
+
+        if self.app_environment == "production" and not self.database_password:
+            raise ValueError("DATABASE_PASSWORD must be configured when APP_ENVIRONMENT=production")
+
+        if not self.jwt_secret:
+            if self.debug_mode:
+                self.jwt_secret = "dev-secret-key"
+            else:
+                raise ValueError("JWT_SECRET must be set unless DEBUG_MODE=true")
+
+        if not self.debug_mode:
+            if len(self.jwt_secret) < 32:
+                raise ValueError("JWT_SECRET must be at least 32 characters outside DEBUG_MODE")
+            lowered_secret = self.jwt_secret.lower()
+            if lowered_secret in {"dev-secret-key", "your-secure-jwt-secret-key-change-me"} or "change-me" in lowered_secret:
+                raise ValueError("JWT_SECRET must not use a known development/example placeholder")
+
+            # Static bearer-style secrets are optional when agents use JWTs, but
+            # any configured value must not be a guessable demo credential.
+            for name, secret in (
+                ("AGENT_SECRET", self.agent_secret),
+                ("ADMIN_API_KEY", self.admin_api_key),
+            ):
+                if secret and (
+                    len(secret) < 32
+                    or secret.lower() in {"test-agent-secret", "admin", "changeme"}
+                    or "replace-with" in secret.lower()
+                    or "change-me" in secret.lower()
+                ):
+                    raise ValueError(
+                        f"{name} must be at least 32 characters and must not use a demo/example value outside DEBUG_MODE"
+                    )
+        return self
 
     model_config = {
         "env_file": str(_BACKEND_ROOT / ".env"),

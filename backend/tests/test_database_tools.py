@@ -15,6 +15,16 @@ import pytest
 # Add parent to path for imports
 import sys
 import os
+
+# This module deliberately tests against a seeded live Supabase dataset. CI has
+# placeholder credentials and must not mistake external-service unavailability
+# for application regression. Run locally with RUN_SUPABASE_INTEGRATION=true.
+pytestmark = pytest.mark.skipif(
+    os.getenv("CI", "").lower() == "true"
+    and os.getenv("RUN_SUPABASE_INTEGRATION", "").lower() != "true",
+    reason="Requires a configured Supabase project and seeded Indian test dataset.",
+)
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.tools import (
@@ -166,12 +176,12 @@ class TestTicketMutations:
     def test_update_ticket_invalid_enum(self):
         """Test that invalid enums are rejected in updates."""
         # Use invalid status
-        result = json.loads(update_ticket(1, status="invalid_status"))
+        result = json.loads(update_ticket(1, status="invalid_status", client_request_id="req-invalid-status"))
         assert "error" in result
         assert "Invalid status" in result["error"]
         
         # Use invalid priority
-        result = json.loads(update_ticket(1, priority="invalid_priority"))
+        result = json.loads(update_ticket(1, priority="invalid_priority", client_request_id="req-invalid-priority"))
         assert "error" in result
         assert "Invalid priority" in result["error"]
 

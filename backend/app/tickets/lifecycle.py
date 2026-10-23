@@ -318,6 +318,9 @@ class TicketLifecycleService:
                 ticket_type = cls._map_to_ticket_type(context.intent)
                 priority = cls._map_to_priority(context.urgency.value, context.sentiment.value)
                 
+                # #review: create_ticket in tools.py requires client_request_id for outbox idempotency.
+                # If client_request_id is not passed here, create_ticket returns an error response
+                # causing process_issue to fail.
                 resp_str = create_ticket(
                     customer_id=context.customer_id,
                     subject=subject,

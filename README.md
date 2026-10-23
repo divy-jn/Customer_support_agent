@@ -21,7 +21,7 @@ Build a robust, secure, and stateful AI Customer Support Agent capable of:
 4. Comprehensive identity management and resource ownership validation to ensure a customer can only access their own data.
 
 ## ✨ Key Features
-- **Intelligent Routing:** Uses LangGraph to classify intent and route inquiries to specialized sub-agents (RAG, DB, Web, Escalation).
+- **Domain-Oriented Routing:** An opt-in V2 LangGraph path classifies domain and intent, lets a deterministic supervisor select a domain workflow, and retains the established graph as a rollback path.
 - **RAG for Grounded Answers:** Answers policy queries purely from an embedded knowledge base using Pinecone, with explicit source citations.
 - **High-Risk Action Gating:** Actions like `cancel_order` and `process_refund` enter a "pending approval" state, requiring explicit customer confirmation ("yes") before execution.
 - **Secure Authentication:** Implements JWT-based authentication for customers and static agent-tokens for support staff.
@@ -55,15 +55,16 @@ graph TD
     end
 
     subgraph AI Layer
-        IR[Intent Router]
-        RAG[RAG Agent]
-        DB[DB Agent]
-        ESC[Escalation Agent]
+        SR[Semantic Router]
+        SUP[Supervisor / Workflow State]
+        DA[General / Product / Order / Payment Agents]
+        GDN[Guardian Policy]
+        RC[Response Composer]
     end
 
     subgraph External Services
         PIN[Pinecone Vector DB]
-        SUP[Supabase PostgreSQL]
+        DB[Supabase PostgreSQL]
         LLM[Google Gemini API]
     end
 
@@ -71,24 +72,16 @@ graph TD
     A <-->|Agent Auth WS| WS
 
     WS --> G
-    REST --> SUP
+    REST --> DB
 
-    G --> IR
-    IR --> RAG
-    IR --> DB
-    IR --> ESC
-
-    RAG <--> PIN
-    DB <--> SUP
-    
-    IR <--> LLM
-    RAG <--> LLM
-    DB <--> LLM
-    ESC <--> LLM
+    G --> SR --> SUP --> DA --> GDN --> RC
+    DA <--> PIN
+    DA <--> DB
+    DA <--> LLM
 ```
 
 ### How LangGraph is used
-LangGraph models the AI conversation as a state machine. It begins with an **Intent Router** which dynamically selects the next node (RAG, Database Tools, Web Search, or Human Escalation). This enables multi-turn planning, conditional logic, and robust recovery if a tool fails.
+LangGraph models the conversation as a state machine. In V2, the **Semantic Router** identifies the business domain and intent, the **Supervisor** advances typed workflow state, the relevant domain agent uses approved shared capabilities, and the **Guardian** makes deterministic ticket/escalation decisions before the shared response composer produces customer text. V2 rollout is controlled by `AGENT_ARCHITECTURE_MODE`; unsupported V2 intents safely fall back to the legacy graph.
 
 ### How RAG/Pinecone is used
 Documents in the `backend/knowledge_base` are chunked and embedded into Pinecone. When the Intent Router detects a policy question, the RAG Agent queries Pinecone to fetch the top matching document chunks and uses them as strict `CONTEXT`. The LLM is explicitly instructed to cite the source file (e.g., `return_policy.md`) and is restricted from utilizing external knowledge.

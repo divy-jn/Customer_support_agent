@@ -49,13 +49,14 @@ from app.outbox.worker import (
 #  Database Configuration
 # ──────────────────────────────────────────────
 
-TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD")
-if not TEST_DB_PASSWORD:
-    raise ValueError(
-        "TEST_DB_PASSWORD environment variable is required to run real integration tests."
-    )
+from tests.conftest import get_test_postgres_dsn
 
-DSN = f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
+DSN = get_test_postgres_dsn()
+if not DSN:
+    pytest.skip(
+        "Real PostgreSQL test database required (set TEST_POSTGRES_URL or TEST_DB_PASSWORD).",
+        allow_module_level=True,
+    )
 
 
 # ──────────────────────────────────────────────
@@ -65,6 +66,20 @@ DSN = f"dbname='postgres' user='postgres' host='localhost' port='5433' password=
 def _conn():
     """Return a new psycopg2 connection with autocommit off."""
     return psycopg2.connect(DSN)
+
+
+@pytest.fixture(autouse=True)
+def isolate_outbox_table():
+    """Ensure clean outbox_events table for every test to prevent cross-test leakage."""
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM outbox_events")
+        conn.commit()
+    yield
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM outbox_events")
+        conn.commit()
 
 
 def _insert_event(

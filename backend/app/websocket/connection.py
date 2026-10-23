@@ -19,7 +19,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
-#  Connection Metrics
+#  Connection Metrics (In-memory single-process counters)
 # ──────────────────────────────────────────────
 _connection_metrics = {
     "total_customer_connects": 0,
@@ -39,6 +39,12 @@ def get_connection_metrics() -> dict:
 
 
 class ConnectionManager:
+    """
+    Manages active customer and agent WebSocket connections.
+    #review: In-memory connection management assumes a single backend process.
+    # In a multi-worker / multi-instance deployment, agent broadcasting across workers
+    # requires a pub/sub backbone (e.g. Redis Pub/Sub).
+    """
     def __init__(self):
         # Maps session_id -> WebSocket
         self.active_connections: Dict[str, WebSocket] = {}

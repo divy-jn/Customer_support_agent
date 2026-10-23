@@ -40,6 +40,7 @@ class CompressedTimedRotatingFileHandler(TimedRotatingFileHandler):
     def doRollover(self):
         super().doRollover()
         # Compress the most recently rotated file
+        # #review: On Windows, file locking (PermissionError) can occur if a log viewer or process holds an open handle
         if self.backupCount > 0:
             log_dir = os.path.dirname(self.baseFilename)
             try:
@@ -188,6 +189,8 @@ def get_recent_logs(
     logs = []
     try:
         with open(log_file, "r", encoding="utf-8") as f:
+            # #review: readlines() reads the entire file into memory; for very large production log files
+            # this can cause spikes in RAM usage. A seek-from-end tail reader would scale better.
             all_lines = f.readlines()
             recent_lines = all_lines[-(lines * 3):]  # Read extra to account for filters
 

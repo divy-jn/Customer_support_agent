@@ -67,6 +67,7 @@ class SkillRuntime:
             
         # 4. Actual execution via decoupled executor
         try:
+            # #review: Synchronous execution of tool_executor blocks the thread during database or network IO
             result = self.tool_executor(tool_name, kwargs)
             return SkillExecutionResult(
                 skill_name=skill.name,

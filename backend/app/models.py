@@ -9,7 +9,7 @@ from typing import Any
 
 
 # ──────────────────────────────────────────────
-#  Enums
+#  Enums — used across API, DB queries, and WebSocket messages
 # ──────────────────────────────────────────────
 
 class TicketStatus(str, Enum):
@@ -43,6 +43,15 @@ class OrderStatus(str, Enum):
     REFUNDED = "refunded"
 
 
+class ApprovalStatus(str, Enum):
+    PENDING = "pending"
+    EXECUTING = "executing"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+
+
 class Sentiment(str, Enum):
     POSITIVE = "positive"
     NEUTRAL = "neutral"
@@ -68,14 +77,14 @@ class WarrantyStatus(str, Enum):
 
 
 # ──────────────────────────────────────────────
-#  Chat Schemas
+#  Chat Schemas — WebSocket message payloads
 # ──────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
     """A single message in the chat."""
     role: str            # "customer" or "agent" or "system"
     content: str
-    timestamp: datetime | None = None
+    timestamp: datetime | None = None  #review: timestamp is optional but should always be set
 
 
 class ChatRequest(BaseModel):
@@ -94,6 +103,30 @@ class ChatResponse(BaseModel):
     escalated: bool = False
     agent_name: str = "Adi"
     timestamp: datetime | None = None
+
+
+# ──────────────────────────────────────────────
+#  Approval Schemas — High-risk action lifecycle
+# ──────────────────────────────────────────────
+
+class PendingApproval(BaseModel):
+    """
+    Durable, cryptographically bound representation of a high-risk action pending customer confirmation.
+    """
+    approval_id: str = Field(..., max_length=255, description="Unique approval identifier")
+    action: str = Field(..., max_length=100, description="Allowlisted high-risk operation")
+    params: dict[str, Any] = Field(default_factory=dict, description="Exact normalized action parameters")
+    customer_id: int = Field(..., gt=0, description="Authenticated customer ID")
+    session_id: str = Field(..., max_length=255, description="Bound session ID")
+    operation_key: str = Field(..., max_length=255, description="Stable idempotency key for underlying mutation")
+    created_at: str = Field(..., description="UTC ISO8601 timestamp")
+    expires_at: str = Field(..., description="UTC ISO8601 timestamp")
+    status: ApprovalStatus = Field(default=ApprovalStatus.PENDING)
+    message: str = Field(..., description="Customer confirmation prompt")
+    original_message: str | None = Field(default=None, description="Original customer message that triggered proposal")
+    intent: str | None = Field(default=None, description="Intent that triggered proposal")
+    signature: str | None = Field(default=None, description="Cryptographic HMAC-SHA256 signature binding all security-critical fields")
+    signature_version: str = Field(default="v1", description="Cryptographic signature format and version identifier")
 
 
 # ──────────────────────────────────────────────
@@ -261,7 +294,7 @@ class EscalationLifecycleStatus(str, Enum):
     ACTIVE = "ACTIVE"
     RELEASED = "RELEASED"
 
-from typing import TypedDict
+from typing import TypedDict  #review: imported mid-file — move to top with other imports
 
 class TargetAgentState(TypedDict):
     # Identity
@@ -377,7 +410,8 @@ class WorkflowState(BaseModel):
     # ─── F.2 Global Orchestration ───
     global_status: GlobalWorkflowStatus = GlobalWorkflowStatus.IDLE
     active_domain: str | None = None
-    suspended_domains: list[OrchestrationDomain] = Field(default_factory=list, max_length=3)
+    suspended_domains: list[OrchestrationDomain] = Field(default_factory=list, max_length=3)  # max 3 concurrent suspended domains
+    resumed_domain: OrchestrationDomain | None = None
     
     # ─── F.2 Domain States ───
     product_state: ProductState | None = None
@@ -386,6 +420,8 @@ class WorkflowState(BaseModel):
 
     # ─── Shared Lifecycle ───
     turn_count: int = 0
+    # Consecutive unresolved/problem turns; distinct from total conversation turns.
+    unresolved_attempts: int = Field(default=0, ge=0, le=100)
     updated_at: datetime | None = None
 
     @classmethod
@@ -407,7 +443,7 @@ class WorkflowState(BaseModel):
             WorkflowStatus.FAILED: DomainWorkflowStatus.FAILED
         }
         if status not in mapping:
-            raise ValueError(f"Unknown workflow status enum: {status}")
+            raise ValueError(f"Unknown workflow status enum: {status}")  #review: unreachable if WorkflowStatus is exhaustive
         return mapping[status]
 
     @classmethod
@@ -459,7 +495,7 @@ class WorkflowState(BaseModel):
         has_order = bool(legacy_dict.get("order_id"))
         
         if has_prod and has_order:
-            raise ValueError("Contradictory cross-domain facts: both product and order facts present in legacy state.")
+            raise ValueError("Contradictory cross-domain facts: both product and order facts present in legacy state.")  #review: silent if both are empty
 
         # 1. Determine domain
         domain_enum = None
@@ -576,6 +612,7 @@ class WorkflowState(BaseModel):
             payment_state=payment_state,
             global_status=cls._map_legacy_global_status(legacy_dict.get("workflow_status", WorkflowStatus.IDLE), bool(domain_enum)),
             turn_count=legacy_dict.get("turn_count", 0),
+            unresolved_attempts=legacy_dict.get("unresolved_attempts") or 0,
             updated_at=legacy_dict.get("updated_at")
         )
 
@@ -614,6 +651,11 @@ class WorkflowState(BaseModel):
             raise ValueError("suspended_domains cannot exceed 3 items.")
             
         for d in self.suspended_domains:
+            if d not in (OrchestrationDomain.PRODUCT, OrchestrationDomain.ORDER, OrchestrationDomain.PAYMENT):
+                raise ValueError(
+                    f"Domain '{d.value}' cannot be stored in suspended_domains. "
+                    f"Only PRODUCT, ORDER, and PAYMENT may be suspended."
+                )
             if d == OrchestrationDomain.PRODUCT:
                 if not self.product_state:
                     raise ValueError("PRODUCT is suspended but state is missing.")
@@ -637,6 +679,13 @@ class WorkflowState(BaseModel):
         if len(self.suspended_domains) != len(set(self.suspended_domains)):
             raise ValueError("Duplicate suspended domains detected.")
             
+        # Validate resumed domain invariants
+        if self.resumed_domain is not None:
+            if self.resumed_domain in self.suspended_domains:
+                raise ValueError(f"Domain {self.resumed_domain.value} cannot be both resumed and suspended.")
+            if self.active_domain != self.resumed_domain.value:
+                raise ValueError(f"Active domain '{self.active_domain}' must match resumed_domain '{self.resumed_domain.value}'.")
+
         # Ensure active typed domains are not SUSPENDED
         if self.active_domain == OrchestrationDomain.PRODUCT.value and self.product_state and self.product_state.domain_status == DomainWorkflowStatus.SUSPENDED:
             raise ValueError("PRODUCT domain cannot be active while its status is SUSPENDED.")

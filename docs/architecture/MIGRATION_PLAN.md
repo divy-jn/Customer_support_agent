@@ -38,6 +38,7 @@
 ### Phase F: Guardian / Escalation Policy
 - **Goal**: Implement the sophisticated duplicate-ticket prevention and escalation logic.
 - **Strategy**: Migrate `escalation_agent.py` to the Guardian model. Route all escalations through this new module.
+- **Current increment**: The opt-in Product/Warranty slice now uses a deterministic Guardian after the domain skill. It performs a 48-hour, customer-scoped active-ticket lookup and returns an auditable `resolve`, `continue`, `update_existing_ticket`, `create_ticket`, or `escalate` decision. `create_ticket` is deliberately routed into the existing durable human-handoff transaction until ticket creation is moved behind Guardian as a separate idempotent mutation.
 
 ### Phase G: Migration of Existing Flows
 - **Goal**: Route remaining intents (billing, cancellation, tracking) to the new Order/Payment agents.

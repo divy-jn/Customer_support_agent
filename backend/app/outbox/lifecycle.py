@@ -32,47 +32,79 @@ _reconciliation_cancel_event: Optional[asyncio.Event] = None
 _reconciliation_lock: Optional[asyncio.Lock] = None
 
 
+import os
+
 def _build_dsn() -> str:
     """
     Build a psycopg2-compatible DSN from the existing settings.
 
+    Prefers TEST_POSTGRES_URL if set.
     The settings expose ``database_url_sync`` as
     ``postgresql+psycopg2://user:pass@host:port/db``.
     psycopg2 needs ``postgresql://...`` (no driver suffix).
     """
+    test_url = os.environ.get("TEST_POSTGRES_URL")
+    if test_url:
+        return test_url
     url = settings.database_url_sync
     return url.replace("postgresql+psycopg2://", "postgresql://")
 
 
-async def start_outbox_worker() -> None:
+async def start_outbox_worker(sender: Optional[EmailSender] = None) -> Optional[OutboxWorker]:
     """Start the outbox worker as a background task.  Call from lifespan startup."""
     global _worker_instance
 
-    if not settings.database_password:
+    mode = (os.environ.get("OUTBOX_WORKER_MODE") or settings.outbox_worker_mode).lower().strip()
+    if mode == "standalone":
+        logger.info(
+            "Outbox worker is configured for standalone mode (OUTBOX_WORKER_MODE='standalone'); "
+            "skipping in-process dispatch in FastAPI lifespan."
+        )
+        return None
+
+    if mode == "disabled" or not settings.outbox_worker_enabled or os.environ.get("OUTBOX_WORKER_ENABLED", "").lower() in ("false", "0", "no"):
+        logger.info("Outbox worker disabled via configuration.")
+        return None
+
+    # In test environments (pytest), do not spin up background dispatch tasks unless explicitly forced
+    if os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("OUTBOX_WORKER_ENABLED", "").lower() != "true":
+        logger.info("Outbox worker auto-disabled in test environment.")
+        return None
+
+    if _worker_instance is not None:
+        logger.warning("Outbox worker already started; skipping duplicate start.")
+        return _worker_instance
+
+    if not settings.database_password and not os.environ.get("TEST_POSTGRES_URL"):
         logger.info("Outbox worker disabled: DATABASE_PASSWORD not configured")
-        return
+        return None
 
     dsn = _build_dsn()
-    sender = GmailSmtpSender()
+    delivery_sender = sender or GmailSmtpSender()
 
-    _worker_instance = OutboxWorker(
+    from app.outbox.worker import RetryPolicy
+    worker = OutboxWorker(
         dsn=dsn,
-        sender=sender,
-        poll_interval_seconds=5.0,
-        batch_size=10,
-        stale_threshold_seconds=300.0,   # 5 minutes
-        recovery_interval_seconds=60.0,  # sweep every minute
+        sender=delivery_sender,
+        poll_interval_seconds=settings.outbox_poll_interval_seconds,
+        batch_size=settings.outbox_batch_size,
+        stale_threshold_seconds=settings.outbox_stale_threshold_seconds,
+        recovery_interval_seconds=settings.outbox_recovery_interval_seconds,
+        retry_policy=RetryPolicy(max_attempts=settings.outbox_max_attempts),
     )
+    _worker_instance = worker
     await _worker_instance.start()
     logger.info("Outbox worker started (FastAPI in-process)")
+    return _worker_instance
 
 
 async def stop_outbox_worker() -> None:
     """Gracefully stop the outbox worker.  Call from lifespan shutdown."""
     global _worker_instance
     if _worker_instance:
-        await _worker_instance.stop()
+        worker = _worker_instance
         _worker_instance = None
+        await worker.stop()
         logger.info("Outbox worker stopped")
 
 async def _reconciliation_loop() -> None:
@@ -197,8 +229,24 @@ async def start_reconciliation_scheduler() -> None:
     """Start the periodic reconciliation background task."""
     global _reconciliation_task, _reconciliation_cancel_event, _reconciliation_lock
     
+    mode = (os.environ.get("OUTBOX_WORKER_MODE") or settings.outbox_worker_mode).lower().strip()
+    if mode == "standalone":
+        logger.info(
+            "Outbox reconciliation is configured for standalone mode (OUTBOX_WORKER_MODE='standalone'); "
+            "skipping in-process reconciliation in FastAPI lifespan."
+        )
+        return
+
     if not settings.database_password or not settings.reconciliation_enabled:
         logger.info("Outbox reconciliation is disabled (DATABASE_PASSWORD not set or disabled via config).")
+        return
+
+    if os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("RECONCILIATION_ENABLED", "").lower() != "true":
+        logger.info("Outbox reconciliation scheduler auto-disabled in test environment.")
+        return
+
+    if _reconciliation_task is not None and not _reconciliation_task.done():
+        logger.warning("Reconciliation scheduler already running; skipping duplicate start.")
         return
         
     if _reconciliation_cancel_event is None:

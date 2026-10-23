@@ -5,11 +5,14 @@ import pytest
 import psycopg2
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD")
-if not TEST_DB_PASSWORD:
-    raise ValueError("TEST_DB_PASSWORD environment variable is required to run real postgres tests. Provide it in the local Docker environment.")
+from tests.conftest import get_test_postgres_dsn
 
-conn_string = f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
+conn_string = get_test_postgres_dsn()
+if not conn_string:
+    pytest.skip(
+        "Real PostgreSQL test database required (set TEST_POSTGRES_URL or TEST_DB_PASSWORD).",
+        allow_module_level=True,
+    )
 
 def setup_session_state(session_id, customer_id, status='NONE'):
     conn = psycopg2.connect(conn_string)

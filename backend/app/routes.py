@@ -6,8 +6,9 @@ to interact with tickets, customers, and dashboard data.
 from fastapi import APIRouter, HTTPException, Depends, Header
 import json
 import uuid
+import asyncio
 
-from app.dependencies import verify_admin_key, verify_agent_token, verify_customer_token
+from app.dependencies import verify_admin_key, verify_agent_token, verify_customer_token, verify_any_token
 from app.config import settings
 
 # ──────────────────────────────────────────────
@@ -35,6 +36,9 @@ from app.email_service import send_ticket_created_email, send_resolution_email
 
 router = APIRouter()
 
+# ──────────────────────────────────────────────
+#  Development Authentication Endpoints
+# ──────────────────────────────────────────────
 @router.post("/auth/agent/dev-login")
 async def dev_agent_login():
     """
@@ -57,8 +61,9 @@ async def dev_agent_login():
 async def dev_login(email: str):
     """
     DEVELOPMENT ONLY endpoint.
-    Generates a JWT token for the specified email.
-    Fails if the application is not in debug mode or if the customer doesn't exist.
+    Generates a JWT token for the specified email without password verification.
+    #review: In DEBUG_MODE, this endpoint allows impersonating any customer by email.
+    # Must remain strictly disabled in production environments.
     """
     if not settings.debug_mode:
         raise HTTPException(status_code=403, detail="Development login is disabled in production")
@@ -85,7 +90,7 @@ async def dev_login(email: str):
 # ──────────────────────────────────────────────
 
 @router.get("/customers/search")
-async def search_customer(q: str):
+async def search_customer(q: str, auth_user: dict = Depends(verify_any_token)):
     """Search for a customer by name or email."""
     if not q or not q.strip():
         raise HTTPException(status_code=400, detail="Search query cannot be empty")
@@ -93,11 +98,16 @@ async def search_customer(q: str):
     data = json.loads(result)
     if isinstance(data, dict) and "error" in data:
         raise HTTPException(status_code=400, detail=data["error"])
+        
+    if auth_user.get("role") == "customer":
+        customer_id = auth_user.get("id")
+        data = [c for c in data if c.get("id") == customer_id]
+        
     return data
 
 
 @router.get("/customers")
-async def list_customers(limit: int = 50, offset: int = 0):
+async def list_customers(limit: int = 50, offset: int = 0, _: bool = Depends(verify_agent_token)):
     """Get all customers with pagination."""
     if limit <= 0 or offset < 0:
         raise HTTPException(status_code=400, detail="Invalid pagination parameters")
@@ -119,7 +129,7 @@ async def customer_history(customer_id: int, authenticated_customer_id: int = De
 # ──────────────────────────────────────────────
 
 @router.get("/tickets")
-async def list_tickets(limit: int = 50, offset: int = 0, status: TicketStatus = None):
+async def list_tickets(limit: int = 50, offset: int = 0, status: TicketStatus = None, _: bool = Depends(verify_agent_token)):
     """Get all tickets with optional status filter."""
     if limit <= 0 or offset < 0:
         raise HTTPException(status_code=400, detail="Invalid pagination parameters")
@@ -128,15 +138,15 @@ async def list_tickets(limit: int = 50, offset: int = 0, status: TicketStatus = 
 
 
 @router.get("/tickets/{ticket_id}")
-async def get_ticket_detail(ticket_id: int, authenticated_customer_id: int = Depends(verify_customer_token)):
+async def get_ticket_detail(ticket_id: int, auth_user: dict = Depends(verify_any_token)):
     """Get details of a specific ticket."""
     result = get_ticket(ticket_id)
     data = json.loads(result)
     if "error" in data:
         raise HTTPException(status_code=404, detail=data["error"])
         
-    # Enforce ownership: only the ticket owner (or an agent, though this route is for customers) can view it
-    if data.get("customer_id") != authenticated_customer_id:
+    # Enforce ownership: only the ticket owner or an agent can view it
+    if auth_user.get("role") == "customer" and data.get("customer_id") != auth_user.get("id"):
         raise HTTPException(status_code=403, detail="Not authorized to access this ticket")
         
     return data
@@ -210,9 +220,13 @@ async def track_order_status(order_id: int, authenticated_customer_id: int = Dep
 
 
 @router.post("/orders/{order_id}/cancel")
-async def cancel_order_endpoint(order_id: int, _: bool = Depends(verify_agent_token)):
+async def cancel_order_endpoint(
+    order_id: int, 
+    _: bool = Depends(verify_agent_token),
+    client_request_id: uuid.UUID = Header(..., alias="X-Client-Request-Id")
+):
     """Cancel an active order."""
-    result = cancel_order(order_id)
+    result = cancel_order(order_id, client_request_id=str(client_request_id))
     data = json.loads(result)
     if "error" in data:
         raise HTTPException(status_code=400, detail=data["error"])
@@ -220,9 +234,13 @@ async def cancel_order_endpoint(order_id: int, _: bool = Depends(verify_agent_to
 
 
 @router.post("/orders/{order_id}/refund")
-async def refund_order_endpoint(order_id: int, _: bool = Depends(verify_agent_token)):
+async def refund_order_endpoint(
+    order_id: int, 
+    _: bool = Depends(verify_agent_token),
+    client_request_id: uuid.UUID = Header(..., alias="X-Client-Request-Id")
+):
     """Process a refund for an order."""
-    result = process_refund(order_id)
+    result = process_refund(order_id, client_request_id=str(client_request_id))
     data = json.loads(result)
     if "error" in data:
         raise HTTPException(status_code=400, detail=data["error"])
@@ -268,6 +286,8 @@ async def active_sessions(_: bool = Depends(verify_agent_token)):
         sid = session.get("session_id")
         history = session.get("conversation_history", [])
         last_msg = history[-1]["content"] if history else ""
+        workflow = session.get("workflow_state") or {}
+        outcome = session.get("workflow_outcome") or {}
         sessions.append({
             "session_id": sid,
             "customer_id": session.get("customer_id"),
@@ -276,6 +296,13 @@ async def active_sessions(_: bool = Depends(verify_agent_token)):
             "created_at": session.get("created_at"),
             "mode": session.get("mode", "ai"),
             "escalated": session.get("escalated", False),
+            # These are workflow facts only; support operators do not need the
+            # full customer message or tool payload to triage a live session.
+            "domain": outcome.get("domain") or workflow.get("active_domain"),
+            "workflow_status": workflow.get("global_status"),
+            "pending_approval": bool(session.get("pending_approval")),
+            "guardian_action": outcome.get("guardian_action"),
+            "guardian_reason": outcome.get("guardian_reason"),
         })
     return {"active_sessions": sessions, "total": len(sessions)}
 
@@ -332,15 +359,18 @@ async def admin_get_kb_doc(filename: str, _: bool = Depends(verify_admin_key)):
 
 @router.post("/admin/knowledge-base/reingest")
 async def admin_reingest_kb(_: bool = Depends(verify_admin_key)):
-    """Trigger re-ingestion of knowledge base into Pinecone."""
+    """Trigger re-ingestion of knowledge base into Pinecone/Chroma."""
     try:
+        # #review: Synchronous ingestion or blocking subprocess call freezes the FastAPI event loop for up to 120s!
+        # Should be offloaded to a background task (e.g. BackgroundTasks or Celery/Worker).
         from app.rag.retriever import ingest_knowledge_base
-        result = ingest_knowledge_base()
+        result = await asyncio.to_thread(ingest_knowledge_base)
         return {"status": "success", "message": "Knowledge base re-ingested", "details": result}
-    except ImportError:
-        # Fallback: run the script directly
+    except (ImportError, AttributeError):
+        # Fallback: run the script in a separate thread so event loop remains responsive
         import subprocess
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["python", "-m", "scripts.ingest_knowledge"],
             capture_output=True, text=True, timeout=120,
         )

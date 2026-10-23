@@ -62,9 +62,9 @@ INJECTION_PATTERNS: list[tuple[str, str]] = [
     (r"developer\s+mode", "jailbreak_keyword"),
 ]
 
-# PII patterns (expanded)
+# PII patterns (expanded) — matches common formats; may produce false positives on order IDs
 PII_PATTERNS: dict[str, str] = {
-    "credit_card": r"\b(?:\d{4}[-\s]?){3}\d{4}\b",
+    "credit_card": r"\b(?:\d{4}[-\s]?){3}\d{4}\b",  #review: also matches 16-digit order/tracking numbers
     "ssn": r"\b\d{3}-\d{2}-\d{4}\b",
     "phone_us": r"\b(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
     "phone_intl": r"\b\+\d{1,3}[-.\s]?\d{6,14}\b",
@@ -166,7 +166,7 @@ def validate_input(message: str) -> GuardrailResult:
 
     # Determine pass/fail
     # Block if risk_score >= 0.5 (i.e., prompt injection or multiple off-topic signals)
-    passed = risk_score < 0.5
+    passed = risk_score < 0.5  #review: single off-topic match = 0.5 = blocked; may be too aggressive
 
     if not passed:
         logger.warning(
@@ -266,7 +266,7 @@ def _check_hallucination(response: str, context: str) -> list[str]:
     suspicious_numbers = {
         n for n in suspicious_numbers
         if len(n) > 1 and not (1900 <= int(re.sub(r'%', '', n).split('.')[0]) <= 2030 if re.sub(r'%', '', n).split('.')[0].isdigit() else False)
-    }
+    }  #review: complex inline logic — may throw on non-numeric strings despite guard
 
     if len(suspicious_numbers) > 2:
         flags.append(f"potential_hallucination:ungrounded_numbers:{','.join(list(suspicious_numbers)[:5])}")

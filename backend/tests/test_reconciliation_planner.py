@@ -8,8 +8,14 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
 
-TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "postgres")
-conn_string = f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
+from tests.conftest import get_test_postgres_dsn
+
+conn_string = get_test_postgres_dsn()
+if not conn_string:
+    pytest.skip(
+        "Real PostgreSQL test database required (set TEST_POSTGRES_URL or TEST_DB_PASSWORD).",
+        allow_module_level=True,
+    )
 
 @pytest.fixture
 def planner():

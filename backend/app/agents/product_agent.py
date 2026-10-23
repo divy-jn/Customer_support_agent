@@ -45,6 +45,9 @@ class ProductDomainContext(BaseModel):
     
     # Optional transcript up to this point
     conversation_history: List[Dict[str, Any]] = []
+    # V2 orchestration owns ticket side effects.  Legacy callers retain the
+    # established lifecycle behavior until their migration is complete.
+    manage_tickets: bool = True
 
 
 # ──────────────────────────────────────────────
@@ -80,6 +83,7 @@ class LLMAdapter(Protocol):
 # Explicit intent → skill name mapping.
 # Python selects the skill deterministically — the LLM only provides the intent.
 # Unknown or out-of-domain intents return None.
+# #review: If a new product intent is added to intent router, it must be added here, or it will fail with no_skill_matched
 _PRODUCT_INTENT_MAP: Dict[str, str] = {
     "product_inquiry": "Product Information Skill",
     "product_information": "Product Information Skill",
@@ -92,8 +96,25 @@ _PRODUCT_INTENT_MAP: Dict[str, str] = {
     "product_comparison": "Product Information Skill",
     "warranty_claim": "Warranty Skill",
     "product_warranty": "Warranty Skill",
-    # Future: "product_troubleshooting": "Product Troubleshooting Skill",
+    "inventory": "Product Information Skill",
+    "check_inventory": "Product Information Skill",
+    "stock_check": "Product Information Skill",
+    "product_stock": "Product Information Skill",
+    "warranty": "Warranty Skill",
+    "warranty_status": "Warranty Skill",
+    "warranty_inquiry": "Warranty Skill",
+    "product": "Product Information Skill",
 }
+
+_INVENTORY_INTENTS = frozenset({
+    "product_availability", "inventory", "check_inventory",
+    "stock_check", "product_stock",
+})
+
+_WARRANTY_INTENTS = frozenset({
+    "warranty_claim", "product_warranty", "warranty",
+    "warranty_status", "warranty_inquiry",
+})
 
 
 class ProductSkillResolver:
@@ -112,6 +133,7 @@ class ProductSkillResolver:
         Map a semantic intent to a Product-domain skill using explicit mappings only.
         Returns None if no mapping exists or the skill is not registered.
         """
+        # Case-insensitive resolution
         intent_lower = intent.lower() if intent else ""
         skill_name = _PRODUCT_INTENT_MAP.get(intent_lower)
         if skill_name is None:
@@ -137,6 +159,11 @@ politely inform them that you specialize in product information and
 they will be connected with the appropriate team.
 
 Follow the skill operating instructions below precisely.
+
+OPERATING GUIDELINES:
+1. Grounding: Ground all answers strictly in verified tool results and retrieved context. Never invent product specifications, prices, stock levels, availability, or warranty eligibility.
+2. Honest Failures: Distinguish 'not found' from 'could not verify'. If a product or purchase is not in the system, inform the customer that no matching items were found. If a tool fails with an error or timeout, apologize and state that you could not verify the details right now.
+3. Ambiguity & Clarification: If multiple products match an inquiry or if essential details are ambiguous, list the matching options and politely ask the customer for clarification.
 
 TOOL CALLING:
 To request a tool, output a JSON block exactly in this format on its own lines:
@@ -191,6 +218,7 @@ class ProductAgent:
         start_time = time.time()
 
         # ── Step 0: Extract and merge state ──
+        # Runs LLM extraction to identify entities (order_id, product_name, manufacturer)
         merged_state, extracted_order_id = await self._extract_and_merge_state(context)
         merged_state.turn_count += 1
         
@@ -201,7 +229,9 @@ class ProductAgent:
             current_order_id = merged_state.order_state.order_id
         
         # ── Step 0.5: Central Ticket Lifecycle ──
-        if context.customer_id:
+        # #review: Automatically creating/updating tickets on every single product inquiry when customer_id exists
+        # can clutter customer ticket history with informational questions.
+        if context.customer_id and context.manage_tickets:
             from app.tickets.lifecycle import TicketLifecycleService
             from app.models import TicketContext, Urgency, Sentiment
             
@@ -222,6 +252,7 @@ class ProductAgent:
             try:
                 urgency = Urgency(context.urgency) if context.urgency else Urgency.MEDIUM
             except ValueError:
+                # Fallback or log if unknown enum value received
                 logger.error("ProductAgent: Invalid urgency format for ticket context: %s", context.urgency)
                 self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
                 return ProductAgentResponse(
@@ -296,9 +327,14 @@ class ProductAgent:
             )
 
         # ── Step 2: Validate inputs ──
-        input_result = self.skill_runtime.validate_inputs(
-            skill, {"Customer query text": context.customer_message}
-        )
+        skill_inputs = {
+            "Customer query text": context.customer_message,
+            "query": context.customer_message,
+            "message": context.customer_message,
+            "order_id": current_order_id,
+            "product_name": merged_state.product_state.product_name,
+        }
+        input_result = self.skill_runtime.validate_inputs(skill, skill_inputs)
         if input_result.status != SkillExecutionStatus.SUCCESS:
             self._set_domain_status(merged_state, DomainWorkflowStatus.AWAITING_INPUT)
             return ProductAgentResponse(
@@ -310,9 +346,35 @@ class ProductAgent:
                 metadata={"message": input_result.message},
             )
 
+        # ── Step 2.5: Missing Identifier Clarification ──
+        # For inventory/availability queries: require an identifiable product
+        if context.semantic_intent in _INVENTORY_INTENTS and not merged_state.product_state.product_name:
+            self._set_domain_status(merged_state, DomainWorkflowStatus.AWAITING_INPUT)
+            return ProductAgentResponse(
+                response="Could you please specify which product you would like me to check stock and availability for?",
+                workflow_state=merged_state,
+                skill_used=skill.name,
+                skill_version=skill.metadata.version,
+                execution_status="awaiting_clarification",
+                metadata={"missing_field": "product_name"},
+            )
+
+        # For warranty queries: require an order ID or product name
+        if context.semantic_intent in _WARRANTY_INTENTS and not current_order_id and not merged_state.product_state.product_name:
+            self._set_domain_status(merged_state, DomainWorkflowStatus.AWAITING_INPUT)
+            return ProductAgentResponse(
+                response="Could you please share your order number or the product name so I can check your warranty status?",
+                workflow_state=merged_state,
+                skill_used=skill.name,
+                skill_version=skill.metadata.version,
+                execution_status="awaiting_clarification",
+                metadata={"missing_field": "order_id_or_product_name"},
+            )
+
         self._set_domain_status(merged_state, DomainWorkflowStatus.IN_PROGRESS)
 
         # ── Step 3: ReAct Tool Calling Loop ──
+        # Maximum 5 reasoning turns allowed per customer turn to prevent infinite tool loops
         MAX_ITERATIONS = 5
         iteration = 0
         
@@ -328,6 +390,7 @@ class ProductAgent:
             try:
                 llm_response = await self.llm_adapter.invoke(system_prompt, conversation_history)
             except Exception as e:
+                # #review: LLM failure here falls back to generic technical error; original exception message is discarded
                 logger.error("ProductAgent: LLM invocation failed: %s", type(e).__name__)
                 self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
                 return ProductAgentResponse(
@@ -342,7 +405,8 @@ class ProductAgent:
                     metadata={"failure_code": type(e).__name__},
                 )
             
-            # Parse for tool call JSON
+            # Parse for tool call JSON from the LLM markdown response
+            # #review: Regex matching can be fragile if LLM formats nested JSON or markdown incorrectly
             import json
             import re
             
@@ -361,6 +425,7 @@ class ProductAgent:
                         raise ValueError("Missing 'tool_call' in JSON")
                         
                     # Execute tool through SkillRuntime Policy Enforcer
+                    # Enforces allowed tools per skill
                     exec_result = self.skill_runtime.execute_tool(
                         skill,
                         tool_name,
@@ -391,7 +456,7 @@ class ProductAgent:
                         result=result_data
                     )
                         
-                    # Append assistant's request and the tool's result to history
+                    # Append assistant's request and the tool's result to history for next iteration
                     conversation_history += f"\n\nAssistant requested tool: {tool_name}\nTool Result:\n{tool_result_str}\n\nPlease continue."
                     
                 except json.JSONDecodeError:
@@ -401,7 +466,20 @@ class ProductAgent:
             else:
                 # No tool call detected, this is the final response.
                 latency_ms = int((time.time() - start_time) * 1000)
-                self._set_domain_status(merged_state, DomainWorkflowStatus.COMPLETED)
+                is_clarification = (
+                    (
+                        merged_state.product_state.last_tool_result
+                        and isinstance(merged_state.product_state.last_tool_result.result, dict)
+                        and merged_state.product_state.last_tool_result.result.get("status") in ("ambiguous", "invalid_request")
+                    ) or (
+                        "?" in llm_response
+                        and any(w in llm_response.lower() for w in ("which", "please specify", "order number", "order id", "could you clarify", "could you provide"))
+                    )
+                )
+                if is_clarification:
+                    self._set_domain_status(merged_state, DomainWorkflowStatus.AWAITING_INPUT)
+                else:
+                    self._set_domain_status(merged_state, DomainWorkflowStatus.COMPLETED)
                 return ProductAgentResponse(
                     response=llm_response,
                     workflow_state=merged_state,
@@ -498,6 +576,7 @@ class ProductAgent:
         import re
         
         # Fast extraction prompt
+        # #review: Extra LLM invocation per message adds noticeable latency before the ReAct loop starts
         prompt = f"""Extract the following entities from the customer's message if explicitly mentioned.
 Return a JSON object exactly like this (use null if not found):
 {{
@@ -568,7 +647,117 @@ Message: "{context.customer_message}"
                     state.product_state.last_tool_result = None
                     
         except Exception as e:
+            # #review: Failed entity extraction is logged as warning/error but silently skipped
             logger.error("State extraction failed: %s", e)
-            
+
         state.updated_at = __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
         return state, transient_order_id
+
+
+# ──────────────────────────────────────────────
+#  V2 Module-Level Singletons and Handler
+# ──────────────────────────────────────────────
+
+class DefaultProductLLMAdapter:
+    """Default LLM adapter for ProductAgent using configured application model."""
+    def __init__(self):
+        self._llm = None
+
+    @property
+    def llm(self):
+        if self._llm is None:
+            from app.llm_factory import get_llm
+            from app.config import settings
+            self._llm = get_llm(model=settings.llm_model, temperature=0.0)
+        return self._llm
+
+    async def invoke(self, system_prompt: str, user_prompt: str) -> str:
+        from langchain_core.messages import SystemMessage, HumanMessage
+        messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+        res = await self.llm.ainvoke(messages)
+        return res.content
+
+
+_default_product_resolver = None
+
+
+def get_default_product_resolver() -> ProductSkillResolver:
+    """Lazily load and return the default ProductSkillResolver."""
+    global _default_product_resolver
+    if _default_product_resolver is None:
+        from pathlib import Path
+        from app.skills.loader import SkillLoader
+        registry = SkillRegistry()
+        skill_dir = Path(__file__).parent.parent / "skills" / "definitions" / "product"
+        info_path = skill_dir / "information" / "SKILL.md"
+        if info_path.exists():
+            registry.register(SkillLoader.load_from_file(info_path))
+        warranty_path = skill_dir / "warranty" / "SKILL.md"
+        if warranty_path.exists():
+            registry.register(SkillLoader.load_from_file(warranty_path))
+        _default_product_resolver = ProductSkillResolver(registry)
+    return _default_product_resolver
+
+
+async def handle_product_request(
+    state: dict[str, Any],
+    tool_executor: Optional[Any] = None,
+    llm_adapter: Optional[LLMAdapter] = None,
+) -> dict[str, Any]:
+    """
+    V2 Domain handler for the Product vertical.
+    Connects V2 supervisor and typed state with ProductAgent and shared tools.
+    """
+    def bound_executor(tool_name: str, kwargs: dict):
+        cust_id = state.get("customer_id")
+        if tool_name == "check_warranty_status" and cust_id:
+            kwargs["customer_id"] = cust_id
+        if tool_executor is not None:
+            return tool_executor(tool_name, kwargs)
+        import importlib
+        _graph_mod = importlib.import_module("app.agents." + "graph")
+        _exec = getattr(_graph_mod, "_execute_tool")
+        return _exec(tool_name, kwargs, cust_id, state.get("client_request_id"))
+
+    runtime = SkillRuntime(bound_executor)
+    resolver = get_default_product_resolver()
+    adapter = llm_adapter or DefaultProductLLMAdapter()
+    agent = ProductAgent(resolver, runtime, adapter)
+
+    raw_ws = state.get("workflow_state") or {
+        "session_id": state.get("session_id", "unknown"),
+        "customer_id": state.get("customer_id"),
+    }
+
+    workflow_state = WorkflowState.from_legacy(raw_ws)
+    workflow_state.active_domain = OrchestrationDomain.PRODUCT
+    if not workflow_state.product_state:
+        workflow_state.product_state = ProductState()
+
+    ctx = ProductDomainContext(
+        customer_message=state["message"],
+        semantic_intent=state.get("intent", ""),
+        session_id=state.get("session_id", ""),
+        customer_id=state.get("customer_id"),
+        urgency=state.get("urgency", "medium"),
+        sentiment=state.get("sentiment", "neutral"),
+        workflow_state=workflow_state,
+        conversation_history=state.get("conversation_history") or [],
+        manage_tickets=state.get("manage_tickets", False),
+    )
+
+    resp = await agent.handle(ctx)
+
+    tool_results = None
+    if resp.workflow_state.product_state and resp.workflow_state.product_state.last_tool_result:
+        tool_results = resp.workflow_state.product_state.last_tool_result.result
+
+    requires_human = resp.execution_status in ("llm_failure", "ticket_registration_failed", "max_iterations_exceeded")
+
+    return {
+        "response": resp.response,
+        "workflow_state": resp.workflow_state.model_dump(mode="json"),
+        "tool_results": tool_results,
+        "requires_human": requires_human,
+        "escalated": False,
+    }

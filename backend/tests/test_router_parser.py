@@ -145,3 +145,23 @@ async def test_graph_state_preserves_metadata():
         assert res["router_parse_failure"] is False
         assert res["router_internal_failure"] is False
         assert res["router_error_type"] == "Timeout"
+
+
+@pytest.mark.asyncio
+async def test_router_invalid_enum_produces_typed_fallback():
+    """Invalid enum values from LLM must not crash; they produce typed parse failure and safe fallback."""
+    with patch("app.agents.intent_router.get_router_llm") as mock_llm:
+        mock_instance = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = '{"intent": "unsupported_magic_intent", "sentiment": "neutral", "urgency": "medium", "route_to": "rag_agent"}'
+        mock_instance.ainvoke = AsyncMock(return_value=mock_response)
+        mock_llm.return_value = mock_instance
+
+        res = await classify_intent("hello")
+
+        assert res["intent"] == "general"
+        assert res["route_to"] == "rag_agent"
+        assert res["router_parse_failure"] is True
+        assert res["router_transport_failure"] is False
+        assert res["router_internal_failure"] is False
+        assert res["router_error_type"] == "ValueError"

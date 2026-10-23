@@ -48,3 +48,8 @@ dataset/strova_multi_turn_customer_support.csv
 *.sqlite3
 *.db
 graphify-out/cache/
+
+# Test artifacts
+test-results/
+playwright-report/
+blob-report/

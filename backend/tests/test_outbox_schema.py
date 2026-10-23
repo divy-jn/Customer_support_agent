@@ -2,15 +2,28 @@ import json
 import os
 import pytest
 import uuid
-import psycopg2
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
 
+TEST_POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL")
 TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD")
-if not TEST_DB_PASSWORD:
-    raise ValueError("TEST_DB_PASSWORD environment variable is required to run real integration tests. Provide it in the local Docker environment.")
 
-conn_string = f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
+if not psycopg2:
+    pytest.skip(
+        "psycopg2 is required for real PostgreSQL integration tests.",
+        allow_module_level=True,
+    )
+
+if not TEST_POSTGRES_URL and not TEST_DB_PASSWORD:
+    pytest.skip(
+        "TEST_POSTGRES_URL or TEST_DB_PASSWORD is required for real PostgreSQL integration tests.",
+        allow_module_level=True,
+    )
+
+conn_string = TEST_POSTGRES_URL or f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
 
 def exec_enqueue(logical_identity_hash, source_event_id, notification_type, recipient_identity, recipient_address, payload):
     conn = psycopg2.connect(conn_string)

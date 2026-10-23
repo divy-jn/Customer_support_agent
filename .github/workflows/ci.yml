@@ -1,0 +1,197 @@
+name: Continuous Integration
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - phase-2-security-remediation
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend unit and architecture checks
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Deterministic tests mock external clients. These values only satisfy
+      # settings validation; live credentials are never used in this job.
+      SUPABASE_URL: https://ci-placeholder.supabase.co
+      SUPABASE_KEY: ci-placeholder-key-123456
+      JWT_SECRET: ci-only-not-a-production-secret-that-is-long-enough-for-unit-tests
+      AGENT_SECRET: ci-agent-secret-for-unit-tests-only-long-enough
+      DEBUG_MODE: "false"
+      TEST_DB_PASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Initialize PostgreSQL integration-test schema
+        run: |
+          python - <<'PY'
+          import psycopg2
+
+          dsn = "dbname=postgres user=postgres host=localhost port=5433 password=postgres"
+          with psycopg2.connect(dsn) as conn:
+              conn.autocommit = True
+              with conn.cursor() as cur:
+                  from psycopg2 import sql
+
+                  for role in ("anon", "authenticated", "service_role"):
+                      cur.execute("SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = %s", (role,))
+                      if cur.fetchone() is None:
+                          cur.execute(sql.SQL("CREATE ROLE {}").format(sql.Identifier(role)))
+                  with open("scripts/schema.sql", encoding="utf-8") as schema_file:
+                      cur.execute(schema_file.read())
+                  # Minimal deterministic records for PostgreSQL integration tests.
+                  # This is an ephemeral CI database, not application/customer data.
+                  cur.execute("""
+                      INSERT INTO public.customers (id, name, email)
+                      VALUES
+                          (1, 'CI Customer One', 'ci-customer-one@example.test'),
+                          (2, 'CI Customer Two', 'ci-customer-two@example.test')
+                      ON CONFLICT (id) DO NOTHING
+                  """)
+                  cur.execute("""
+                      INSERT INTO public.products (id, name, category, price, stock, description)
+                      VALUES (1, 'CI Test Product', 'general', 100.00, 10, 'Fixture product')
+                      ON CONFLICT (id) DO NOTHING
+                  """)
+                  cur.execute("""
+                      INSERT INTO public.orders (id, customer_id, product_id, status, tracking_number)
+                      VALUES (1, 1, 1, 'active', 'CI-TRACKING-001')
+                      ON CONFLICT (id) DO NOTHING
+                  """)
+                  cur.execute("""
+                      INSERT INTO public.payment_records
+                          (order_id, customer_id, transaction_reference, status, amount, currency, payment_method)
+                      VALUES (1, 1, 'CI-TRANSACTION-001', 'captured', 100.00, 'INR', 'UPI')
+                      ON CONFLICT (order_id) DO NOTHING
+                  """)
+                  for table in ("customers", "products", "orders"):
+                      cur.execute(
+                          f"SELECT setval(pg_get_serial_sequence('public.{table}', 'id'), "
+                          f"(SELECT GREATEST(COALESCE(MAX(id), 1), 1) FROM public.{table}), true)"
+                      )
+          print("PostgreSQL integration-test schema initialized.")
+          PY
+      - name: Compile application and tests
+        run: python -m compileall app tests -q
+      - name: Run deterministic tests
+        run: python -m pytest tests -q -m "not llm_eval"
+
+  frontend:
+    name: Frontend lint and production build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
+
+  postgres-integration:
+    name: Real PostgreSQL Idempotency & Concurrency Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword123
+          POSTGRES_DB: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      TEST_POSTGRES_URL: postgresql://postgres:testpassword123@localhost:5433/postgres
+      TEST_DB_PASSWORD: testpassword123
+      SUPABASE_URL: https://ci-placeholder.supabase.co
+      SUPABASE_KEY: ci-placeholder-key-123456
+      JWT_SECRET: ci-only-not-a-production-secret-that-is-long-enough-for-unit-tests
+      AGENT_SECRET: ci-agent-secret-for-unit-tests-only-long-enough
+      APPROVAL_SIGNING_SECRET: ci-approval-secret-32bytes-hex1234567890abcdef
+      DEBUG_MODE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install psycopg2-binary
+      - name: Install PostgreSQL client tools
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Bootstrap test-only database roles
+        run: |
+          pg_isready -h localhost -p 5433 -U postgres
+          PGPASSWORD=testpassword123 psql -h localhost -p 5433 -U postgres -d postgres -v ON_ERROR_STOP=1 -f scripts/test_roles.sql
+      - name: Apply canonical application schema
+        run: |
+          PGPASSWORD=testpassword123 psql -h localhost -p 5433 -U postgres -d postgres -v ON_ERROR_STOP=1 -f scripts/schema.sql
+      - name: Insert deterministic test fixtures
+        run: |
+          PGPASSWORD=testpassword123 psql -h localhost -p 5433 -U postgres -d postgres -v ON_ERROR_STOP=1 -f scripts/test_fixtures.sql
+      - name: Run live PostgreSQL concurrency, idempotency, outbox, and reconciliation tests
+        run: |
+          python -m pytest \
+            tests/test_postgres_concurrency_real.py \
+            tests/test_idempotency_real.py \
+            tests/test_idempotency_additional.py \
+            tests/test_outbox_schema.py \
+            tests/test_outbox_worker.py \
+            tests/test_outbox_repair.py \
+            tests/test_ticket_notification_http.py \
+            tests/test_ticket_notification_transaction.py \
+            tests/test_custom_email_outbox.py \
+            tests/test_escalation_integration_slice_353.py \
+            tests/test_escalation_persistence_real.py \
+            tests/test_escalation_service_real.py \
+            tests/test_reconciliation_coordinator.py \
+            tests/test_reconciliation_discovery.py \
+            tests/test_reconciliation_planner.py \
+            -v

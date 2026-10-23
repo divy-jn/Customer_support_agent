@@ -37,8 +37,36 @@ class MockWebSocket:
 
 import os
 import psycopg2
-TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "postgres")
-conn_string = f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
+from tests.conftest import get_test_postgres_dsn
+
+conn_string = get_test_postgres_dsn()
+if not conn_string:
+    pytest.skip(
+        "Real PostgreSQL test database required (set TEST_POSTGRES_URL or TEST_DB_PASSWORD).",
+        allow_module_level=True,
+    )
+
+@pytest.fixture(autouse=True)
+def mock_conversation_ownership_lookup(monkeypatch):
+    class EmptyConversationQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            from types import SimpleNamespace
+            return SimpleNamespace(data=[])
+
+    original_table = supabase.table
+    def table(name):
+        if name == "conversations":
+            return EmptyConversationQuery()
+        return original_table(name)
+
+    monkeypatch.setattr(supabase, "table", table)
+
 
 @pytest.fixture(autouse=True)
 def clean_db():
@@ -255,7 +283,8 @@ async def test_missing_client_request_id_fails_closed():
         mock_graph.return_value = {"response": "Escalating!", "escalated": True}
         await handle_customer_ws(ws, session_id, customer_id)
         
-    assert any("Missing client_request_id. Cannot perform escalation." in m for m in ws.sent_messages)
+    assert any("Missing client_request_id in payload." in m for m in ws.sent_messages)
+    mock_graph.assert_not_called()
     
     conn = psycopg2.connect(conn_string)
     cur = conn.cursor()

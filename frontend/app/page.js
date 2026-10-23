@@ -4,15 +4,22 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useToast } from "./components/Toast";
+import ApprovalCard from "./components/ApprovalCard";
 import { API_BASE, WS_BASE } from "./lib/api";
 
 export default function CustomerChatPage() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
-  // Lazy initializers — restore from localStorage without a useEffect
+  // Lazy initializers — restore from localStorage without cascading renders in useEffect
   const [sessionId, setSessionId] = useState(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("intellisupport_session_id") || null;
+    if (typeof window !== "undefined") {
+      try {
+        return localStorage.getItem("intellisupport_session_id") || null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
   });
   const [isConnected, setIsConnected] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
@@ -24,16 +31,26 @@ export default function CustomerChatPage() {
   // Customer Identity
   const [customerEmail, setCustomerEmail] = useState("");
   const [identifiedCustomer, setIdentifiedCustomer] = useState(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const saved = localStorage.getItem("intellisupport_customer");
-      return saved ? JSON.parse(saved) : null;
-    } catch { return null; }
+    if (typeof window !== "undefined") {
+      try {
+        const savedCust = localStorage.getItem("intellisupport_customer");
+        return savedCust ? JSON.parse(savedCust) : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
   });
   const [identifying, setIdentifying] = useState(false);
   const [showIdentityModal, setShowIdentityModal] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return !localStorage.getItem("intellisupport_customer");
+    if (typeof window !== "undefined") {
+      try {
+        return !localStorage.getItem("intellisupport_customer");
+      } catch {
+        return true;
+      }
+    }
+    return false;
   });
 
   // Drawer
@@ -75,11 +92,19 @@ export default function CustomerChatPage() {
 
   // ── WebSocket ──
   const connectWebSocket = useCallback(async () => {
-    if (wsRef.current && wsRef.current.readyState <= 1) return;
+    // Only skip if we already have a fully open connection
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
+    // Clean up any lingering socket (CONNECTING or CLOSING state)
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch {}
+      wsRef.current = null;
+    }
 
     let token = localStorage.getItem("intellisupport_jwt");
     if (!token) {
       try {
+        // #review: Hardcoded development customer email 'amit.sharma@example.com'.
+        // In production, guest users should receive an anonymous token or a real login flow.
         const res = await fetch(`${API_BASE}/api/v1/auth/dev-login?email=amit.sharma@example.com`, { method: 'POST' });
         if (res.ok) {
           const data = await res.json();
@@ -137,7 +162,8 @@ export default function CustomerChatPage() {
             timestamp: msg.timestamp,
             agent_name: msg.agent_name || (msg.human_agent ? "Support Agent" : "Adi"),
             human_agent: msg.human_agent,
-            status: msg.role === "customer" ? "delivered" : undefined
+            status: msg.role === "customer" ? "delivered" : undefined,
+            approval: msg.approval || null,
           })));
         } else if (data.message) {
           setMessages((prev) => {
@@ -157,9 +183,9 @@ export default function CustomerChatPage() {
         setIsTyping(false);
       } else if (data.type === "typing") {
         setIsTyping(true);
-        // Auto-clear typing indicator after 30s as a safety net
+        // Auto-clear typing indicator after 120s as a safety net
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 30000);
+        typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 120000);
       } else if (data.type === "human_message") {
         setIsTyping(false);
         if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
@@ -185,6 +211,7 @@ export default function CustomerChatPage() {
             agent_name: data.agent_name || "Adi",
             timestamp: data.timestamp,
             status: "delivered",
+            approval: data.approval || null,
           },
         ]);
       } else if (data.type === "error") {
@@ -208,6 +235,8 @@ export default function CustomerChatPage() {
           { role: "error", content: `Authentication failed (Code: ${event.code}). Getting a new token and reconnecting...`, timestamp: new Date().toISOString() },
         ]);
         localStorage.removeItem("intellisupport_jwt");
+        localStorage.removeItem("intellisupport_session_id");
+        setSessionId(null);
       }
 
       setReconnecting(true);
@@ -233,9 +262,18 @@ export default function CustomerChatPage() {
   }, [connectWebSocket]);
 
   useEffect(() => {
-    connectWebSocket();
+    // Start the connection after the effect commits. This keeps state updates
+    // in the connection lifecycle out of the synchronous effect body.
+    const connectTimer = setTimeout(() => {
+      void connectWebSocket();
+    }, 0);
+
     return () => {
-      if (reconnectTimerRef.current) clearInterval(reconnectTimerRef.current);
+      clearTimeout(connectTimer);
+      if (reconnectTimerRef.current) {
+        clearInterval(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       wsRef.current?.close();
     };
   }, [connectWebSocket]);
@@ -246,21 +284,37 @@ export default function CustomerChatPage() {
     if (!customerEmail.trim()) return;
     setIdentifying(true);
     try {
+      const authRes = await fetch(`${API_BASE}/api/v1/auth/dev-login?email=${encodeURIComponent(customerEmail)}`, { method: 'POST' });
+      if (!authRes.ok) {
+          toast("No account found with that email. Try another or continue as guest.", "warning");
+          setIdentifying(false);
+          return;
+      }
+      const authData = await authRes.json();
+      localStorage.setItem("intellisupport_jwt", authData.access_token);
+
       const res = await fetch(
-        `${API_BASE}/api/v1/customers/search?q=${encodeURIComponent(customerEmail)}`
+        `${API_BASE}/api/v1/customers/search?q=${encodeURIComponent(customerEmail)}`,
+        { headers: { "Authorization": `Bearer ${authData.access_token}` } }
       );
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         setIdentifiedCustomer(data[0]);
         setShowIdentityModal(false);
         localStorage.setItem("intellisupport_customer", JSON.stringify(data[0]));
+        // Clear previous session ID so new customer starts a clean, authorized session
+        localStorage.removeItem("intellisupport_session_id");
+        setSessionId(null);
+        setMessages([]);
         toast(`Welcome back, ${data[0].name}! 🎉`, "success");
-        if (wsRef.current && wsRef.current.readyState === 1) {
-          // Identity is handled purely by the JWT parameter in the WebSocket connection.
-          // No need to send fake [System] messages that trigger LangGraph.
+        // Reconnect WebSocket with new customer token
+        if (wsRef.current) {
+          try { wsRef.current.close(); } catch {}
+          wsRef.current = null;
         }
+        setTimeout(() => connectWebSocket(), 100);
       } else {
-        toast("No account found with that email. Try another or continue as guest.", "warning");
+        toast("Failed to load customer profile.", "warning");
       }
     } catch (err) {
       toast("Connection error. Please try again.", "error");
@@ -291,23 +345,65 @@ export default function CustomerChatPage() {
     if (!drawerOpen && identifiedCustomer && !customerHistory) loadHistory();
   };
 
+  const nextReqIdRef = useRef(crypto.randomUUID());
+
   // ── Send Message ──
   const sendMessage = (e) => {
     e.preventDefault();
     if (!input.trim() || !wsRef.current || wsRef.current.readyState !== 1) return;
     const msg = input.trim();
+    const reqId = nextReqIdRef.current;
+    nextReqIdRef.current = crypto.randomUUID(); // generate new id for the NEXT distinct action
+    
     setMessages((prev) => [
       ...prev,
-      { role: "customer", content: msg, timestamp: new Date().toISOString(), status: "sent" },
+      { role: "customer", content: msg, timestamp: new Date().toISOString(), status: "sent", client_request_id: reqId },
     ]);
     wsRef.current.send(
-      JSON.stringify({ message: msg, customer_id: identifiedCustomer?.id })
+      JSON.stringify({ message: msg, customer_id: identifiedCustomer?.id, client_request_id: reqId })
     );
     setInput("");
     setAutoScroll(true);
   };
 
+  // ── Approval Action Handler ──
+  const handleApprovalAction = (action, orderId, isConfirm) => {
+    if (!wsRef.current || wsRef.current.readyState !== 1) return;
+    const reqId = nextReqIdRef.current;
+    nextReqIdRef.current = crypto.randomUUID();
+
+    let msgText = "";
+    if (isConfirm) {
+      if (action === "cancel_order") {
+        msgText = `Yes, please cancel order #${orderId}`;
+      } else if (action === "process_refund") {
+        msgText = `Yes, please process refund for order #${orderId}`;
+      } else {
+        msgText = `Yes, proceed with ${action}`;
+      }
+    } else {
+      if (action === "cancel_order") {
+        msgText = `No, do not cancel order #${orderId}`;
+      } else if (action === "process_refund") {
+        msgText = `No, do not refund order #${orderId}`;
+      } else {
+        msgText = `No, cancel this action`;
+      }
+    }
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "customer", content: msgText, timestamp: new Date().toISOString(), status: "sent", client_request_id: reqId },
+    ]);
+    wsRef.current.send(
+      JSON.stringify({ message: msgText, customer_id: identifiedCustomer?.id, client_request_id: reqId })
+    );
+    setAutoScroll(true);
+  };
+
   // ── Markdown ──
+  // #review: Custom regex markdown replacement used with dangerouslySetInnerHTML without DOMPurify/sanitization.
+  // Content containing raw <script> or <img onerror=...> could lead to XSS if not sanitized.
   const renderMarkdown = (text) => {
     if (!text) return text;
     let html = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
@@ -328,11 +424,14 @@ export default function CustomerChatPage() {
 
   const sendSuggestion = (text) => {
     if (!wsRef.current || wsRef.current.readyState !== 1) return;
+    const reqId = nextReqIdRef.current;
+    nextReqIdRef.current = crypto.randomUUID();
+    
     setMessages((prev) => [
       ...prev,
-      { role: "customer", content: text, timestamp: new Date().toISOString(), status: "sent" },
+      { role: "customer", content: text, timestamp: new Date().toISOString(), status: "sent", client_request_id: reqId },
     ]);
-    wsRef.current.send(JSON.stringify({ message: text, customer_id: identifiedCustomer?.id }));
+    wsRef.current.send(JSON.stringify({ message: text, customer_id: identifiedCustomer?.id, client_request_id: reqId }));
     setAutoScroll(true);
   };
 
@@ -600,6 +699,13 @@ export default function CustomerChatPage() {
                       className="text-sm leading-relaxed whitespace-pre-wrap markdown-body"
                     >
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                      {msg.approval && (
+                        <ApprovalCard
+                          approval={msg.approval}
+                          onAction={handleApprovalAction}
+                          isLatest={i === messages.length - 1}
+                        />
+                      )}
                     </div>
                   ) : (
                     <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>

@@ -29,6 +29,14 @@ from app.dependencies import verify_agent_ws_token
 #  Logging
 # ──────────────────────────────────────────────
 setup_logger(log_level=settings.log_level)
+
+# Query-string authentication is retained for browser WebSockets, so prevent
+# bearer tokens and static credentials from leaking into access/error logs.
+from app.logging_security import QuerySecretRedactionFilter
+_query_secret_filter = QuerySecretRedactionFilter()
+for _logger_name in ("uvicorn.access", "uvicorn.error", "customer_support", "tracking"):
+    logging.getLogger(_logger_name).addFilter(_query_secret_filter)
+
 logger = logging.getLogger("customer_support")
 
 
@@ -37,6 +45,7 @@ logger = logging.getLogger("customer_support")
 # ──────────────────────────────────────────────
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """Attach a unique X-Request-ID to every request for tracing."""
+    # Every HTTP request gets a unique 12-char hex ID for log correlation
 
     async def dispatch(self, request: Request, call_next):
         request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -58,12 +67,13 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 # ──────────────────────────────────────────────
 def _run_startup_checks():
     """Validate that critical services are reachable at boot time."""
+    # Non-blocking: logs warnings but doesn't prevent startup
     import urllib.request
     import json as _json
 
     checks = {}
 
-    # LLM (Vertex AI)
+    # Check LLM (Vertex AI) connectivity
     try:
         from app.llm_factory import get_llm
         llm = get_llm()
@@ -72,7 +82,7 @@ def _run_startup_checks():
         checks["llm"] = f"CONFIG_ERROR ({e})"
         logger.warning(f"Vertex AI initialization check failed at startup: {e}")
 
-    # Supabase
+    # Check Supabase DB connectivity
     try:
         from supabase import create_client
         sb = create_client(settings.supabase_url, settings.supabase_key)
@@ -82,7 +92,7 @@ def _run_startup_checks():
         checks["supabase"] = f"UNREACHABLE ({e})"
         logger.warning(f"Supabase not reachable at startup: {e}")
 
-    # Vector DB (Pinecone)
+    # Check Pinecone vector DB connectivity
     try:
         from pinecone import Pinecone
         pc = Pinecone(api_key=settings.pinecone_api_key)
@@ -117,7 +127,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Startup checks failed: {e}")
 
-    # Start the outbox worker (Slice 3.3)
+    # Start the durable outbox worker + reconciliation scheduler
     try:
         from app.outbox.lifecycle import start_outbox_worker, start_reconciliation_scheduler
         await start_outbox_worker()
@@ -144,7 +154,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Intelligent Customer Support System",
     description="Multi-agent customer support powered by LangGraph, MCP, and RAG.",
-    version="2.0.0",
+    version="2.0.0",  #review: version says 2.0.0 but /health returns 1.0.0 — pick one
     lifespan=lifespan,
 )
 
@@ -161,7 +171,7 @@ app.add_middleware(
     expose_headers=["X-Request-ID"],
 )
 
-# Rate Limiting — 300 requests/minute per IP
+# Rate Limiting — 300 req/min per IP (optional, requires `slowapi`)
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
     from slowapi.util import get_remote_address
@@ -207,7 +217,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(api_router, prefix="/api/v1", tags=["api"])
 
 
-from app.dependencies import verify_agent_ws_token, verify_customer_ws_token
+from app.dependencies import verify_agent_ws_token, verify_customer_ws_token  #review: duplicate import — verify_agent_ws_token already imported on line 26
 
 # ──────────────────────────────────────────────
 #  WebSocket Endpoints
@@ -235,6 +245,7 @@ async def ws_agent(websocket: WebSocket, session_id: str, _: bool = Depends(veri
 # ──────────────────────────────────────────────
 @app.get("/health", tags=["system"])
 async def health_check():
+    # Only checks Supabase; Pinecone & LLM are NOT checked here
     from app.tools import check_supabase_health
     db_health = check_supabase_health()
     status = "healthy" if db_health.get("status") == "healthy" else "unhealthy"
@@ -242,7 +253,7 @@ async def health_check():
     response = {
         "status": status,
         "service": "customer-support-ai",
-        "version": "1.0.0",
+        "version": "1.0.0",  #review: hard-coded — should match app.version (2.0.0)
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "llm_provider": "vertex",
         "llm_model": settings.llm_model,

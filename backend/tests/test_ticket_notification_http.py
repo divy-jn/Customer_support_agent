@@ -1,19 +1,24 @@
-import uuid
-from fastapi.testclient import TestClient
 import json
-import uuid
 import os
+import uuid
+import pytest
+from fastapi.testclient import TestClient
+
 os.environ["AGENT_SECRET_TOKEN"] = "agent_secret_token"
 from app.main import app
-from tests.test_ticket_notification_transaction import get_outbox_events_for_source
+from tests.conftest import get_test_postgres_dsn
 
-import psycopg2
-import os
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
 
-TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "postgres")
-conn_string = f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
+conn_string = get_test_postgres_dsn()
+
 
 def mock_supabase_rpc_to_real_db(rpc_name, params):
+    if not conn_string:
+        raise RuntimeError("Real PostgreSQL test database required (set TEST_POSTGRES_URL or TEST_DB_PASSWORD).")
     class MockResponse:
         def execute(self):
             conn = psycopg2.connect(conn_string)
@@ -65,9 +70,16 @@ class TestTicketNotificationHTTP:
         from app.config import settings
         settings.agent_secret = self.original_token
 
+    @pytest.mark.requires_postgres
     def test_update_ticket_http_resolution(self):
+        from tests.test_ticket_notification_transaction import get_outbox_events_for_source
+        from types import SimpleNamespace
         from unittest.mock import patch
-        with patch('app.tools.supabase.rpc', side_effect=mock_supabase_rpc_to_real_db):
+        with patch('app.tools.supabase.rpc', side_effect=mock_supabase_rpc_to_real_db), \
+             patch('app.tools.supabase.table') as mock_table:
+            mock_table.return_value.select.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+                data=[{"description": "To be closed"}]
+            )
             
             # Setup: Create a ticket first in DB so we can resolve it
             req_id = str(uuid.uuid4())

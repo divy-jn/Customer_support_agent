@@ -1,3 +1,4 @@
+"""LLM Factory — creates Vertex AI Gemini LLM instances with content normalization."""
 import os
 import json
 import logging
@@ -18,7 +19,7 @@ def get_dynamic_settings() -> dict:
                 if isinstance(data, dict):
                     return data
         except Exception:
-            pass
+            pass  #review: silently swallows JSON parse errors — consider logging
     return {
         "model": settings.llm_model,
     }
@@ -33,6 +34,7 @@ class _NormalizedChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
     lowest layer.
     """
 
+    # Gemini 3+ returns content as list of typed blocks; normalize to plain str
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         res = super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
         for gen in res.generations:
@@ -77,6 +79,7 @@ def get_llm(model: str = None, **kwargs):
 
     Uses Application Default Credentials (ADC) — no API keys needed.
     """
+    # Resolve model: explicit arg > settings.json > env config
     actual_model = model or get_dynamic_settings().get("model") or settings.llm_model
 
     # Apply timeout from settings if not explicitly provided
