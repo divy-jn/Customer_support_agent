@@ -2,6 +2,7 @@ import json
 import os
 import pytest
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     import psycopg2
 except ImportError:

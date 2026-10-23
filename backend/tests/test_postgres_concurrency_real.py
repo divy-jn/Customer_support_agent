@@ -373,6 +373,17 @@ class TestPostgresConcurrencyReal:
         """Scenario 8: When idempotency record does not exist yet, racing requests cannot both become the first execution."""
         req_id = str(uuid.uuid4())
         customer_id = 8
+        seed_conn = get_db_connection()
+        seed_conn.autocommit = True
+        try:
+            with seed_conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO customers (id, name, email) VALUES (%s, %s, %s) ON CONFLICT (id) DO NOTHING;",
+                    (customer_id, "Scenario 8 Customer", f"scenario_8_{customer_id}@example.com"),
+                )
+        finally:
+            seed_conn.close()
+
         payload = {
             "subject": f"Concurrent First Use {req_id[:8]}",
             "description": "Racing first creation attempts",
@@ -526,6 +537,7 @@ class TestPostgresConcurrencyReal:
         finally:
             conn_b.close()
 
+        verify_conn = get_db_connection()
         try:
             with verify_conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM tickets WHERE id = %s;", (ticket_id_b,))

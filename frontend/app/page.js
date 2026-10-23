@@ -10,8 +10,17 @@ import { API_BASE, WS_BASE } from "./lib/api";
 export default function CustomerChatPage() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
-  // Lazy initializers — restore from localStorage without a useEffect
-  const [sessionId, setSessionId] = useState(null);
+  // Lazy initializers — restore from localStorage without cascading renders in useEffect
+  const [sessionId, setSessionId] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        return localStorage.getItem("intellisupport_session_id") || null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
   const [isConnected, setIsConnected] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -21,26 +30,28 @@ export default function CustomerChatPage() {
 
   // Customer Identity
   const [customerEmail, setCustomerEmail] = useState("");
-  const [identifiedCustomer, setIdentifiedCustomer] = useState(null);
-  const [identifying, setIdentifying] = useState(false);
-  const [showIdentityModal, setShowIdentityModal] = useState(false);
-
-  useEffect(() => {
-    try {
-      const savedSession = localStorage.getItem("intellisupport_session_id");
-      if (savedSession) setSessionId(savedSession);
-
-      const savedCust = localStorage.getItem("intellisupport_customer");
-      if (savedCust) {
-        setIdentifiedCustomer(JSON.parse(savedCust));
-        setShowIdentityModal(false);
-      } else {
-        setShowIdentityModal(true);
+  const [identifiedCustomer, setIdentifiedCustomer] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const savedCust = localStorage.getItem("intellisupport_customer");
+        return savedCust ? JSON.parse(savedCust) : null;
+      } catch {
+        return null;
       }
-    } catch {
-      setShowIdentityModal(true);
     }
-  }, []);
+    return null;
+  });
+  const [identifying, setIdentifying] = useState(false);
+  const [showIdentityModal, setShowIdentityModal] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        return !localStorage.getItem("intellisupport_customer");
+      } catch {
+        return true;
+      }
+    }
+    return false;
+  });
 
   // Drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
