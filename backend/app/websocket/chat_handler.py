@@ -383,14 +383,10 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         
                     session, _ = await _mutate_session(session_id, _repair_mode, allow_retry=True, customer_id=customer_id)
             except Exception as e:
-                logger.error(f"Failed to load durable escalation state for session {session_id}: {e}")
-                await manager.send_personal_message({
-                    "type": "error",
-                    "message": "I'm experiencing a technical issue verifying session state. Please try again.",
-                    "agent_name": "System",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }, session_id)
-                continue
+                logger.warning(
+                    f"Could not verify durable escalation state for session {session_id} ({e}); "
+                    "falling back to current session mode."
+                )
 
             # If human agent has taken over, do NOT run ANY AI logic
             if session.get("mode") == "human":
