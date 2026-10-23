@@ -148,8 +148,8 @@ jobs:
       TEST_DB_PASSWORD: testpassword123
       SUPABASE_URL: https://ci-placeholder.supabase.co
       SUPABASE_KEY: ci-placeholder-key-123456
-      JWT_SECRET: ci-only-not-a-production-secret
-      AGENT_SECRET: ci-agent-secret
+      JWT_SECRET: ci-only-not-a-production-secret-that-is-long-enough-for-unit-tests
+      AGENT_SECRET: ci-agent-secret-for-unit-tests-only-long-enough
       APPROVAL_SIGNING_SECRET: ci-approval-secret-32bytes-hex1234567890abcdef
       DEBUG_MODE: "false"
     steps:

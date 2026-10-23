@@ -9,23 +9,12 @@ import logging
 from app.models import EscalationLifecycleStatus
 from app.tools import supabase, _supabase_retry
 
-from app.config import settings
-
 logger = logging.getLogger(__name__)
 
 
 def _is_table_missing_error(e: Exception) -> bool:
     err_msg = str(e)
-    supabase_url = getattr(settings, "supabase_url", "")
-    return (
-        "PGRST205" in err_msg
-        or "Could not find the table" in err_msg
-        or "session_escalation_state" in err_msg
-        or "Name or service not known" in err_msg
-        or "getaddrinfo failed" in err_msg
-        or "Failed to establish a new connection" in err_msg
-        or "placeholder" in supabase_url.lower()
-    )
+    return "PGRST205" in err_msg or "Could not find the table" in err_msg or "session_escalation_state" in err_msg
 
 
 @_supabase_retry

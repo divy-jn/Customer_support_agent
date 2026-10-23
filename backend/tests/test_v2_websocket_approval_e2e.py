@@ -43,6 +43,7 @@ TEST_SIGNING_SECRET = "test-approval-signing-secret-key-for-hmac-32chars"
 def setup_test_environment(monkeypatch):
     """Configure in-memory session store and secrets for test isolation."""
     monkeypatch.setattr("app.persistence.session.redis_client", None)
+    monkeypatch.setattr("app.persistence.escalation.ensure_durable_escalation_state", lambda _s, _c: EscalationLifecycleStatus.NONE)
     monkeypatch.setattr(settings, "jwt_secret", TEST_JWT_SECRET)
     monkeypatch.setattr(settings, "approval_signing_secret", TEST_SIGNING_SECRET)
     monkeypatch.setattr(settings, "agent_architecture_mode", "v2_all")

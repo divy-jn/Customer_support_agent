@@ -131,6 +131,7 @@ def test_startup_scheduler_runs_and_stops(monkeypatch, caplog):
     
     caplog.set_level(logging.INFO)
     monkeypatch.setattr(settings, "reconciliation_enabled", True)
+    monkeypatch.setenv("RECONCILIATION_ENABLED", "true")
     monkeypatch.setattr(settings, "database_password", os.environ.get("TEST_DB_PASSWORD", "postgres"))
     monkeypatch.setattr(settings, "reconciliation_interval_seconds", 1)
     monkeypatch.setattr(lc, "_build_dsn", lambda: conn_string)
