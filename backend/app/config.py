@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(default="", alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     jwt_expiration_minutes: int = Field(default=1440, alias="JWT_EXPIRATION_MINUTES")
+    approval_signing_secret: str = Field(default="", alias="APPROVAL_SIGNING_SECRET")
 
     # --- Redis ---
     upstash_redis_url: str = Field(default="", alias="UPSTASH_REDIS_URL")
@@ -55,6 +56,15 @@ class Settings(BaseSettings):
 
     # --- Knowledge Base ---
     knowledge_base_dir: str = "./knowledge_base"
+
+    # --- Outbox Worker (Slice 3.3 / Prompt 12) ---
+    outbox_worker_enabled: bool = Field(default=True, alias="OUTBOX_WORKER_ENABLED")
+    outbox_worker_mode: str = Field(default="in_process", alias="OUTBOX_WORKER_MODE")
+    outbox_poll_interval_seconds: float = Field(default=5.0, alias="OUTBOX_POLL_INTERVAL_SECONDS")
+    outbox_batch_size: int = Field(default=10, alias="OUTBOX_BATCH_SIZE")
+    outbox_stale_threshold_seconds: float = Field(default=300.0, alias="OUTBOX_STALE_THRESHOLD_SECONDS")
+    outbox_recovery_interval_seconds: float = Field(default=60.0, alias="OUTBOX_RECOVERY_INTERVAL_SECONDS")
+    outbox_max_attempts: int = Field(default=5, alias="OUTBOX_MAX_ATTEMPTS")
 
     # --- Outbox Reconciliation (Slice 3.7.4) ---
     reconciliation_enabled: bool = Field(default=True, alias="RECONCILIATION_ENABLED")
@@ -147,6 +157,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"AGENT_ARCHITECTURE_MODE must be one of {sorted(valid)}"
             )
+        return normalized
+
+    @field_validator("outbox_worker_mode")
+    @classmethod
+    def validate_outbox_worker_mode(cls, v: str) -> str:
+        """Validate outbox execution mode: in_process, standalone, or disabled."""
+        valid = {"in_process", "standalone", "disabled"}
+        normalized = v.lower().strip()
+        if normalized not in valid:
+            raise ValueError(f"OUTBOX_WORKER_MODE must be one of {sorted(valid)}")
         return normalized
 
     @field_validator("jwt_secret")

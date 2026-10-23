@@ -382,6 +382,7 @@ class Supervisor:
         Supervisor._validate_decision(state, decision)
 
         new_state = state.model_copy(deep=True)
+        new_state.resumed_domain = None
 
         if decision.action == SupervisorAction.START_NEW:
             # If target was previously in suspended_domains, remove it to
@@ -437,6 +438,7 @@ class Supervisor:
 
         elif decision.action == SupervisorAction.RESUME:
             res_domain = decision.transition_metadata.resumed_domain
+            new_state.resumed_domain = res_domain
             # Remove from suspended_domains
             if res_domain in new_state.suspended_domains:
                 new_state.suspended_domains.remove(res_domain)

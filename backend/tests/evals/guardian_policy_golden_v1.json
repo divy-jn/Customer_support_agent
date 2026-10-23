@@ -1,0 +1,558 @@
+{
+  "$schema": "guardian_policy_golden_v1",
+  "version": "1.0.0",
+  "description": "Deterministic evaluation dataset for Guardian policy enforcement, duplicate prevention, and escalation safety.",
+  "scenarios": [
+    {
+      "id": "scen_norm_01_product_info",
+      "category": "normal_resolution",
+      "description": "Simple resolvable product question resolves automatically without escalation or tickets.",
+      "input_policy_facts": {
+        "domain": "product",
+        "intent": "product_information",
+        "customer_requests_human": false,
+        "requires_human": false,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": true,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-norm-1",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": []
+      },
+      "expected": {
+        "action": "resolve",
+        "ticket_id": null,
+        "escalated": false,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_norm_02_policy_faq",
+      "category": "normal_resolution",
+      "description": "General FAQ / policy question resolves cleanly with zero mutations.",
+      "input_policy_facts": {
+        "domain": "general",
+        "intent": "return_policy",
+        "customer_requests_human": false,
+        "requires_human": false,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": true,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-norm-2",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": []
+      },
+      "expected": {
+        "action": "resolve",
+        "ticket_id": null,
+        "escalated": false,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_norm_03_order_tracking",
+      "category": "normal_resolution",
+      "description": "Order tracking inquiry resolves cleanly via domain agent without escalation.",
+      "input_policy_facts": {
+        "domain": "order",
+        "intent": "order_tracking",
+        "customer_requests_human": false,
+        "requires_human": false,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": true,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-norm-3",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": []
+      },
+      "expected": {
+        "action": "resolve",
+        "ticket_id": null,
+        "escalated": false,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_dup_01_active_warranty",
+      "category": "duplicate_prevention",
+      "description": "Existing active ticket matching domain and intent is updated instead of duplicated.",
+      "input_policy_facts": {
+        "domain": "product",
+        "intent": "warranty_claim",
+        "customer_requests_human": true,
+        "requires_human": true,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": true,
+        "unresolved_attempts": 1,
+        "customer_id": 7,
+        "client_request_id": "req-dup-1",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": [
+          {
+            "id": 786,
+            "status": "open",
+            "domain": "product",
+            "intent": "warranty_claim",
+            "priority": "medium"
+          }
+        ]
+      },
+      "expected": {
+        "action": "update_existing_ticket",
+        "ticket_id": 786,
+        "escalated": false,
+        "mutation_allowed": true
+      }
+    },
+    {
+      "id": "scen_dup_02_active_order_null_intent",
+      "category": "duplicate_prevention",
+      "description": "Legacy active ticket with null intent matches domain and is updated.",
+      "input_policy_facts": {
+        "domain": "order",
+        "intent": "delivery_issue",
+        "customer_requests_human": false,
+        "requires_human": true,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": false,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-dup-2",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": [
+          {
+            "id": 100,
+            "status": "in_progress",
+            "domain": "order",
+            "intent": null,
+            "priority": "high"
+          }
+        ]
+      },
+      "expected": {
+        "action": "update_existing_ticket",
+        "ticket_id": 100,
+        "escalated": false,
+        "mutation_allowed": true
+      }
+    },
+    {
+      "id": "scen_unrel_01_unrelated_domain_ticket",
+      "category": "unrelated_ticket_creation",
+      "description": "Active ticket in unrelated domain (order) does not block ticket creation for payment.",
+      "input_policy_facts": {
+        "domain": "payment",
+        "intent": "billing_issue",
+        "customer_requests_human": false,
+        "requires_human": true,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": false,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-unrel-1",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": [
+          {
+            "id": 55,
+            "status": "open",
+            "domain": "order",
+            "intent": "tracking",
+            "priority": "low"
+          }
+        ]
+      },
+      "expected": {
+        "action": "create_ticket",
+        "ticket_id": null,
+        "escalated": true,
+        "mutation_allowed": true
+      }
+    },
+    {
+      "id": "scen_closed_01_closed_ticket_not_matched",
+      "category": "closed_ticket_handling",
+      "description": "Closed ticket in same domain & intent does not count as active ticket.",
+      "input_policy_facts": {
+        "domain": "payment",
+        "intent": "refund_request",
+        "customer_requests_human": false,
+        "requires_human": true,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": false,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-closed-1",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": [
+          {
+            "id": 99,
+            "status": "closed",
+            "domain": "payment",
+            "intent": "refund_request",
+            "priority": "medium"
+          }
+        ]
+      },
+      "expected": {
+        "action": "create_ticket",
+        "ticket_id": null,
+        "escalated": true,
+        "mutation_allowed": true
+      }
+    },
+    {
+      "id": "scen_human_01_single_human_mention_resolvable",
+      "category": "repeated_requests",
+      "description": "One mention of manager or human does not force escalation when domain agent can resolve.",
+      "input_policy_facts": {
+        "domain": "order",
+        "intent": "order_tracking",
+        "customer_requests_human": true,
+        "requires_human": false,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": true,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-human-1",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": []
+      },
+      "expected": {
+        "action": "continue",
+        "ticket_id": null,
+        "escalated": false,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_human_02_human_request_unresolvable",
+      "category": "repeated_requests",
+      "description": "Customer requests human and domain cannot resolve -> creates ticket for durable handoff.",
+      "input_policy_facts": {
+        "domain": "product",
+        "intent": "complex_customization",
+        "customer_requests_human": true,
+        "requires_human": true,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": false,
+        "unresolved_attempts": 1,
+        "customer_id": 7,
+        "client_request_id": "req-human-2",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": []
+      },
+      "expected": {
+        "action": "create_ticket",
+        "ticket_id": null,
+        "escalated": true,
+        "mutation_allowed": true
+      }
+    },
+    {
+      "id": "scen_safety_01_hazard_no_ticket",
+      "category": "safety_legal_escalation",
+      "description": "Safety concern triggers immediate human escalation without ticket creation when no ticket exists.",
+      "input_policy_facts": {
+        "domain": "product",
+        "intent": "product_hazard",
+        "customer_requests_human": false,
+        "requires_human": true,
+        "safety_or_legal_issue": true,
+        "domain_can_resolve": false,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-safe-1",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": []
+      },
+      "expected": {
+        "action": "escalate",
+        "ticket_id": null,
+        "escalated": true,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_safety_02_legal_threat",
+      "category": "safety_legal_escalation",
+      "description": "Legal threats take immediate priority for human escalation.",
+      "input_policy_facts": {
+        "domain": "general",
+        "intent": "complaint",
+        "customer_requests_human": false,
+        "requires_human": true,
+        "safety_or_legal_issue": true,
+        "domain_can_resolve": false,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-safe-2",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": []
+      },
+      "expected": {
+        "action": "escalate",
+        "ticket_id": null,
+        "escalated": true,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_attempts_01_threshold_reached",
+      "category": "repeated_unresolved_attempts",
+      "description": "Three or more unresolved attempts trigger immediate human escalation.",
+      "input_policy_facts": {
+        "domain": "product",
+        "intent": "technical_support",
+        "customer_requests_human": false,
+        "requires_human": false,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": true,
+        "unresolved_attempts": 3,
+        "customer_id": 7,
+        "client_request_id": "req-att-1",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": []
+      },
+      "expected": {
+        "action": "escalate",
+        "ticket_id": null,
+        "escalated": true,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_attempts_02_below_threshold",
+      "category": "repeated_unresolved_attempts",
+      "description": "Two unresolved attempts do not trigger escalation if domain can resolve.",
+      "input_policy_facts": {
+        "domain": "product",
+        "intent": "technical_support",
+        "customer_requests_human": false,
+        "requires_human": false,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": true,
+        "unresolved_attempts": 2,
+        "customer_id": 7,
+        "client_request_id": "req-att-2",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": []
+      },
+      "expected": {
+        "action": "resolve",
+        "ticket_id": null,
+        "escalated": false,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_missing_01_missing_request_id",
+      "category": "missing_identifiers",
+      "description": "Missing client_request_id blocks ticket mutation to preserve idempotency.",
+      "input_policy_facts": {
+        "domain": "payment",
+        "intent": "refund_request",
+        "customer_requests_human": true,
+        "requires_human": true,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": false,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": null,
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": []
+      },
+      "expected": {
+        "action": "create_ticket",
+        "ticket_id": null,
+        "escalated": true,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_missing_02_missing_customer_id",
+      "category": "missing_identifiers",
+      "description": "Missing customer_id blocks ticket mutation to prevent unauthorized operations.",
+      "input_policy_facts": {
+        "domain": "product",
+        "intent": "warranty_claim",
+        "customer_requests_human": true,
+        "requires_human": true,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": false,
+        "unresolved_attempts": 0,
+        "customer_id": null,
+        "client_request_id": "req-anon-1",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": []
+      },
+      "expected": {
+        "action": "create_ticket",
+        "ticket_id": null,
+        "escalated": true,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_db_fail_01_lookup_error_human_needed",
+      "category": "database_failures",
+      "description": "Database failure on ticket lookup when human needed escalates to prevent duplicate tickets.",
+      "input_policy_facts": {
+        "domain": "product",
+        "intent": "hardware_defect",
+        "customer_requests_human": false,
+        "requires_human": true,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": false,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-db-fail-1",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "db_error",
+        "cases": []
+      },
+      "expected": {
+        "action": "escalate",
+        "ticket_id": null,
+        "escalated": true,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_db_fail_02_malformed_json_human_needed",
+      "category": "database_failures",
+      "description": "Malformed JSON on ticket lookup when human needed escalates to avoid unsafe mutation.",
+      "input_policy_facts": {
+        "domain": "order",
+        "intent": "delivery_issue",
+        "customer_requests_human": true,
+        "requires_human": true,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": false,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-db-fail-2",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "malformed_json",
+        "cases": []
+      },
+      "expected": {
+        "action": "escalate",
+        "ticket_id": null,
+        "escalated": true,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_db_fail_03_lookup_error_resolvable",
+      "category": "database_failures",
+      "description": "Database lookup failure on resolvable FAQ still resolves without escalation.",
+      "input_policy_facts": {
+        "domain": "general",
+        "intent": "shipping_policy",
+        "customer_requests_human": false,
+        "requires_human": false,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": true,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-db-fail-3",
+        "pending_approval": null
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "db_error",
+        "cases": []
+      },
+      "expected": {
+        "action": "resolve",
+        "ticket_id": null,
+        "escalated": false,
+        "mutation_allowed": false
+      }
+    },
+    {
+      "id": "scen_appr_01_pending_high_risk_order_cancellation",
+      "category": "approval_preservation",
+      "description": "Pending high-risk approval survives Guardian without executing prematurely.",
+      "input_policy_facts": {
+        "domain": "order",
+        "intent": "order_cancellation",
+        "customer_requests_human": false,
+        "requires_human": false,
+        "safety_or_legal_issue": false,
+        "domain_can_resolve": true,
+        "unresolved_attempts": 0,
+        "customer_id": 7,
+        "client_request_id": "req-appr-1",
+        "pending_approval": {
+          "action": "cancel_order",
+          "params": {
+            "order_id": 12345
+          },
+          "message": "Are you sure you want to cancel order 12345?"
+        }
+      },
+      "ticket_fixtures": {
+        "lookup_outcome": "success",
+        "cases": []
+      },
+      "expected": {
+        "action": "resolve",
+        "ticket_id": null,
+        "escalated": false,
+        "mutation_allowed": false
+      }
+    }
+  ]
+}

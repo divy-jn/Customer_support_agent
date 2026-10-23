@@ -4,16 +4,14 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useToast } from "./components/Toast";
+import ApprovalCard from "./components/ApprovalCard";
 import { API_BASE, WS_BASE } from "./lib/api";
 
 export default function CustomerChatPage() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   // Lazy initializers — restore from localStorage without a useEffect
-  const [sessionId, setSessionId] = useState(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("intellisupport_session_id") || null;
-  });
+  const [sessionId, setSessionId] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -23,18 +21,26 @@ export default function CustomerChatPage() {
 
   // Customer Identity
   const [customerEmail, setCustomerEmail] = useState("");
-  const [identifiedCustomer, setIdentifiedCustomer] = useState(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const saved = localStorage.getItem("intellisupport_customer");
-      return saved ? JSON.parse(saved) : null;
-    } catch { return null; }
-  });
+  const [identifiedCustomer, setIdentifiedCustomer] = useState(null);
   const [identifying, setIdentifying] = useState(false);
-  const [showIdentityModal, setShowIdentityModal] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return !localStorage.getItem("intellisupport_customer");
-  });
+  const [showIdentityModal, setShowIdentityModal] = useState(false);
+
+  useEffect(() => {
+    try {
+      const savedSession = localStorage.getItem("intellisupport_session_id");
+      if (savedSession) setSessionId(savedSession);
+
+      const savedCust = localStorage.getItem("intellisupport_customer");
+      if (savedCust) {
+        setIdentifiedCustomer(JSON.parse(savedCust));
+        setShowIdentityModal(false);
+      } else {
+        setShowIdentityModal(true);
+      }
+    } catch {
+      setShowIdentityModal(true);
+    }
+  }, []);
 
   // Drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -145,7 +151,8 @@ export default function CustomerChatPage() {
             timestamp: msg.timestamp,
             agent_name: msg.agent_name || (msg.human_agent ? "Support Agent" : "Adi"),
             human_agent: msg.human_agent,
-            status: msg.role === "customer" ? "delivered" : undefined
+            status: msg.role === "customer" ? "delivered" : undefined,
+            approval: msg.approval || null,
           })));
         } else if (data.message) {
           setMessages((prev) => {
@@ -193,6 +200,7 @@ export default function CustomerChatPage() {
             agent_name: data.agent_name || "Adi",
             timestamp: data.timestamp,
             status: "delivered",
+            approval: data.approval || null,
           },
         ]);
       } else if (data.type === "error") {
@@ -335,6 +343,41 @@ export default function CustomerChatPage() {
       JSON.stringify({ message: msg, customer_id: identifiedCustomer?.id, client_request_id: reqId })
     );
     setInput("");
+    setAutoScroll(true);
+  };
+
+  // ── Approval Action Handler ──
+  const handleApprovalAction = (action, orderId, isConfirm) => {
+    if (!wsRef.current || wsRef.current.readyState !== 1) return;
+    const reqId = nextReqIdRef.current;
+    nextReqIdRef.current = crypto.randomUUID();
+
+    let msgText = "";
+    if (isConfirm) {
+      if (action === "cancel_order") {
+        msgText = `Yes, please cancel order #${orderId}`;
+      } else if (action === "process_refund") {
+        msgText = `Yes, please process refund for order #${orderId}`;
+      } else {
+        msgText = `Yes, proceed with ${action}`;
+      }
+    } else {
+      if (action === "cancel_order") {
+        msgText = `No, do not cancel order #${orderId}`;
+      } else if (action === "process_refund") {
+        msgText = `No, do not refund order #${orderId}`;
+      } else {
+        msgText = `No, cancel this action`;
+      }
+    }
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "customer", content: msgText, timestamp: new Date().toISOString(), status: "sent", client_request_id: reqId },
+    ]);
+    wsRef.current.send(
+      JSON.stringify({ message: msgText, customer_id: identifiedCustomer?.id, client_request_id: reqId })
+    );
     setAutoScroll(true);
   };
 
@@ -636,6 +679,13 @@ export default function CustomerChatPage() {
                       className="text-sm leading-relaxed whitespace-pre-wrap markdown-body"
                     >
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                      {msg.approval && (
+                        <ApprovalCard
+                          approval={msg.approval}
+                          onAction={handleApprovalAction}
+                          isLatest={i === messages.length - 1}
+                        />
+                      )}
                     </div>
                   ) : (
                     <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>

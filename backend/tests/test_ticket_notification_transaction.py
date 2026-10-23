@@ -6,8 +6,14 @@ import psycopg2
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from unittest.mock import patch, MagicMock
 
-TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "postgres")
-conn_string = f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
+from tests.conftest import get_test_postgres_dsn
+
+conn_string = get_test_postgres_dsn()
+if not conn_string:
+    pytest.skip(
+        "Real PostgreSQL test database required (set TEST_POSTGRES_URL or TEST_DB_PASSWORD).",
+        allow_module_level=True,
+    )
 
 def exec_wrapper_rpc(operation_type, canonical_target, payload, outbox_args, customer_id=1, client_request_id=None):
     if not client_request_id:

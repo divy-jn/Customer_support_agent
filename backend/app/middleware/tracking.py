@@ -27,8 +27,9 @@ def emit_workflow_turn(event: dict) -> None:
     """
     allowed = {
         "session_id", "customer_id", "architecture_mode", "domain", "intent",
-        "supervisor_action", "guardian_action", "guardian_reason",
-        "pending_approval", "escalated", "latency_ms", "outcome",
+        "supervisor_action", "supervisor_reason", "guardian_action", "guardian_reason",
+        "ticket_id", "guardian_ticket_id", "pending_approval", "escalated", "latency_ms", "outcome",
+        "approval_id", "approval_action", "approval_status",
     }
     logger.info("workflow_turn", extra={key: value for key, value in event.items() if key in allowed})
 

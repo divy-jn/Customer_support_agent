@@ -294,7 +294,11 @@ async def test_chat_handler_session_persistence(mock_get_session_state):
     mock_ws = AsyncMock(spec=WebSocket)
     # Give it exactly two messages to simulate two turns
     # Turn 1: Product issue. Turn 2: Order ID follow-up
-    mock_ws.receive_text.side_effect = ["My SuperPhone broke", "It is order 123", Exception("disconnect")]
+    mock_ws.receive_text.side_effect = [
+        json.dumps({"message": "My SuperPhone broke", "client_request_id": "req-turn-1"}),
+        json.dumps({"message": "It is order 123", "client_request_id": "req-turn-2"}),
+        Exception("disconnect"),
+    ]
     
     # Mock intent router: Turn 1 is product_inquiry, Turn 2 is order_tracking
     with patch("app.agents.intent_router.classify_intent", new_callable=AsyncMock) as mock_router:

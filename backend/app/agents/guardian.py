@@ -42,6 +42,7 @@ class GuardianInput(BaseModel):
     domain_can_resolve: bool = False
     unresolved_attempts: int = Field(default=0, ge=0)
     recent_cases: list[SupportCase] = Field(default_factory=list)
+    history_lookup_failed: bool = False
 
 
 class GuardianDecision(BaseModel):
@@ -89,6 +90,11 @@ class Guardian:
             )
 
         if facts.requires_human:
+            if facts.history_lookup_failed:
+                return GuardianDecision(
+                    action=GuardianAction.ESCALATE,
+                    reason="Ticket history could not be verified; escalating to human review to prevent duplicate ticket operations.",
+                )
             return GuardianDecision(
                 action=GuardianAction.CREATE_TICKET,
                 reason="The request needs human intervention and no matching active ticket exists.",
@@ -98,6 +104,12 @@ class Guardian:
             return GuardianDecision(
                 action=GuardianAction.CONTINUE,
                 reason="The domain agent can complete this authorized request before a handoff is needed.",
+            )
+
+        if facts.customer_requests_human and facts.history_lookup_failed:
+            return GuardianDecision(
+                action=GuardianAction.ESCALATE,
+                reason="Ticket history could not be verified; escalating to human review to prevent duplicate ticket operations.",
             )
 
         return GuardianDecision(

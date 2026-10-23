@@ -49,14 +49,14 @@ from app.outbox.worker import (
 #  Database Configuration
 # ──────────────────────────────────────────────
 
-TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD")
-if not TEST_DB_PASSWORD:
+from tests.conftest import get_test_postgres_dsn
+
+DSN = get_test_postgres_dsn()
+if not DSN:
     pytest.skip(
-        "TEST_DB_PASSWORD is required for real PostgreSQL integration tests.",
+        "Real PostgreSQL test database required (set TEST_POSTGRES_URL or TEST_DB_PASSWORD).",
         allow_module_level=True,
     )
-
-DSN = f"dbname='postgres' user='postgres' host='127.0.0.1' port='5433' password='{TEST_DB_PASSWORD}'"
 
 
 # ──────────────────────────────────────────────

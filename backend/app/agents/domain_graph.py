@@ -50,6 +50,9 @@ class DomainAgentState(AgentState):
     guardian_action: str | None
     guardian_reason: str | None
     guardian_ticket_id: int | None
+    requires_human: bool | None
+    resumed_domain: str | None
+    suspended_domain: str | None
 
 
 async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
@@ -64,6 +67,10 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
         "customer_id": state.get("customer_id"),
     }
 
+    current_mode = state.get("architecture_mode") or settings.agent_architecture_mode
+    if current_mode in {"legacy", "shadow"}:
+        current_mode = "v2_product"
+
     try:
         workflow = WorkflowState.from_legacy(base_workflow)
         if semantic.diagnostics.failure_type == RouterFailureType.SUCCESS:
@@ -74,6 +81,16 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
                 state["message"],
             )
             workflow = Supervisor.apply_decision(workflow, decision)
+            res_dom = (
+                decision.transition_metadata.resumed_domain.value
+                if decision.transition_metadata and decision.transition_metadata.resumed_domain
+                else None
+            )
+            sus_dom = (
+                decision.transition_metadata.suspended_domain.value
+                if decision.transition_metadata and decision.transition_metadata.suspended_domain
+                else None
+            )
             return {
                 "intent": semantic.intent,
                 "sentiment": semantic.sentiment,
@@ -82,8 +99,10 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
                 "semantic_confidence": semantic.confidence,
                 "supervisor_action": decision.action.value,
                 "supervisor_reason": decision.transition_reason,
+                "resumed_domain": res_dom,
+                "suspended_domain": sus_dom,
                 "workflow_state": workflow.model_dump(mode="json"),
-                "architecture_mode": "v2_product",
+                "architecture_mode": current_mode,
             }
     except (ValueError, TypeError):
         # A malformed persisted workflow must never create a new V2 state.
@@ -95,34 +114,58 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
         "semantic_confidence": 0.0,
         "supervisor_action": "legacy_fallback",
         "supervisor_reason": "Semantic routing or workflow validation failed.",
-        "architecture_mode": "v2_product",
+        "architecture_mode": current_mode,
     }
 
 
 def route_after_supervisor(state: DomainAgentState) -> str:
     """Dispatch only implemented slices; all enabled slices finish at Guardian."""
-    if state.get("supervisor_action") == SupervisorAction.ESCALATE.value:
+    supervisor_action = state.get("supervisor_action")
+    if supervisor_action == SupervisorAction.ESCALATE.value:
         return "guardian"
-    if (
-        state.get("semantic_domain") == "product"
-        and state.get("supervisor_action")
-        not in {SupervisorAction.ESCALATE.value, SupervisorAction.REQUEST_CLARIFICATION.value}
-    ):
-        return "product"
-    if (
-        state.get("semantic_domain") == "order"
-        and state.get("intent") in _ORDER_V2_INTENTS
-        and settings.agent_architecture_mode in {"v2_product_order", "v2_core", "v2_all"}
-    ):
-        return "order"
-    if (
-        state.get("semantic_domain") == "payment"
-        and state.get("intent") in _PAYMENT_V2_INTENTS
-        and settings.agent_architecture_mode in {"v2_core", "v2_all"}
-    ):
-        return "payment"
-    if state.get("semantic_domain") == "general" and settings.agent_architecture_mode == "v2_all":
-        return "general"
+    if supervisor_action == SupervisorAction.REQUEST_CLARIFICATION.value:
+        return "clarification"
+
+    # Only continue with enabled domains if supervisor approved continuing/starting/resuming/switching
+    valid_actions = {
+        SupervisorAction.CONTINUE.value,
+        SupervisorAction.START_NEW.value,
+        SupervisorAction.SUSPEND_AND_SWITCH.value,
+        SupervisorAction.RESUME.value,
+    }
+    if supervisor_action not in valid_actions:
+        return "legacy"
+
+    domain = state.get("semantic_domain")
+    intent = state.get("intent")
+
+    if domain == "escalation":
+        return "guardian"
+
+    mode = state.get("architecture_mode") or settings.agent_architecture_mode
+    if mode in {"legacy", "shadow"}:
+        return "legacy"
+
+    if domain == "product":
+        if mode in {"v2_product", "v2_product_order", "v2_core", "v2_all"}:
+            return "product"
+        return "legacy"
+
+    if domain == "order":
+        if mode in {"v2_product_order", "v2_core", "v2_all"} and intent in _ORDER_V2_INTENTS:
+            return "order"
+        return "legacy"
+
+    if domain == "payment":
+        if mode in {"v2_core", "v2_all"} and intent in _PAYMENT_V2_INTENTS:
+            return "payment"
+        return "legacy"
+
+    if domain == "general":
+        if mode == "v2_all":
+            return "general"
+        return "legacy"
+
     return "legacy"
 
 
@@ -171,53 +214,109 @@ def _case_intent(ticket: dict) -> str | None:
     return subject[7:].split(" - ", 1)[0].lower().replace(" ", "_") or None
 
 
-def _recent_cases(customer_id: int | None) -> list[SupportCase]:
-    """Read a narrow, recent ticket projection; DB trouble must not leak data."""
+def _recent_cases(customer_id: int | None) -> tuple[list[SupportCase], bool]:
+    """Read a narrow, recent ticket projection; DB trouble must not leak data.
+
+    Returns:
+        tuple[list[SupportCase], bool]: (cases, lookup_failed)
+    """
     if not customer_id:
-        return []
+        return [], False
     since = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
     try:
-        payload = json.loads(find_customer_support_cases(customer_id, created_since=since))
+        raw = find_customer_support_cases(customer_id, created_since=since)
+        if not raw or not isinstance(raw, str):
+            return [], True
+        payload = json.loads(raw)
         if not isinstance(payload, dict) or payload.get("error"):
-            return []
-        return [
-            SupportCase(
-                id=case["id"], status=case["status"], domain=_case_domain(case),
-                intent=_case_intent(case), priority=case.get("priority"),
+            return [], True
+        if "cases" not in payload or not isinstance(payload.get("cases"), list):
+            return [], True
+        cases: list[SupportCase] = []
+        for case in payload.get("cases", []):
+            if not isinstance(case, dict) or "id" not in case or "status" not in case:
+                return [], True
+            cases.append(
+                SupportCase(
+                    id=case["id"],
+                    status=case["status"],
+                    domain=_case_domain(case),
+                    intent=_case_intent(case),
+                    priority=case.get("priority"),
+                )
             )
-            for case in payload.get("cases", [])
-        ]
-    except (TypeError, ValueError, KeyError, json.JSONDecodeError):
-        return []
+        return cases, False
+    except Exception:
+        return [], True
 
 
 async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
     """Apply deterministic policy after the domain result and compose output."""
-    workflow = state.get("workflow_state") or {}
+    raw_workflow = state.get("workflow_state") or {}
+    if hasattr(raw_workflow, "model_dump"):
+        new_workflow = raw_workflow.model_dump(mode="json")
+    elif isinstance(raw_workflow, dict):
+        new_workflow = dict(raw_workflow)
+    else:
+        new_workflow = {}
+
     domain = state.get("semantic_domain", "general")
-    prior_attempts = max(0, int(workflow.get("turn_count", 0)) - 1)
+    prior_attempts = int(new_workflow.get("unresolved_attempts", 0))
+    cannot_resolve = (
+        bool(state.get("requires_human"))
+        or state.get("response") is None
+        or domain == "escalation"
+    )
+    # A turn that cannot resolve increments the consecutive unresolved count
+    effective_attempts = prior_attempts + 1 if cannot_resolve else prior_attempts
+
+    cases, history_lookup_failed = _recent_cases(state.get("customer_id"))
     decision = Guardian.decide(GuardianInput(
         domain=domain,
         intent=state.get("intent", ""),
         customer_requests_human=_requests_human(state["message"]),
         # A failed skill is not safe to silently retry as an automated answer.
-        requires_human=bool(state.get("requires_human")) or state.get("response") is None or domain == "escalation",
+        requires_human=cannot_resolve,
         safety_or_legal_issue=_safety_or_legal_issue(state["message"]),
         domain_can_resolve=state.get("response") is not None,
-        unresolved_attempts=prior_attempts,
-        recent_cases=_recent_cases(state.get("customer_id")),
+        unresolved_attempts=effective_attempts,
+        recent_cases=cases,
+        history_lookup_failed=history_lookup_failed,
     ))
-    ticket_id, mutation_error = await _apply_guardian_ticket_decision(state, decision)
+    ticket_id, mutation_error = await _apply_guardian_ticket_decision(
+        {**state, "history_lookup_failed": history_lookup_failed}, decision
+    )
     response = state.get("response") or "I need additional help with this request."
     if mutation_error:
         response += " I couldn’t register the support request just now. Please try again."
     else:
         response = compose_response(response, decision)
+
+    if decision.action == GuardianAction.RESOLVE:
+        new_workflow["unresolved_attempts"] = 0
+    else:
+        new_workflow["unresolved_attempts"] = effective_attempts
+
+    new_workflow["turn_count"] = int(new_workflow.get("turn_count", 0)) + 1
+    new_workflow["updated_at"] = datetime.now(timezone.utc).isoformat()
+    if decision.action == GuardianAction.ESCALATE:
+        new_workflow["global_status"] = "escalated"
+
+    if ticket_id:
+        active_dom = new_workflow.get("active_domain") or domain
+        state_key = f"{active_dom}_state"
+        if state_key in new_workflow and isinstance(new_workflow[state_key], dict):
+            new_workflow[state_key]["active_ticket_id"] = ticket_id
+
     return {
         "response": response,
         "guardian_action": decision.action.value,
         "guardian_reason": decision.reason,
         "guardian_ticket_id": ticket_id or decision.ticket_id,
+        "pending_approval": state.get("pending_approval"),
+        "resumed_domain": state.get("resumed_domain"),
+        "suspended_domain": state.get("suspended_domain"),
+        "workflow_state": new_workflow,
         # CREATE_TICKET has no automated resolution path in this slice, so it
         # enters the existing durable human-handoff flow rather than claiming a
         # ticket was created before the transaction succeeds.
@@ -231,6 +330,9 @@ async def _apply_guardian_ticket_decision(
     """Perform the sole V2 ticket mutation boundary, using idempotent tools."""
     if decision.action not in {GuardianAction.CREATE_TICKET, GuardianAction.UPDATE_EXISTING_TICKET}:
         return decision.ticket_id, False
+    if state.get("history_lookup_failed"):
+        logger.warning("Guardian ticket action blocked: ticket history could not be verified")
+        return decision.ticket_id, True
     customer_id = state.get("customer_id")
     request_id = state.get("client_request_id")
     if not customer_id or not request_id:
@@ -263,9 +365,32 @@ async def _apply_guardian_ticket_decision(
         )
         payload = json.loads(raw)
         return payload.get("ticket_id"), bool(payload.get("error") or not payload.get("ticket_id"))
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except Exception:
         logger.exception("Guardian ticket mutation failed")
         return decision.ticket_id, True
+
+
+async def safe_clarification_node(state: DomainAgentState) -> dict[str, Any]:
+    """Dedicated safe clarification node that asks for clarification without tool execution."""
+    raw_workflow = state.get("workflow_state") or {}
+    new_workflow = dict(raw_workflow) if isinstance(raw_workflow, dict) else {}
+    new_workflow["turn_count"] = int(new_workflow.get("turn_count", 0)) + 1
+    new_workflow["updated_at"] = datetime.now(timezone.utc).isoformat()
+    reason = state.get("supervisor_reason")
+
+    clarification_msg = (
+        "Could you please share a few more details or clarify your request so I can help you correctly?"
+    )
+    return {
+        "response": clarification_msg,
+        "guardian_action": GuardianAction.RESOLVE.value,
+        "guardian_reason": reason or "Clarification requested safely without tool execution.",
+        "pending_approval": state.get("pending_approval"),
+        "resumed_domain": state.get("resumed_domain"),
+        "suspended_domain": state.get("suspended_domain"),
+        "workflow_state": new_workflow,
+        "escalated": False,
+    }
 
 
 async def legacy_fallback_node(state: DomainAgentState) -> dict[str, Any]:
@@ -280,18 +405,28 @@ def create_domain_support_graph():
     workflow.add_node("v2_order", v2_order_node)
     workflow.add_node("v2_payment", v2_payment_node)
     workflow.add_node("v2_general", v2_general_node)
+    workflow.add_node("safe_clarification", safe_clarification_node)
     workflow.add_node("guardian_response", guardian_response_node)
     workflow.add_node("legacy_fallback", legacy_fallback_node)
     workflow.set_entry_point("semantic_supervisor")
     workflow.add_conditional_edges(
         "semantic_supervisor",
         route_after_supervisor,
-        {"product": "v2_product", "order": "v2_order", "payment": "v2_payment", "general": "v2_general", "guardian": "guardian_response", "legacy": "legacy_fallback"},
+        {
+            "product": "v2_product",
+            "order": "v2_order",
+            "payment": "v2_payment",
+            "general": "v2_general",
+            "guardian": "guardian_response",
+            "clarification": "safe_clarification",
+            "legacy": "legacy_fallback",
+        },
     )
     workflow.add_edge("v2_product", "guardian_response")
     workflow.add_edge("v2_order", "guardian_response")
     workflow.add_edge("v2_payment", "guardian_response")
     workflow.add_edge("v2_general", "guardian_response")
+    workflow.add_edge("safe_clarification", END)
     workflow.add_edge("guardian_response", END)
     workflow.add_edge("legacy_fallback", END)
     return workflow.compile()

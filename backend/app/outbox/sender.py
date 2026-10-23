@@ -160,6 +160,11 @@ class DummySender(EmailSender):
         self._outcome_queue: list[SendResult] = []
         self.sent: list[dict] = []
 
+    @property
+    def sent_messages(self) -> list[dict]:
+        """Convenience alias for self.sent."""
+        return self.sent
+
     def enqueue_outcome(self, result: SendResult) -> None:
         """Push a deterministic outcome onto the FIFO queue."""
         self._outcome_queue.append(result)

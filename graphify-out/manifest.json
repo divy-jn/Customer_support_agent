@@ -4,8 +4,8 @@
     "hash": "bcd67707bb76d42ca516ee5584781860"
   },
   "C:\\building projs\\major_proj\\backend\\app\\config.py": {
-    "mtime": 1792396914.096233,
-    "hash": "c9f4ba1cec5962cfb50533378b41849c"
+    "mtime": 1792751036.7762825,
+    "hash": "5ef20a12a104c3a162299f6b4fea4f8b"
   },
   "C:\\building projs\\major_proj\\backend\\app\\dependencies.py": {
     "mtime": 1792396949.933873,
@@ -32,48 +32,76 @@
     "hash": "0d656090b8efa405706f58ce78e6217c"
   },
   "C:\\building projs\\major_proj\\backend\\app\\models.py": {
-    "mtime": 1792396934.1628206,
-    "hash": "0c26af607415032e4a19a4ba64d96020"
+    "mtime": 1792702985.3549228,
+    "hash": "5618684d5501efce75c6d27e1093b2ec"
   },
   "C:\\building projs\\major_proj\\backend\\app\\notification_identity.py": {
     "mtime": 1792397745.386654,
     "hash": "125981348af34d74b60b633608e638c5"
   },
   "C:\\building projs\\major_proj\\backend\\app\\routes.py": {
-    "mtime": 1792397650.8616827,
-    "hash": "aab99ff09eac41dcd53eee68c0229ad8"
+    "mtime": 1792604432.7912543,
+    "hash": "eb2ca70d8493361078ac901bb69c7500"
   },
   "C:\\building projs\\major_proj\\backend\\app\\tools.py": {
-    "mtime": 1792397686.2386792,
-    "hash": "b7ea8c95b254e68a6e94f8915bf86002"
+    "mtime": 1792605754.4957585,
+    "hash": "4fb8020a89bb4baa9a40df91a1e25bc6"
   },
   "C:\\building projs\\major_proj\\backend\\app\\__init__.py": {
     "mtime": 1786365137.7387128,
     "hash": "341597b29f216bb17bfd41f74ecc64d2"
   },
+  "C:\\building projs\\major_proj\\backend\\app\\agents\\approval_service.py": {
+    "mtime": 1792703146.5182214,
+    "hash": "601a31110fdb0110a644ac6585d5ea1c"
+  },
   "C:\\building projs\\major_proj\\backend\\app\\agents\\db_agent.py": {
     "mtime": 1792397185.2889142,
     "hash": "a9f9c38834023ff69f00cca76de84b98"
+  },
+  "C:\\building projs\\major_proj\\backend\\app\\agents\\domain_graph.py": {
+    "mtime": 1792697783.3127003,
+    "hash": "96fb99bb06b41e850394a242a197af13"
   },
   "C:\\building projs\\major_proj\\backend\\app\\agents\\escalation_agent.py": {
     "mtime": 1792397307.8736782,
     "hash": "3db10e1dd751d2a5b125531493214e8e"
   },
+  "C:\\building projs\\major_proj\\backend\\app\\agents\\general_agent.py": {
+    "mtime": 1792601340.106563,
+    "hash": "55b0e92e2b1b2b5602b066eafc4dba68"
+  },
   "C:\\building projs\\major_proj\\backend\\app\\agents\\graph.py": {
-    "mtime": 1792397488.843248,
-    "hash": "5d38e3204ff8baefe7dfa3c97ac79c00"
+    "mtime": 1792691447.9288032,
+    "hash": "7dc223383ef9d97ea6bf75f7f65f2c6a"
+  },
+  "C:\\building projs\\major_proj\\backend\\app\\agents\\guardian.py": {
+    "mtime": 1792668831.999384,
+    "hash": "8100078442e3c9698229f7e6a08bb6a8"
   },
   "C:\\building projs\\major_proj\\backend\\app\\agents\\intent_router.py": {
-    "mtime": 1792397009.0805712,
-    "hash": "c8bb5bc716d20ff9e5cfb656fac57591"
+    "mtime": 1792667104.757697,
+    "hash": "1eb204f50aee8dfd7cdff101ae7f9532"
+  },
+  "C:\\building projs\\major_proj\\backend\\app\\agents\\order_agent.py": {
+    "mtime": 1792697510.642812,
+    "hash": "3409562c0af6660e2f240c8f3c643521"
+  },
+  "C:\\building projs\\major_proj\\backend\\app\\agents\\payment_agent.py": {
+    "mtime": 1792697526.409178,
+    "hash": "4570bb56a0b6aab3268be96dd03c6169"
   },
   "C:\\building projs\\major_proj\\backend\\app\\agents\\product_agent.py": {
-    "mtime": 1792397276.6365643,
-    "hash": "b1b261d6232ea291a4f6d4a0da25ee37"
+    "mtime": 1792691989.6398213,
+    "hash": "7d0c1b3bb2189158f50f93ec5dcd5dc3"
   },
   "C:\\building projs\\major_proj\\backend\\app\\agents\\rag_agent.py": {
     "mtime": 1792397294.1496377,
     "hash": "d8a46bbb960beb49fc7286ab7509045b"
+  },
+  "C:\\building projs\\major_proj\\backend\\app\\agents\\response_composer.py": {
+    "mtime": 1792603064.7962627,
+    "hash": "fec5c4f6e82f64f5503c4af9e87e4c5e"
   },
   "C:\\building projs\\major_proj\\backend\\app\\agents\\routing_policy.py": {
     "mtime": 1792397377.4564674,
@@ -84,8 +112,8 @@
     "hash": "0d18d4b1c2956a6c9d4d196d0d9b6c98"
   },
   "C:\\building projs\\major_proj\\backend\\app\\agents\\supervisor.py": {
-    "mtime": 1792397412.6882696,
-    "hash": "475a636e45c1471b6efc4440b10bd68e"
+    "mtime": 1792697155.8324623,
+    "hash": "b0a6d5dad47c1d612fb6b73ab4e486cf"
   },
   "C:\\building projs\\major_proj\\backend\\app\\agents\\web_agent.py": {
     "mtime": 1792397327.3038826,
@@ -120,16 +148,16 @@
     "hash": "7ba93ddc68dd105126f93277a7637175"
   },
   "C:\\building projs\\major_proj\\backend\\app\\middleware\\tracking.py": {
-    "mtime": 1792398103.802911,
-    "hash": "bc1c1f27d04509f592e110b9a003d786"
+    "mtime": 1792672728.7517292,
+    "hash": "765180aefc9cd734611c8147c9de7557"
   },
   "C:\\building projs\\major_proj\\backend\\app\\middleware\\__init__.py": {
     "mtime": 1786478644.6277125,
     "hash": "e375708924e94777ca929993d3114755"
   },
   "C:\\building projs\\major_proj\\backend\\app\\outbox\\lifecycle.py": {
-    "mtime": 1791654514.6299832,
-    "hash": "d6db6d51dc80868900dbc72da7c680eb"
+    "mtime": 1792751055.9219174,
+    "hash": "deede0106a72412925749ed2991636d3"
   },
   "C:\\building projs\\major_proj\\backend\\app\\outbox\\reconciliation_coordinator.py": {
     "mtime": 1791654514.6365812,
@@ -144,12 +172,16 @@
     "hash": "20999c46fc87d5c78dead324f7fb59d7"
   },
   "C:\\building projs\\major_proj\\backend\\app\\outbox\\sender.py": {
-    "mtime": 1791654514.638315,
-    "hash": "673d8c2550c6791a81a90089ec8b8e05"
+    "mtime": 1792750374.9740777,
+    "hash": "16f1f2d0286eaaa25bf8897381c65384"
+  },
+  "C:\\building projs\\major_proj\\backend\\app\\outbox\\standalone.py": {
+    "mtime": 1792751116.4522412,
+    "hash": "ec1494265c10cfa641a20cf42c39b419"
   },
   "C:\\building projs\\major_proj\\backend\\app\\outbox\\worker.py": {
-    "mtime": 1792397771.31709,
-    "hash": "8bf6253e56ff094cfafeb22ec88c272d"
+    "mtime": 1792751074.1423645,
+    "hash": "585856ae5195cf558342ea1d0087c315"
   },
   "C:\\building projs\\major_proj\\backend\\app\\outbox\\__init__.py": {
     "mtime": 1791654514.6299832,
@@ -188,8 +220,8 @@
     "hash": "e0e212c1116329276aae081254f34dfd"
   },
   "C:\\building projs\\major_proj\\backend\\app\\skills\\registry.py": {
-    "mtime": 1791654514.6480157,
-    "hash": "9071f0c25522c325da73f7401d293e92"
+    "mtime": 1792605837.6825366,
+    "hash": "314b2e2955b4ab454c9304ce97a532b0"
   },
   "C:\\building projs\\major_proj\\backend\\app\\skills\\runtime.py": {
     "mtime": 1792398123.6234198,
@@ -200,8 +232,8 @@
     "hash": "48ed32c9ba9cfda0fc5e0f81359e6064"
   },
   "C:\\building projs\\major_proj\\backend\\app\\websocket\\chat_handler.py": {
-    "mtime": 1792397562.4819775,
-    "hash": "0df0d3c4001ac9992fdb246cffdcacce"
+    "mtime": 1792753307.4337862,
+    "hash": "6acd954141d5c855f9a725bfafc30c59"
   },
   "C:\\building projs\\major_proj\\backend\\app\\websocket\\connection.py": {
     "mtime": 1792397597.3746126,
@@ -220,20 +252,32 @@
     "hash": "c04c43159ce096acbc7653484be5a43c"
   },
   "C:\\building projs\\major_proj\\backend\\scripts\\schema.sql": {
-    "mtime": 1791654514.6576948,
-    "hash": "21edc2e04647c619267edad0117bd182"
+    "mtime": 1792760287.830584,
+    "hash": "28cd189bfbaf3c0d3c176fd5d68a1e19"
   },
   "C:\\building projs\\major_proj\\backend\\scripts\\seed_database.py": {
-    "mtime": 1791654514.6576948,
-    "hash": "fd8adf9a73f90e57231c12b535f32d3f"
+    "mtime": 1792605776.3261554,
+    "hash": "edea95fe280423b88627d3cb0ff3263b"
+  },
+  "C:\\building projs\\major_proj\\backend\\scripts\\test_fixtures.sql": {
+    "mtime": 1792760249.9257016,
+    "hash": "fd4cfc92c25bcc298f60df2e1bd6256b"
+  },
+  "C:\\building projs\\major_proj\\backend\\scripts\\test_roles.sql": {
+    "mtime": 1792760238.2828908,
+    "hash": "3e50e77cb0ad631dfeb750678639c71b"
   },
   "C:\\building projs\\major_proj\\backend\\scripts\\__init__.py": {
     "mtime": 1786365398.7584689,
     "hash": "1fcdfa35ca1e78d509b967600b0c7ae8"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\conftest.py": {
-    "mtime": 1791654514.6576948,
-    "hash": "bc02cfd4c9554f27642d673e5a91bb2f"
+    "mtime": 1792760351.6339827,
+    "hash": "dd0cc8c121a4e2a1e3bc8bcc4041eb72"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\e2e_test_server.py": {
+    "mtime": 1792755285.3009472,
+    "hash": "094f1cbfb10cd7a2b55fc1e071b38cf9"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_agent_flow.py": {
     "mtime": 1791654514.6800222,
@@ -244,8 +288,8 @@
     "hash": "a80a3407260b72840923c1861dafc8fb"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_custom_email_outbox.py": {
-    "mtime": 1791654514.6800222,
-    "hash": "3640455ee9b72ae430c7bb115a2be736"
+    "mtime": 1792746575.4878435,
+    "hash": "b7ecd3e2c710e2ff99b3c4486b7a0cf2"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_database_tools.py": {
     "mtime": 1791654514.6800222,
@@ -259,53 +303,77 @@
     "mtime": 1791654514.6850097,
     "hash": "955383cb2e5f96c52543a22323a2dbd5"
   },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_domain_graph.py": {
+    "mtime": 1792669094.6528125,
+    "hash": "d14121f49dc05f7938b399609af0966c"
+  },
   "C:\\building projs\\major_proj\\backend\\tests\\test_email.py": {
     "mtime": 1791654514.6860995,
     "hash": "de03523a0681e469fb1340fb8462e84c"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_escalation_integration_slice_353.py": {
-    "mtime": 1791725884.0683563,
-    "hash": "654863251a408c878287d4f6eb79dcd6"
+    "mtime": 1792746592.3417847,
+    "hash": "cbe603871f4a38ec6d7431e252a197bc"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_escalation_persistence.py": {
     "mtime": 1791654514.6878045,
     "hash": "2e90c23d14fa8b8092b9d763743bc314"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_escalation_persistence_real.py": {
-    "mtime": 1791654514.6878045,
-    "hash": "ae655f1712778d0e26d45ad3cdad0f01"
+    "mtime": 1792750089.5011697,
+    "hash": "75d0b9c2080539427ca09b63d501c1b0"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_escalation_service.py": {
     "mtime": 1791654514.6878045,
     "hash": "f04b4cf332b93bf5c7c5cf5383ba1ce0"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_escalation_service_real.py": {
-    "mtime": 1791654514.6878045,
-    "hash": "c6851febd3e9f6116059b10b2998795d"
+    "mtime": 1792750074.6013706,
+    "hash": "e4c7f19c607ba49c9e3cf76d93bd8676"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_evaluator.py": {
     "mtime": 1791654514.6904213,
     "hash": "ff33c6fd4b7f59b736ba9ef93f6e1bde"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_general_agent.py": {
+    "mtime": 1792601342.169577,
+    "hash": "11b5b09d687bb94f9790246ab140c3d6"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_graph.py": {
     "mtime": 1791654514.6904213,
     "hash": "54181e2c3e6af3a1e85bf17e88dfc450"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_graph_state.py": {
-    "mtime": 1791654514.692309,
-    "hash": "05ee61ad747113971e1d1290f2d5770a"
+    "mtime": 1792667922.2396133,
+    "hash": "2248ca72cba30325291deb5e88adb839"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_guardian.py": {
+    "mtime": 1792598187.6136625,
+    "hash": "7e86558412e4d4a1040ea4a1ec5838f8"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_guardian_comprehensive.py": {
+    "mtime": 1792669149.984028,
+    "hash": "6fff54194986bbb7c0e64399d7f338bc"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_guardian_golden_dataset.py": {
+    "mtime": 1792671463.5840123,
+    "hash": "d6bada14a35e730608477fd2c0aefbed"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_guardian_integration.py": {
+    "mtime": 1792673268.2221434,
+    "hash": "a9d77bb4fec79e2db6f6d02417040f7f"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_guardrails.py": {
     "mtime": 1791654514.692309,
     "hash": "0f2d0d55411669b36f63817589af5550"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_idempotency_additional.py": {
-    "mtime": 1791654514.692309,
-    "hash": "9c6c289aac827f22fc478544eeeb6ee8"
+    "mtime": 1792750152.8259902,
+    "hash": "8e981da846d411d834d6ac9e632cc28b"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_idempotency_real.py": {
-    "mtime": 1791654514.692309,
-    "hash": "abb0fea1104197bab67ad05ae87daca0"
+    "mtime": 1792743318.5898478,
+    "hash": "10546bd7e09350f3be4afb7bd7b9b69c"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_llm.py": {
     "mtime": 1791654514.692309,
@@ -315,17 +383,29 @@
     "mtime": 1791654514.692309,
     "hash": "689ff6bda005663c9469dfd252c5b4df"
   },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_order_agent.py": {
+    "mtime": 1792605269.6436164,
+    "hash": "b1dc4167f058894e67df0fa949f9eb93"
+  },
   "C:\\building projs\\major_proj\\backend\\tests\\test_outbox_repair.py": {
-    "mtime": 1791654514.692309,
-    "hash": "2a73dcad57ee2d885c9235e91516f08f"
+    "mtime": 1792746616.2975438,
+    "hash": "0548d880f6196b787185d8757d05bf0d"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_outbox_schema.py": {
-    "mtime": 1791654514.692309,
-    "hash": "8c583630189a9249d096c2e10344c559"
+    "mtime": 1792743326.2414777,
+    "hash": "9227a8e25ee04bd1861299ec60dbba30"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_outbox_worker.py": {
-    "mtime": 1791726391.633973,
-    "hash": "ffbc8d3e0f330e0dfa0fefba379e3c3d"
+    "mtime": 1792750057.9470448,
+    "hash": "677a2cd567eed8cb2b850d578b4ecb35"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_outbox_worker_unit.py": {
+    "mtime": 1792751236.5957627,
+    "hash": "8b34667d3d36ad86fb82a52dbf55c565"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_payment_agent.py": {
+    "mtime": 1792605776.8518128,
+    "hash": "1161063a896cbcfe2968e8de74fb06b3"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_persistence_boundary.py": {
     "mtime": 1791654514.6978395,
@@ -334,6 +414,10 @@
   "C:\\building projs\\major_proj\\backend\\tests\\test_phase2_security.py": {
     "mtime": 1791716375.948138,
     "hash": "cf40b4303394ad70857be5a3bb75010f"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_postgres_concurrency_real.py": {
+    "mtime": 1792743408.5848887,
+    "hash": "6a395fd9ebd0f33071057d481300b13f"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_product_agent.py": {
     "mtime": 1791654514.70039,
@@ -348,20 +432,24 @@
     "hash": "94dcc9c480a571419b76bd67887b79d9"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_reconciliation_coordinator.py": {
-    "mtime": 1791654514.70127,
-    "hash": "b168f2e208bdeec689003aed911a0ba4"
+    "mtime": 1792746629.9097052,
+    "hash": "1cb8b3f28219981d8d601a089255a57b"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_reconciliation_discovery.py": {
-    "mtime": 1791726159.5148523,
-    "hash": "1c9e2c6091e5580480b2c82b8b9eb774"
+    "mtime": 1792746642.7157,
+    "hash": "ec866f5e87d2a621b33b1ff05aefa869"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_reconciliation_planner.py": {
-    "mtime": 1791654514.70127,
-    "hash": "5781886178a5377fd2f8c542f6f656a2"
+    "mtime": 1792746656.6557286,
+    "hash": "161f6443e0f5ecaefe3010ec02fbc3b2"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_response_composer.py": {
+    "mtime": 1792669072.1815684,
+    "hash": "6ee63b79307a126ce26ea40d75e17530"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_router_parser.py": {
-    "mtime": 1791654514.7050366,
-    "hash": "69c703ee3a609d5b270d8b5fa163a4c5"
+    "mtime": 1792669110.3444004,
+    "hash": "2f94d241fb9315ea27bcbc6b70333c7a"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_security.py": {
     "mtime": 1791654514.7050366,
@@ -388,12 +476,40 @@
     "hash": "75d36c1f255154016faa08989d04ef28"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_ticket_notification_http.py": {
-    "mtime": 1791654514.707782,
-    "hash": "beb1f65461f21444625f9b16d1595782"
+    "mtime": 1792746523.7262886,
+    "hash": "18015de7417fac495e7f199868d4dd6d"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_ticket_notification_transaction.py": {
-    "mtime": 1791654514.707782,
-    "hash": "c55286b0a25977d8b44b441e704b83a1"
+    "mtime": 1792746560.807995,
+    "hash": "7112e8d3ab506ecf641ccd9de7dcf0dd"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_unresolved_attempts_lifecycle.py": {
+    "mtime": 1792671206.774665,
+    "hash": "7fbd754ad4a9f4aaffaf19ae05164bc2"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_v2_approval_lifecycle.py": {
+    "mtime": 1792703233.455701,
+    "hash": "ae4a5117fd5a803f97f810e470d2cf43"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_v2_domain_scenarios.py": {
+    "mtime": 1792671260.1696494,
+    "hash": "b0050b711f381178e8e201414c72fe51"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_v2_multi_domain_switching.py": {
+    "mtime": 1792700426.0024338,
+    "hash": "73700e6025f01b7db665d1649047b5e1"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_v2_product_integration.py": {
+    "mtime": 1792691888.9640248,
+    "hash": "fcc4d27c9ce42fae4a5ddd1e797aad3c"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_v2_routing_matrix.py": {
+    "mtime": 1792672901.7103553,
+    "hash": "2abdf30bb598d9f7afdb78fc03117ae9"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_v2_websocket_approval_e2e.py": {
+    "mtime": 1792704880.2358003,
+    "hash": "d422d0d8bc7a55da79f27c01c46fb144"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\test_warranty.py": {
     "mtime": 1791654514.707782,
@@ -414,6 +530,10 @@
   "C:\\building projs\\major_proj\\backend\\tests\\test_workflow_state_adapters.py": {
     "mtime": 1791654514.7147672,
     "hash": "9f296aa9a438dfe5fe043fe497043b38"
+  },
+  "C:\\building projs\\major_proj\\backend\\tests\\test_workflow_telemetry.py": {
+    "mtime": 1792668971.6345105,
+    "hash": "34a9bb5d7c709064398d157edd0eb4bd"
   },
   "C:\\building projs\\major_proj\\backend\\tests\\__init__.py": {
     "mtime": 1786478808.9496863,
@@ -459,6 +579,10 @@
     "mtime": 1791654514.7753527,
     "hash": "d94375b5367df9a0728dc56f84be08e1"
   },
+  "C:\\building projs\\major_proj\\frontend\\playwright.config.js": {
+    "mtime": 1792754652.7826374,
+    "hash": "21b20d44656486caef94466907301649"
+  },
   "C:\\building projs\\major_proj\\frontend\\postcss.config.mjs": {
     "mtime": 1786380582.6844544,
     "hash": "239f3ebf717465dc636818a1a619398d"
@@ -468,8 +592,8 @@
     "hash": "173d778967a6da6f2f3bd5b1ca0732ca"
   },
   "C:\\building projs\\major_proj\\frontend\\app\\page.js": {
-    "mtime": 1792398016.7390518,
-    "hash": "28fc3bece62d2124a4bb8acaec743abb"
+    "mtime": 1792753329.0613527,
+    "hash": "15cfa79dd94b4339b9f2e99bd718a4f6"
   },
   "C:\\building projs\\major_proj\\frontend\\app\\admin\\layout.js": {
     "mtime": 1791654514.7683198,
@@ -496,8 +620,8 @@
     "hash": "b022ccdabd9ec901da12689e4c963c30"
   },
   "C:\\building projs\\major_proj\\frontend\\app\\agent\\page.js": {
-    "mtime": 1792398084.8453903,
-    "hash": "18896eaca93b5324a55b88285239c0e1"
+    "mtime": 1792604433.2204745,
+    "hash": "2fb4eb7cb17eda888b9a58292d7032c0"
   },
   "C:\\building projs\\major_proj\\frontend\\app\\agent\\customers\\page.js": {
     "mtime": 1786727874.8061295,
@@ -522,6 +646,10 @@
   "C:\\building projs\\major_proj\\frontend\\app\\components\\AdminSidebar.js": {
     "mtime": 1791654514.7692223,
     "hash": "daf737a236f821a424857ac48f54396b"
+  },
+  "C:\\building projs\\major_proj\\frontend\\app\\components\\ApprovalCard.js": {
+    "mtime": 1792703877.8166974,
+    "hash": "b775260953b78d441329e957730727e6"
   },
   "C:\\building projs\\major_proj\\frontend\\app\\components\\DynamicModelSettings.js": {
     "mtime": 1791654514.7692223,
@@ -550,6 +678,10 @@
   "C:\\building projs\\major_proj\\frontend\\app\\lib\\api.js": {
     "mtime": 1792397954.1466508,
     "hash": "77f5da8020e22035d88fec10c94fd024"
+  },
+  "C:\\building projs\\major_proj\\frontend\\e2e\\approval_ux.spec.js": {
+    "mtime": 1792754386.179656,
+    "hash": "e75e409bb253ae3495e2955724a5a2df"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-bundled\\browser\\26.818.31338\\scripts\\browser-client.mjs": {
     "mtime": 1787372927.4409099,
@@ -1040,16 +1172,16 @@
     "hash": "79d931d06ee78e4bd0238d92640486ba"
   },
   "C:\\building projs\\major_proj\\README.md": {
-    "mtime": 1791667586.7240143,
-    "hash": "1d4ab271223056acebd269d6e1ee910b"
+    "mtime": 1792604458.5785623,
+    "hash": "2eb88147d61c4c2b441becef096b025c"
   },
   "C:\\building projs\\major_proj\\backend\\requirements.txt": {
     "mtime": 1791654514.652953,
     "hash": "5ea66db88653ba179586ae5393cc31a4"
   },
   "C:\\building projs\\major_proj\\backend\\app\\skills\\definitions\\product\\information\\SKILL.md": {
-    "mtime": 1791654514.646002,
-    "hash": "dffbebabc4818d53f21e14aaff357a42"
+    "mtime": 1792691180.5996048,
+    "hash": "c668540c41f9efb7bcc3f8d2b5960be3"
   },
   "C:\\building projs\\major_proj\\backend\\app\\skills\\definitions\\product\\warranty\\SKILL.md": {
     "mtime": 1791654514.646002,
@@ -1088,7 +1220,7 @@
     "hash": "5281902136c8ff0926236407b591acf6"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\Chat_Team_CaseStudy FINAL_505d3f90.md": {
-    "mtime": 1792398182.7277977,
+    "mtime": 1792760704.9466023,
     "hash": "3be3f2694dd7da9d0ffa5ebe2f3b6fe4"
   },
   "C:\\building projs\\major_proj\\dataset\\README.md": {
@@ -1172,8 +1304,8 @@
     "hash": "82c5d8f5e52d6d10883990d5a2e671ea"
   },
   "C:\\building projs\\major_proj\\docs\\architecture\\MIGRATION_PLAN.md": {
-    "mtime": 1791654514.7336884,
-    "hash": "de67e7ddc4ac4167613a6008d8d81ecd"
+    "mtime": 1792598700.2923615,
+    "hash": "67a0c2ac55f12657354bdffb42940358"
   },
   "C:\\building projs\\major_proj\\docs\\architecture\\PHASE_F2_5_DISCOVERY.md": {
     "mtime": 1791654514.736469,
@@ -2520,7 +2652,7 @@
     "hash": "97319c8da175b182a713298f93512fcc"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_6948ac1c.md": {
-    "mtime": 1792398219.2170367,
+    "mtime": 1792760721.9023964,
     "hash": "6e7346d28eeda5662ff5bc5dd6f75e35"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-business-review\\SKILL.md": {
@@ -2540,7 +2672,7 @@
     "hash": "eaa4053257ab9f3deb8983cb76d06d5d"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_2dfec4e7.md": {
-    "mtime": 1792398219.6615934,
+    "mtime": 1792760722.4052632,
     "hash": "a8badc91d874435d97fe0ff17f330ad0"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-experiment-analysis\\SKILL.md": {
@@ -2552,7 +2684,7 @@
     "hash": "9078451974e132f1253667f17b8dac62"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_2a54b4b5.md": {
-    "mtime": 1792398219.8497362,
+    "mtime": 1792760722.5358522,
     "hash": "c536fcf2f70b8ce3b00c3d777d39676b"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-financial-budget\\SKILL.md": {
@@ -2564,7 +2696,7 @@
     "hash": "b8a2ea79e69883d5b6b2d9738834b1d6"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_6518758b.md": {
-    "mtime": 1792398220.0777638,
+    "mtime": 1792760722.6781268,
     "hash": "0e6e26625fec37cbdb6c11d73f132dc0"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-investment-committee-memo\\SKILL.md": {
@@ -2576,7 +2708,7 @@
     "hash": "d20c8b792ee1b384cdf34b20ca330ad6"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_6e32add5.md": {
-    "mtime": 1792398220.29863,
+    "mtime": 1792760722.839545,
     "hash": "5c7710d7b6d8de08fc98dfee3b00ca0b"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-legal-memorandum\\SKILL.md": {
@@ -2588,7 +2720,7 @@
     "hash": "46019641750d28759bfe3896fd5cf26e"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_6a455787.md": {
-    "mtime": 1792398220.4269066,
+    "mtime": 1792760722.919036,
     "hash": "90a39bab77da5bfce3de63968c75f677"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-market-trends-report\\SKILL.md": {
@@ -2608,7 +2740,7 @@
     "hash": "b89f46c07572ece98e632c2cf0d98b9a"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_49408230.md": {
-    "mtime": 1792398220.5627139,
+    "mtime": 1792760722.9511697,
     "hash": "843ea35f235f69c2d34b9eafa44924ad"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-operating-calendar\\SKILL.md": {
@@ -2620,7 +2752,7 @@
     "hash": "5230fd8e413d9efe098f1e56b1544681"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_d092977c.md": {
-    "mtime": 1792398220.8499985,
+    "mtime": 1792760723.1091344,
     "hash": "064cd122359bea5319d3f17f5949a7d9"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-operating-review\\SKILL.md": {
@@ -2648,7 +2780,7 @@
     "hash": "52935f002c8b3de9eabe737cb21844e2"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_4e68109d.md": {
-    "mtime": 1792398221.1346254,
+    "mtime": 1792760723.1984923,
     "hash": "634aefdc6e995b762b70aec37a2f6124"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-sales-pipeline\\SKILL.md": {
@@ -2660,7 +2792,7 @@
     "hash": "be15004e70ad56f44e293f3aa9b4930d"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_b626651f.md": {
-    "mtime": 1792398221.3103728,
+    "mtime": 1792760723.2801175,
     "hash": "cc5fc47d4b7f3a72373e815b1d96d120"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-simple-dark-mode\\SKILL.md": {
@@ -2688,7 +2820,7 @@
     "hash": "490d310010e6fa60aa615105be1787a6"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_a0f74a6f.md": {
-    "mtime": 1792398221.8784616,
+    "mtime": 1792760723.5268023,
     "hash": "c4fd4357403b1f61b92d9a505c6be41f"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-system-design\\SKILL.md": {
@@ -2700,7 +2832,7 @@
     "hash": "dc507a7601a363a44ac789d4209affb0"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_aa1af3ff.md": {
-    "mtime": 1792398222.129427,
+    "mtime": 1792760723.7028391,
     "hash": "85611d5e12048e0f47f4a4d54bca0fc2"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\openai-templates\\0.1.1\\skills\\artifact-template-team-alignment\\SKILL.md": {
@@ -2720,7 +2852,7 @@
     "hash": "66ae75a7353dfa0a8acfeb1ce3b88087"
   },
   "C:\\building projs\\major_proj\\graphify-out\\converted\\reference_e7d29e18.md": {
-    "mtime": 1792398222.801026,
+    "mtime": 1792760724.0033462,
     "hash": "7f5cdf180886c27e384efacfe3fe2f7a"
   },
   "C:\\building projs\\major_proj\\paper\\wtn_v2\\codex data\\plugins\\cache\\openai-curated-remote\\plugin-management\\0.1.0\\skills\\plugin-management\\SKILL.md": {

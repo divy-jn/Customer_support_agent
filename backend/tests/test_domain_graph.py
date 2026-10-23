@@ -64,7 +64,7 @@ async def test_guardian_updates_existing_ticket_instead_of_creating_duplicate(mo
     mock_update.return_value = '{"status": "success"}'
     result = await guardian_response_node({
         "message": "I need a manager about the warranty", "response": "Your warranty is active.",
-        "intent": "product_warranty", "customer_id": 7, "client_request_id": "request-1", "workflow_state": {"turn_count": 1},
+        "semantic_domain": "product", "intent": "product_warranty", "customer_id": 7, "client_request_id": "request-1", "workflow_state": {"turn_count": 1},
     })
 
     assert result["guardian_action"] == "update_existing_ticket"
@@ -120,3 +120,26 @@ async def test_guardian_uses_the_actual_order_domain_for_ticket_creation(mock_ca
     # rather than being incorrectly treated as a product request.
     assert result["guardian_action"] == "continue"
     assert "complete this request here" in result["response"]
+
+
+@pytest.mark.asyncio
+@patch("app.agents.domain_graph.create_ticket")
+@patch("app.agents.domain_graph.find_customer_support_cases")
+async def test_guardian_handles_history_lookup_failure_safely_without_duplicate_ticket(mock_cases, mock_create):
+    """When ticket history lookup fails, Guardian escalates safely and avoids unsafe ticket creation."""
+    mock_cases.side_effect = RuntimeError("Database unreachable")
+    result = await guardian_response_node({
+        "message": "My device will not power on and I need a technician",
+        "response": None,  # Needs human handoff
+        "semantic_domain": "product",
+        "intent": "hardware_defect",
+        "customer_id": 7,
+        "client_request_id": "req-db-fail-safe",
+        "workflow_state": {"turn_count": 1},
+    })
+
+    assert result["guardian_action"] == "escalate"
+    assert result["escalated"] is True
+    assert result["guardian_ticket_id"] is None
+    assert "escalating this to a human support specialist" in result["response"]
+    mock_create.assert_not_called()

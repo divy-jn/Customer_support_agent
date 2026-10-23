@@ -2,18 +2,27 @@ import json
 import os
 import pytest
 import uuid
-import psycopg2
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
 
+TEST_POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL")
 TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD")
-if not TEST_DB_PASSWORD:
+
+if not psycopg2:
     pytest.skip(
-        "TEST_DB_PASSWORD is required for real idempotency integration tests.",
+        "psycopg2 is required for real PostgreSQL integration tests.",
         allow_module_level=True,
     )
 
-conn_string = f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
+if not TEST_POSTGRES_URL and not TEST_DB_PASSWORD:
+    pytest.skip(
+        "TEST_POSTGRES_URL or TEST_DB_PASSWORD is required for real idempotency integration tests.",
+        allow_module_level=True,
+    )
+
+conn_string = TEST_POSTGRES_URL or f"dbname='postgres' user='postgres' host='localhost' port='5433' password='{TEST_DB_PASSWORD}'"
 
 def exec_rpc(operation_type, canonical_target, payload, customer_id=1, client_request_id=None):
     if not client_request_id:

@@ -232,14 +232,20 @@ async def product_node(state: AgentState) -> dict:
         urgency=state.get("urgency", "medium"),
         sentiment=state.get("sentiment", "neutral"),
         workflow_state=WorkflowState.from_legacy(ws),
-        conversation_history=state["conversation_history"],
+        conversation_history=state.get("conversation_history") or [],
         manage_tickets=state.get("manage_tickets", True),
     )
     
     response = await agent.handle(ctx)
+    tool_results = None
+    if response.workflow_state.product_state and response.workflow_state.product_state.last_tool_result:
+        tool_results = response.workflow_state.product_state.last_tool_result.result
+
     return {
         "response": response.response,
         "workflow_state": response.workflow_state.model_dump(mode="json"),
+        "tool_results": tool_results,
+        "requires_human": response.execution_status in ("llm_failure", "ticket_registration_failed", "max_iterations_exceeded"),
         "escalated": False
     }
 
@@ -339,7 +345,7 @@ def _execute_tool(action: str, params: dict, authenticated_customer_id: int | No
     try:
         # Security Boundary: Force the customer_id for all customer-scoped actions
         # This completely overwrites any customer_id the LLM tried to pass
-        if action in ["get_customer_history", "track_order", "cancel_order", "process_refund", "get_ticket", "create_ticket", "update_ticket", "send_ticket_email_to_customer"]:
+        if action in ["get_customer_history", "track_order", "cancel_order", "process_refund", "get_ticket", "create_ticket", "update_ticket", "send_ticket_email_to_customer", "check_warranty_status"]:
             if authenticated_customer_id:
                 params["customer_id"] = authenticated_customer_id
             if client_request_id and action in ["create_ticket", "update_ticket", "cancel_order", "process_refund", "send_ticket_email_to_customer"]:
@@ -358,7 +364,8 @@ def _execute_tool(action: str, params: dict, authenticated_customer_id: int | No
         elif action == "process_refund":
             return process_refund(**params)
         elif action == "check_inventory":
-            return check_inventory(**params)
+            pname = params.get("product_name") or params.get("product") or ""
+            return check_inventory(product_name=pname)
         elif action == "create_ticket":
             return create_ticket(**params)
         elif action == "update_ticket":
@@ -373,10 +380,10 @@ def _execute_tool(action: str, params: dict, authenticated_customer_id: int | No
             return search_manufacturer_warranty(**params)
         elif action == "check_warranty_status":
             return check_warranty_status(**params)
-        elif action == "retrieve_as_context":
-            # #review: rag_agent does NOT have query_pinecone attribute. This should call app.rag.retriever.retrieve_as_context.
+        elif action in ("retrieve_as_context", "search_knowledge_base"):
             from app.rag.retriever import retrieve_as_context
-            return retrieve_as_context(params.get("query", ""))
+            query = params.get("query") or params.get("search_query") or params.get("message") or ""
+            return retrieve_as_context(query)
         else:
             return f"Error: Unknown DB action '{action}'"
     except Exception as e:

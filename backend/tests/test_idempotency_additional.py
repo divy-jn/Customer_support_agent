@@ -1,10 +1,21 @@
 import pytest
 import uuid
 import json
-import psycopg2
 import time
 from app.tools import create_ticket, update_ticket, cancel_order, process_refund
-from tests.test_idempotency_real import exec_rpc, get_ticket_description, conn_string
+from tests.conftest import get_test_postgres_dsn
+
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
+
+conn_string = get_test_postgres_dsn()
+
+def _check_db():
+    if not conn_string:
+        pytest.skip("Real PostgreSQL test database required (set TEST_POSTGRES_URL or TEST_DB_PASSWORD).")
+
 
 def test_missing_client_request_id():
     assert json.loads(create_ticket(1, "s", "d", client_request_id=None)).get("error") == "client_request_id is required for mutating operations"
@@ -12,7 +23,11 @@ def test_missing_client_request_id():
     assert json.loads(cancel_order(1, client_request_id=None)).get("error") == "client_request_id is required for mutating operations"
     assert json.loads(process_refund(1, client_request_id=None)).get("error") == "client_request_id is required for mutating operations"
 
+
+@pytest.mark.requires_postgres
 def test_ticket_append_legitimate_identical_request():
+    _check_db()
+    from tests.test_idempotency_real import exec_rpc, get_ticket_description
     payload = {
         "subject": "Append Legit",
         "description": "Original",
@@ -43,7 +58,10 @@ def test_ticket_append_legitimate_identical_request():
     # R1 executed once, R2 executed once. So "Still broken" should be present exactly TWICE.
     assert desc.count("Still broken") == 2, f"Expected 2 appends, found {desc.count('Still broken')} in: {desc}"
 
+@pytest.mark.requires_postgres
 def test_explicit_result_semantics_and_conflicts():
+    _check_db()
+    from tests.test_idempotency_real import exec_rpc
     req = str(uuid.uuid4())
     payload = {"subject": "Semantics", "description": "Desc", "type": "inquiry", "status": "open", "priority": "low", "channel": "chat"}
     
@@ -76,7 +94,10 @@ def test_explicit_result_semantics_and_conflicts():
     assert res_new.get("status") == "success"
     assert res_new["ticket_id"] != res_first["ticket_id"]
 
+@pytest.mark.requires_postgres
 def test_negative_customer_isolation():
+    _check_db()
+    from tests.test_idempotency_real import exec_rpc
     # Setup ticket owned by customer 1
     res_create = exec_rpc("create_ticket", "new", {"subject": "C1", "description": "D", "type": "inquiry", "status": "open", "priority": "low", "channel": "chat"}, customer_id=1)
     ticket_id = res_create["ticket_id"]
@@ -95,7 +116,10 @@ def test_negative_customer_isolation():
     # It succeeds independently because identity is (customer_id, client_request_id)
     assert res2.get("status") == "success"
 
+@pytest.mark.requires_postgres
 def test_real_crash_equivalent():
+    _check_db()
+    from tests.test_idempotency_real import exec_rpc
     req = str(uuid.uuid4())
     subj = "Crash_" + req
     payload = {"subject": subj, "description": "D", "type": "inquiry", "status": "open", "priority": "low", "channel": "chat"}
