@@ -229,7 +229,7 @@ export default function CustomerChatPage() {
       setIsTyping(false);
       if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
       
-      if (event.code === 1008 || event.code === 1011) {
+      if (event.code === 1008 || event.code === 1011 || event.code === 1006) {
         setMessages((prev) => [
           ...prev,
           { role: "error", content: `Authentication failed (Code: ${event.code}). Getting a new token and reconnecting...`, timestamp: new Date().toISOString() },
