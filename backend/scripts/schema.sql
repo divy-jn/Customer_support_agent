@@ -700,7 +700,8 @@ BEGIN
         -- E1 or E2: Insert Event
         INSERT INTO escalation_events (
             escalation_event_id, session_id, customer_id, ticket_id, client_request_id, payload_hash,
-            sentiment, urgency, last_message, customer_notification_required
+            sentiment, urgency, last_message, customer_notification_required,
+            event_type, new_status, metadata
         ) VALUES (
             p_escalation_event_id,
             p_session_id,
@@ -711,7 +712,10 @@ BEGIN
             p_payload->>'sentiment',
             p_payload->>'urgency',
             p_payload->>'last_message',
-            (p_payload->>'customer_notification_required')::BOOLEAN
+            (p_payload->>'customer_notification_required')::BOOLEAN,
+            COALESCE(p_payload->>'event_type', 'takeover'),
+            'ACTIVE',
+            COALESCE(p_payload->'metadata', jsonb_build_object('source', 'human_takeover'))
         );
 
         -- Update State

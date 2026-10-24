@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def _is_table_missing_error(e: Exception) -> bool:
     err_msg = str(e)
-    return "PGRST205" in err_msg or "Could not find the table" in err_msg or "session_escalation_state" in err_msg
+    return "PGRST205" in err_msg or ("Could not find the table" in err_msg and "in the schema cache" in err_msg)
 
 
 @_supabase_retry

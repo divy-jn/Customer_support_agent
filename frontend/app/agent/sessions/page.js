@@ -96,6 +96,9 @@ export default function LiveSessionsPage() {
 
       if (data.type === "session_state") {
         setSessionMessages(data.conversation_history || []);
+        if (data.mode) {
+          setHasTakenOver(data.mode === "human");
+        }
       } else if (data.type === "customer_message") {
         setSessionMessages((prev) => [
           ...prev,
@@ -112,6 +115,23 @@ export default function LiveSessionsPage() {
             timestamp: data.timestamp,
           },
         ]);
+      } else if (data.type === "human_message") {
+        setSessionMessages((prev) => {
+          const exists = prev.some(
+            (m) => m.role === "agent" && m.content === data.message && m.timestamp === data.timestamp
+          );
+          if (exists) return prev;
+          return [
+            ...prev,
+            {
+              role: "agent",
+              content: data.message,
+              agent_name: data.agent_name || "Support Agent",
+              human_agent: true,
+              timestamp: data.timestamp,
+            },
+          ];
+        });
       } else if (data.type === "escalation_alert") {
         setSessions((prev) =>
           prev.map((s) =>
@@ -124,9 +144,13 @@ export default function LiveSessionsPage() {
       } else if (data.type === "mode_change") {
         if (data.mode === "human") {
           setHasTakenOver(true);
+          toast("You've taken over this conversation.", "success");
         } else if (data.mode === "ai") {
           setHasTakenOver(false);
+          toast("Released conversation to AI Assistant.", "info");
         }
+      } else if (data.type === "error") {
+        toast(data.message || "An error occurred.", "error");
       }
     };
 
@@ -202,8 +226,6 @@ export default function LiveSessionsPage() {
       wsRef.current.send(
         JSON.stringify({ type: "takeover", client_request_id: crypto.randomUUID(), agent_name: "Support Agent" })
       );
-      setHasTakenOver(true);
-      toast("You've taken over this conversation.", "success");
     }
   };
 
@@ -213,8 +235,6 @@ export default function LiveSessionsPage() {
       wsRef.current.send(
         JSON.stringify({ type: "release", client_request_id: crypto.randomUUID() })
       );
-      setHasTakenOver(false);
-      toast("Released conversation to AI Assistant.", "info");
     }
   };
 

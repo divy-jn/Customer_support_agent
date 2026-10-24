@@ -1221,11 +1221,26 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
 
     # Send current conversation history to the agent
     session = await _get_session(session_id)
+    cust_id = session.get("customer_id")
+    if cust_id:
+        try:
+            from app.persistence.escalation import ensure_durable_escalation_state
+            from app.models import EscalationLifecycleStatus
+            d_status = await asyncio.to_thread(ensure_durable_escalation_state, session_id, cust_id)
+            if d_status == EscalationLifecycleStatus.ACTIVE and session.get("mode") != "human":
+                def _set_mode(s):
+                    s["mode"] = "human"
+                    return True
+                session, _ = await _mutate_session(session_id, _set_mode, allow_retry=True)
+        except Exception as e:
+            logger.debug(f"Could not sync initial agent ws durable state: {e}")
+
     await websocket.send_text(json.dumps({
         "type": "session_state",
         "session_id": session_id,
         "conversation_history": session.get("conversation_history", []),
         "customer_id": session.get("customer_id"),
+        "mode": session.get("mode", "ai"),
     }))
 
     try:
@@ -1243,7 +1258,23 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
             msg_type = data.get("type", "")
 
             if msg_type == "agent_message":
+                session = await _get_session(session_id)
                 # Keep AI and human modes mutually exclusive.
+                if session.get("mode") != "human":
+                    customer_id = session.get("customer_id")
+                    if customer_id:
+                        try:
+                            from app.persistence.escalation import ensure_durable_escalation_state
+                            from app.models import EscalationLifecycleStatus
+                            d_status = await asyncio.to_thread(ensure_durable_escalation_state, session_id, customer_id)
+                            if d_status == EscalationLifecycleStatus.ACTIVE:
+                                def _sync_human(s):
+                                    s["mode"] = "human"
+                                    return True
+                                session, _ = await _mutate_session(session_id, _sync_human, allow_retry=True)
+                        except Exception:
+                            pass
+
                 if session.get("mode") != "human":
                     await websocket.send_text(json.dumps({
                         "type": "error",
@@ -1272,18 +1303,35 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                 session, _ = await _mutate_session(session_id, _agent_message, allow_retry=True)
 
                 # Send to customer
-                await manager.send_personal_message({
+                out_msg = {
                     "type": "human_message",
                     "session_id": session_id,
                     "message": agent_message,
                     "agent_name": agent_name,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                }, session_id)
+                }
+                await manager.send_personal_message(out_msg, session_id)
+                await manager.broadcast_to_agents(out_msg, session_id)
 
             elif msg_type == "takeover":
                 # Persist the takeover before changing Redis/in-memory session mode.
                 client_request_id_str = data.get("client_request_id")
+                session = await _get_session(session_id)
                 customer_id = session.get("customer_id")
+
+                if not customer_id:
+                    try:
+                        from app.tools import supabase
+                        row = supabase.table("session_escalation_state").select("customer_id").eq("session_id", session_id).execute()
+                        if row.data and row.data[0].get("customer_id"):
+                            customer_id = row.data[0]["customer_id"]
+                            def _set_cust(s):
+                                s["customer_id"] = customer_id
+                                return True
+                            session, _ = await _mutate_session(session_id, _set_cust, allow_retry=True)
+                    except Exception as e:
+                        logger.debug(f"Failed to fetch customer_id from table: {e}")
+
                 if not client_request_id_str or not customer_id:
                     await websocket.send_text(json.dumps({
                         "type": "error",
@@ -1332,20 +1380,19 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                             continue
 
                     def _takeover(s):
-                        if s.get("mode") != "human":
-                            s["mode"] = "human"
-                            return True
-                        return False
-                    session, was_changed = await _mutate_session(
+                        s["mode"] = "human"
+                        return True
+                    session, _ = await _mutate_session(
                         session_id, _takeover, allow_retry=True
                     )
-                    if was_changed and session and session.get("mode") == "human":
-                        await manager.send_personal_message({
-                            "type": "mode_change",
-                            "mode": "human",
-                            "agent_name": data.get("agent_name", "Support Agent"),
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        }, session_id)
+                    mode_msg = {
+                        "type": "mode_change",
+                        "mode": "human",
+                        "agent_name": data.get("agent_name", "Support Agent"),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                    await manager.send_personal_message(mode_msg, session_id)
+                    await manager.broadcast_to_agents(mode_msg, session_id)
                 except Exception as e:
                     logger.error(f"Failed to persist takeover for session {session_id}: {e}")
                     await websocket.send_text(json.dumps({
@@ -1359,11 +1406,31 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                 client_request_id_str = data.get("client_request_id")
                 if not client_request_id_str:
                     logger.error("Missing client_request_id for release.")
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": "Missing client_request_id for release.",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }))
                     continue
                 
+                session = await _get_session(session_id)
                 customer_id = session.get("customer_id")
                 if not customer_id:
+                    try:
+                        from app.tools import supabase
+                        row = supabase.table("session_escalation_state").select("customer_id").eq("session_id", session_id).execute()
+                        if row.data and row.data[0].get("customer_id"):
+                            customer_id = row.data[0]["customer_id"]
+                    except Exception:
+                        pass
+
+                if not customer_id:
                     logger.error("No customer_id associated with session.")
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": "No customer_id associated with session.",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }))
                     continue
                     
                 from app.escalation.service import EscalationService, ReleaseRequest, IdempotencyConflict
@@ -1374,29 +1441,50 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                         session_id=session_id,
                         client_request_id=uuid.UUID(client_request_id_str)
                     )
-                    res = EscalationService.release_session(req)
+                    res = await asyncio.to_thread(EscalationService.release_session, req)
                     
                     if res.status == "success":
                         def _release(s):
-                            if s.get("mode") != "ai":
-                                s["mode"] = "ai"
-                                return True
-                            return False
-                        session, was_changed = await _mutate_session(session_id, _release, allow_retry=True)
-                        if was_changed and session and session.get("mode") == "ai":
-                            await manager.send_personal_message({
-                                "type": "mode_change",
-                                "mode": "ai",
-                                "agent_name": data.get("agent_name", "AI Assistant"),
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            }, session_id)
+                            s["mode"] = "ai"
+                            return True
+                        session, _ = await _mutate_session(session_id, _release, allow_retry=True)
+                        mode_msg = {
+                            "type": "mode_change",
+                            "mode": "ai",
+                            "agent_name": data.get("agent_name", "AI Assistant"),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                        await manager.send_personal_message(mode_msg, session_id)
+                        await manager.broadcast_to_agents(mode_msg, session_id)
                     else:
                         logger.error(f"Release failed: {res.error}")
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "message": res.error or res.message or "Release failed.",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }))
                         
                 except IdempotencyConflict as ic:
                     logger.warning(f"Idempotency conflict on release: {ic}")
+                    def _release_conflict(s):
+                        s["mode"] = "ai"
+                        return True
+                    await _mutate_session(session_id, _release_conflict, allow_retry=True)
+                    mode_msg = {
+                        "type": "mode_change",
+                        "mode": "ai",
+                        "agent_name": data.get("agent_name", "AI Assistant"),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                    await manager.send_personal_message(mode_msg, session_id)
+                    await manager.broadcast_to_agents(mode_msg, session_id)
                 except Exception as e:
                     logger.error(f"Exception during release: {e}")
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": "Exception during release. Please retry.",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }))
 
     except WebSocketDisconnect:
         manager.disconnect_agent(websocket, session_id)
