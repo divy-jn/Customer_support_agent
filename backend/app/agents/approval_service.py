@@ -630,13 +630,24 @@ async def execute_approved_action(
                 status=ApprovalStatus.FAILED,
             )
 
-        # Successful mutation
-        success_msg = payload.get("message")
-        if not success_msg:
-            if action == "cancel_order":
-                success_msg = f"Order #{order_id} has been cancelled"
-            else:
-                success_msg = f"Refund initiated for order #{order_id}. The refund will be processed within 5-7 business days."
+        # Dispatch customer email notification
+        try:
+            from app.email_service import send_order_update_email
+            from app.tools import supabase
+            cust_res = supabase.table("customers").select("name, email").eq("id", authenticated_customer_id).execute()
+            c_name = cust_res.data[0].get("name", "Customer") if cust_res.data else "Customer"
+            c_email = cust_res.data[0].get("email", "customer@example.com") if cust_res.data else "customer@example.com"
+            status_text = "cancelled" if action == "cancel_order" else "refund_initiated"
+            await asyncio.to_thread(
+                send_order_update_email,
+                customer_email=c_email,
+                customer_name=c_name,
+                order_id=order_id,
+                status=status_text,
+                message_content=success_msg,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to dispatch order update email for order #{order_id}: {e}")
 
         return ApprovalExecutionResult(
             success=True,

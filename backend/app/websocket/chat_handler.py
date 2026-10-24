@@ -1371,6 +1371,19 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                         result = await asyncio.to_thread(
                             EscalationService.escalate_session, request
                         )
+                        try:
+                            from app.email_service import send_escalation_email
+                            await asyncio.to_thread(
+                                send_escalation_email,
+                                customer_email=None,
+                                customer_name=None,
+                                session_id=session_id,
+                                reason="Human agent takeover",
+                                sentiment="neutral",
+                                urgency="normal"
+                            )
+                        except Exception as mail_err:
+                            logger.debug(f"Escalation email dispatch skipped: {mail_err}")
                         if not (result.is_success or result.status == "bypassed"):
                             await websocket.send_text(json.dumps({
                                 "type": "error",

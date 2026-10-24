@@ -270,7 +270,24 @@ def create_ticket(
             if result.get("error") == "IdempotencyConflict":
                 pass
             return json.dumps(result)
-            
+
+        try:
+            from app.email_service import send_ticket_created_email
+            cust_info = supabase.table("customers").select("name, email").eq("id", customer_id).execute()
+            c_name = cust_info.data[0].get("name", "Customer") if cust_info.data else "Customer"
+            c_email = cust_info.data[0].get("email", "customer@example.com") if cust_info.data else "customer@example.com"
+            ticket_id_created = result.get("ticket_id") or result.get("id") or 0
+            send_ticket_created_email(
+                customer_email=c_email,
+                customer_name=c_name,
+                ticket_id=ticket_id_created,
+                subject=subject,
+                description=description,
+                priority=priority_enum.value
+            )
+        except Exception as e:
+            logger.warning(f"Could not dispatch ticket created email: {e}")
+
         return json.dumps(result)
     except Exception as e:
         return json.dumps({"error": str(e)})
