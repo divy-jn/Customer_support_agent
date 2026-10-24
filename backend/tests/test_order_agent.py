@@ -35,3 +35,31 @@ async def test_delivery_exception_requires_guardian_controlled_handoff():
     })
     assert result["requires_human"] is True
     assert "specialist" in result["response"]
+
+
+@pytest.mark.asyncio
+@patch("app.agents.order_agent.get_customer_history")
+async def test_order_history_direct_retrieval(mock_history):
+    mock_history.return_value = json.dumps({
+        "recent_orders": [
+            {"id": 101, "status": "delivered", "order_date": "2026-03-01", "products": {"name": "Laptop"}},
+        ]
+    })
+    result = await handle_order_request({
+        "message": "give my history of order",
+        "intent": "view_order_history",
+        "customer_id": 7,
+    })
+    assert "Order #101" in result["response"]
+    assert "Laptop" in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_order_follow_up_inquiry_without_order_id():
+    result = await handle_order_request({
+        "message": "now?",
+        "intent": "follow_up_inquiry",
+        "customer_id": 7,
+    })
+    assert "order number" in result["response"]
+

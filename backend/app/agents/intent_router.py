@@ -43,7 +43,7 @@ def parse_and_validate_router_output(raw_text: str) -> dict:
     valid_intents = [
         "faq", "technical_support", "billing", "refund", "order_tracking",
         "order_cancellation", "account_management", "product_inquiry", "complaint", "general",
-        "ticket_status", "ticket_management", "order_status"
+        "ticket_status", "ticket_management", "order_status", "order_history", "view_order_history"
     ]
     valid_sentiments = ["positive", "neutral", "negative"]
     valid_urgencies = ["low", "medium", "high", "critical"]
@@ -82,6 +82,8 @@ def parse_and_validate_router_output(raw_text: str) -> dict:
         "order_tracking": "db_agent",
         "order_status": "db_agent",
         "order_cancellation": "db_agent",
+        "order_history": "db_agent",
+        "view_order_history": "db_agent",
         "account_management": "db_agent",
         "ticket_status": "db_agent",
         "ticket_management": "db_agent",

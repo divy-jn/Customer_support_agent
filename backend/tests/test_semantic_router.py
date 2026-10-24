@@ -134,34 +134,35 @@ async def test_internal_error(mock_get_llm):
 @patch("app.agents.semantic_router.classify_semantic_intent")
 @patch("app.agents.intent_router.classify_intent")
 async def test_shadow_mode_does_not_break_legacy(mock_legacy, mock_semantic):
-    # Mock legacy to succeed
-    mock_legacy.return_value = {
-        "intent": "track_order",
-        "route_to": "db_agent"
-    }
-    
-    # Mock semantic to CRASH completely
-    mock_semantic.side_effect = Exception("TOTAL SHADOW FAILURE")
-    
-    state: AgentState = {
-        "message": "Where is my order?",
-        "conversation_history": [],
-        "session_id": "test_123"
-    }
-    
-    # Run the node
-    result = await route_intent_node(state)
-    
-    # Await background tasks so they don't leak (and we test they swallowed the error safely)
-    from app.agents.graph import _shadow_tasks
-    if _shadow_tasks:
-        await asyncio.gather(*_shadow_tasks)
-    
-    # Assert legacy path was still returned correctly despite the shadow crash
-    assert result["intent"] == "track_order"
-    assert result["route_to"] == "db_agent"
-    
-    # Verify both were called
-    mock_legacy.assert_called_once()
-    mock_semantic.assert_called_once()
+    with patch("app.config.settings.agent_architecture_mode", "shadow"):
+        # Mock legacy to succeed
+        mock_legacy.return_value = {
+            "intent": "track_order",
+            "route_to": "db_agent"
+        }
+        
+        # Mock semantic to CRASH completely
+        mock_semantic.side_effect = Exception("TOTAL SHADOW FAILURE")
+        
+        state: AgentState = {
+            "message": "Where is my order?",
+            "conversation_history": [],
+            "session_id": "test_123"
+        }
+        
+        # Run the node
+        result = await route_intent_node(state)
+        
+        # Await background tasks so they don't leak (and we test they swallowed the error safely)
+        from app.agents.graph import _shadow_tasks
+        if _shadow_tasks:
+            await asyncio.gather(*_shadow_tasks)
+        
+        # Assert legacy path was still returned correctly despite the shadow crash
+        assert result["intent"] == "track_order"
+        assert result["route_to"] == "db_agent"
+        
+        # Verify both were called
+        mock_legacy.assert_called_once()
+        mock_semantic.assert_called_once()
 

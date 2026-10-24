@@ -228,6 +228,21 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
         return
 
     customer_id = authenticated_customer_id
+    if customer_id is not None and not session.get("customer_name"):
+        try:
+            from app.tools import supabase
+            c_res = await asyncio.to_thread(
+                supabase.table("customers").select("name").eq("id", customer_id).execute
+            )
+            if c_res.data and c_res.data[0].get("name"):
+                cust_name = c_res.data[0]["name"]
+                def _set_cust_name(s):
+                    s["customer_name"] = cust_name
+                    return True
+                session, _ = await _mutate_session(session_id, _set_cust_name, allow_retry=True, customer_id=customer_id)
+        except Exception as e:
+            logger.warning(f"Could not load customer name for {customer_id}: {e}")
+
     history = list(session.get("conversation_history", []))
     pending_app = session.get("pending_approval")
     if pending_app and pending_app.get("status") == "pending":

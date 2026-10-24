@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     database_password: str = Field(default="", alias="DATABASE_PASSWORD")  # falls back to supabase_key
 
     # --- LLM (Vertex AI) ---
-    llm_model: str = Field(default="gemini-3.8-flash", alias="LLM_MODEL")
+    llm_model: str = Field(default="gemini-2.5-flash", alias="LLM_MODEL")
     llm_timeout: int = Field(default=120, alias="LLM_TIMEOUT")  # seconds
     vertex_project_id: str = Field(default="bytebazaar-dj", alias="VERTEX_PROJECT_ID")
     vertex_location: str = Field(default="global", alias="VERTEX_LOCATION")

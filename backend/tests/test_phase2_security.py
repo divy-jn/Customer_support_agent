@@ -25,6 +25,20 @@ def customer_token():
 def other_customer_token():
     return create_token("customer", "456")
 
+@pytest.fixture
+def mocker():
+    from unittest.mock import patch
+    patches = []
+    class Mocker:
+        def patch(self, *args, **kwargs):
+            p = patch(*args, **kwargs)
+            started = p.start()
+            patches.append(p)
+            return started
+    yield Mocker()
+    for p in reversed(patches):
+        p.stop()
+
 class TestPhase2Security:
     
     def test_unauthenticated_access_rejected(self):

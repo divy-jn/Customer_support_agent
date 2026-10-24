@@ -11,11 +11,12 @@ import re
 from typing import Any
 
 from app.agents.approval_service import create_pending_approval
-from app.tools import track_order
+from app.tools import track_order, get_customer_history
 
 
 _ORDER_ID = re.compile(r"(?:order\s*(?:#|number)?\s*)(\d+)|#(\d+)", re.IGNORECASE)
 _CANCEL_INTENTS = {"cancel_order", "order_cancellation", "cancellation"}
+_HISTORY_INTENTS = {"view_order_history", "order_history", "list_orders", "past_orders", "my_orders"}
 _EXCEPTION_INTENTS = {
     "delivery_issue", "delivery_delay", "missing_item", "wrong_item",
     "damaged_item", "order_issue", "shipping_issue",
@@ -82,6 +83,50 @@ async def handle_order_request(state: dict[str, Any]) -> dict[str, Any]:
 
     intent = state.get("intent", "").lower()
     if order_id is None:
+        msg_lower = state.get("message", "").lower()
+        if intent in _HISTORY_INTENTS or any(w in msg_lower for w in ("history", "orders", "past order", "previous order", "order list")):
+            cust_id = state.get("customer_id")
+            if cust_id:
+                raw = await asyncio.to_thread(get_customer_history, cust_id)
+                try:
+                    data = json.loads(raw)
+                    recent_orders = data.get("recent_orders") or []
+                    if recent_orders:
+                        lines = ["Here is your recent order history:"]
+                        for ord_item in recent_orders:
+                            oid = ord_item.get("id")
+                            status = ord_item.get("status", "unknown")
+                            date = ord_item.get("order_date", "")
+                            prod_name = (ord_item.get("products") or {}).get("name", "Product")
+                            tracking = ord_item.get("tracking_number")
+                            entry = f"• **Order #{oid}**: {prod_name} — Status: *{status}*"
+                            if date:
+                                entry += f" (Placed: {date})"
+                            if tracking:
+                                entry += f" | Tracking: `{tracking}`"
+                            lines.append(entry)
+                        lines.append("\nPlease let me know if you would like more details about any specific order!")
+                        return {
+                            "response": "\n".join(lines),
+                            "tool_results": raw,
+                            "workflow_state": state.get("workflow_state"),
+                            "escalated": False,
+                        }
+                    else:
+                        return {
+                            "response": "You don't have any past orders on file with us yet.",
+                            "tool_results": raw,
+                            "workflow_state": state.get("workflow_state"),
+                            "escalated": False,
+                        }
+                except Exception:
+                    pass
+        if intent in {"follow_up_inquiry", "follow_up", "order_status", "general_order_inquiry"} or msg_lower in {"now?", "now", "what now?", "next?"}:
+            return {
+                "response": "I'm ready to assist you! If you would like to track, modify, or cancel a specific order, please let me know your order number.",
+                "workflow_state": state.get("workflow_state"),
+                "escalated": False,
+            }
         return {
             "response": "Please share the order number so I can look that up for you.",
             "escalated": False,

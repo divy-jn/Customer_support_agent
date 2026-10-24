@@ -342,7 +342,8 @@ async def test_chat_handler_session_persistence(mock_get_session_state):
                         reason="test",
                         timestamp=datetime.now(timezone.utc)
                     )
-                    await handle_customer_ws(mock_ws, session_id=session_id, authenticated_customer_id=123)
+                    with patch("app.config.settings.agent_architecture_mode", "legacy"):
+                        await handle_customer_ws(mock_ws, session_id=session_id, authenticated_customer_id=123)
             except Exception as e:
                 if str(e) != "disconnect":
                     raise

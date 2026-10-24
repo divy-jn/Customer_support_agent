@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 _ORDER_V2_INTENTS = {
     "tracking", "track_order", "order_tracking", "cancel_order", "order_cancellation", "cancellation",
     "delivery_issue", "delivery_delay", "missing_item", "wrong_item", "damaged_item", "order_issue", "shipping_issue",
+    "view_order_history", "order_history", "list_orders", "past_orders", "my_orders",
+    "follow_up_inquiry", "follow_up", "order_status", "check_order", "order_details", "general_order_inquiry",
 }
 _PAYMENT_V2_INTENTS = {
     "refund", "refund_request", "process_refund", "billing_issue", "payment_failure", "payment_failed",

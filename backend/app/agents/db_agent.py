@@ -23,7 +23,7 @@ DB_AGENT_SYSTEM_PROMPT = GLOBAL_SYSTEM_POLICY + "\n\n" + render_skill_prompt(Dat
 
 def get_db_llm():
     """Get the large LLM for generating database-informed responses."""
-    return get_llm(model=settings.llm_model, temperature=0.3)
+    return get_llm(model=settings.llm_model, temperature=0.3, request_timeout=min(settings.llm_timeout, 30))
 
 
 # Pydantic schema for structured DB action planning

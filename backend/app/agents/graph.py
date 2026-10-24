@@ -13,7 +13,7 @@ from langgraph.graph import StateGraph, END
 # Load .env so LangSmith env vars are available
 load_dotenv()
 
-# Import the agents
+from app.config import settings
 from app.agents import intent_router, rag_agent, db_agent, web_agent, escalation_agent
 
 from app.tools import (
@@ -168,22 +168,22 @@ async def route_intent_node(state: AgentState) -> dict:
         conversation_history=state["conversation_history"]
     )
     
-    # Fire and forget the shadow router so we do not delay the customer response
-    # Enforce bounded concurrency to prevent unbounded accumulation
-    MAX_SHADOW_TASKS = 50
-    if len(_shadow_tasks) >= MAX_SHADOW_TASKS:
-        logger.warning(f"Shadow task dropped: concurrent limit reached ({MAX_SHADOW_TASKS})")
-    else:
-        task = asyncio.create_task(
-            _run_shadow_router(
-                message=state["message"], 
-                conversation_history=state["conversation_history"], 
-                session_id=state.get("session_id", "unknown"),
-                classification=classification
+    # Fire and forget the shadow router only when explicitly in shadow mode
+    if settings.agent_architecture_mode == "shadow":
+        MAX_SHADOW_TASKS = 50
+        if len(_shadow_tasks) >= MAX_SHADOW_TASKS:
+            logger.warning(f"Shadow task dropped: concurrent limit reached ({MAX_SHADOW_TASKS})")
+        else:
+            task = asyncio.create_task(
+                _run_shadow_router(
+                    message=state["message"], 
+                    conversation_history=state["conversation_history"], 
+                    session_id=state.get("session_id", "unknown"),
+                    classification=classification
+                )
             )
-        )
-        _shadow_tasks.add(task)
-        task.add_done_callback(_shadow_tasks.discard)
+            _shadow_tasks.add(task)
+            task.add_done_callback(_shadow_tasks.discard)
 
     # Legacy path remains 100% authoritative and returns immediately
     return {

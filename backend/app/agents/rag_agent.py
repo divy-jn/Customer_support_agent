@@ -6,6 +6,7 @@ retrieved context. If no relevant context is found, the agent
 explicitly says it doesn't have the information.
 """
 
+import asyncio
 from app.config import settings
 from app.rag.retriever import retrieve_as_context
 from app.llm_factory import get_llm
@@ -52,16 +53,13 @@ async def generate_response(
     # Step 2: Retrieve relevant context from Pinecone/Chroma
     # If there's history, append it to the message to give the retriever more context
     search_query = message
-    if conversation_history:
-        # Use the last agent response and the current message for better semantic search context
-        # #review: Concatenating the entire previous agent response to the user message can pollute vector embeddings
-        # with boilerplate text (e.g., greetings, apologies) instead of customer intent.
+    if conversation_history and len(message.split()) < 4:
         last_agent_msg = next((m["content"] for m in reversed(conversation_history) if m.get("role") == "agent"), "")
         if last_agent_msg:
-            search_query = f"{last_agent_msg} {message}"
-            
-    # #review: retrieve_as_context makes synchronous network calls (Pinecone/embeddings); consider asyncio.to_thread
-    context = retrieve_as_context(search_query, top_k=top_k)
+            snippet = last_agent_msg.strip().split("\n")[0][:120]
+            search_query = f"{snippet} {message}"
+
+    context = await asyncio.to_thread(retrieve_as_context, search_query, top_k=top_k)
 
     # Step 3: Build the prompt
     system_prompt = RAG_SYSTEM_PROMPT.format(context=context)
