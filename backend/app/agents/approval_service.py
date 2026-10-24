@@ -168,6 +168,23 @@ def claim_pending_approval_in_session(
     if not p_data:
         return ApprovalClaimOutcome.NOT_FOUND, "No pending approval found in session."
 
+    # Gracefully upgrade legacy/un-hydrated approval dictionaries if necessary
+    if isinstance(p_data, dict) and "approval_id" not in p_data:
+        try:
+            upgraded = create_pending_approval(
+                action=p_data.get("action"),
+                params=p_data.get("params", {}),
+                customer_id=p_data.get("customer_id") or authenticated_customer_id,
+                session_id=p_data.get("session_id") or session_id,
+                message=p_data.get("message", "Confirm action"),
+                intent=p_data.get("intent"),
+                original_message=p_data.get("original_message"),
+            )
+            p_data.clear()
+            p_data.update(upgraded.model_dump(mode="json"))
+        except Exception as e:
+            return ApprovalClaimOutcome.INVALID_APPROVAL, f"Malformed pending approval: {e}"
+
     try:
         if isinstance(p_data, PendingApproval):
             p = p_data

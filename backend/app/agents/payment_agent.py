@@ -14,7 +14,7 @@ from app.agents.approval_service import create_pending_approval
 from app.tools import get_payment_record
 
 
-_ORDER_ID = re.compile(r"(?:order\s*(?:#|number)?\s*)(\d+)|#(\d+)", re.IGNORECASE)
+_ORDER_ID = re.compile(r"(?:order\s*(?:#|number|id)?\s*)(\d+)|#(\d+)", re.IGNORECASE)
 _REFUND_INTENTS = {"refund", "refund_request", "process_refund"}
 _REVIEW_INTENTS = {
     "billing_issue", "payment_failure", "payment_failed", "transaction_issue",
@@ -112,15 +112,20 @@ async def handle_payment_request(state: dict[str, Any]) -> dict[str, Any]:
         }
 
     confirmation = f"I’ll initiate a refund for order #{order_id}. Would you like me to proceed?"
-    cust_id = state.get("customer_id")
+    cust_id_raw = state.get("customer_id")
+    try:
+        cust_id = int(cust_id_raw) if cust_id_raw is not None else None
+    except (ValueError, TypeError):
+        cust_id = None
     sess_id = state.get("session_id") or "unknown"
 
     existing_p = state.get("pending_approval")
     if (
         isinstance(existing_p, dict)
         and existing_p.get("action") == "process_refund"
-        and existing_p.get("params", {}).get("order_id") == order_id
+        and str(existing_p.get("params", {}).get("order_id")) == str(order_id)
         and existing_p.get("status") == "pending"
+        and "approval_id" in existing_p
     ):
         pending_dict = existing_p
         confirmation = existing_p.get("message") or confirmation
@@ -136,13 +141,7 @@ async def handle_payment_request(state: dict[str, Any]) -> dict[str, Any]:
         )
         pending_dict = pending_obj.model_dump(mode="json")
     else:
-        pending_dict = {
-            "action": "process_refund",
-            "params": {"order_id": order_id},
-            "message": confirmation,
-            "customer_id": cust_id,
-            "session_id": sess_id,
-        }
+        pending_dict = None
 
     return {
         "response": confirmation,

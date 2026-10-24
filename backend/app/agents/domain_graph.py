@@ -425,7 +425,7 @@ async def safe_clarification_node(state: DomainAgentState) -> dict[str, Any]:
         "response": clarification_msg,
         "guardian_action": GuardianAction.RESOLVE.value,
         "guardian_reason": reason or "Clarification requested safely without tool execution.",
-        "pending_approval": state.get("pending_approval"),
+        "pending_approval": None,
         "resumed_domain": state.get("resumed_domain"),
         "suspended_domain": state.get("suspended_domain"),
         "workflow_state": new_workflow,

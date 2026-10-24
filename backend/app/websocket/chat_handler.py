@@ -549,6 +549,8 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                                 sus_list = ws.setdefault("suspended_domains", [])
                                 if old_dom not in sus_list:
                                     sus_list.append(old_dom)
+                                if isinstance(ws.get(f"{old_dom}_state"), dict):
+                                    ws[f"{old_dom}_state"]["domain_status"] = "suspended"
                             sus_list = ws.get("suspended_domains", [])
                             if pending_domain in sus_list:
                                 sus_list.remove(pending_domain)
@@ -703,6 +705,11 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         }, session_id)
                         continue
                     else:
+                        def _cleanup_unclaimable(s):
+                            s.pop("pending_approval", None)
+                            return True
+                        await _mutate_session(session_id, _cleanup_unclaimable, allow_retry=True, customer_id=customer_id)
+
                         emit_workflow_turn({
                             "session_id": session_id,
                             "customer_id": customer_id,
@@ -979,14 +986,27 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         extra={"violations": output_guard.violations, "risk_score": output_guard.risk_score},
                     )
 
+                p = result.get("pending_approval")
+                old_p_id = (session.get("pending_approval") or {}).get("approval_id")
+                is_new_proposal = bool(p and (not old_p_id or p.get("approval_id") != old_p_id))
+                turn_intent = str(result.get("intent", "")).lower()
+                is_proposal_turn = bool(
+                    p and (
+                        is_new_proposal
+                        or (p.get("action") == "cancel_order" and turn_intent in {"cancel_order", "order_cancellation", "cancellation"})
+                        or (p.get("action") == "process_refund" and turn_intent in {"refund", "refund_request", "process_refund"})
+                    )
+                )
+
                 def _apply_graph_result(s):
                     if s.get("mode") == "human":
                         return False # do not save, human took over
                     
-                    if result.get("pending_approval"):
-                        s["pending_approval"] = result["pending_approval"]
-                        s["pending_approval"]["original_message"] = message
-                        s["pending_approval"]["intent"] = result.get("intent", "")
+                    if p:
+                        s["pending_approval"] = p
+                        if is_new_proposal:
+                            s["pending_approval"]["original_message"] = message
+                            s["pending_approval"]["intent"] = result.get("intent", "")
 
                     if result.get("workflow_state"):
                         s["workflow_state"] = result["workflow_state"]
@@ -1003,8 +1023,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         "content": response_text,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
-                    if result.get("pending_approval"):
-                        p = result["pending_approval"]
+                    if p and is_proposal_turn:
                         agent_entry["approval"] = {
                             "approval_id": p.get("approval_id"),
                             "action": p.get("action"),
@@ -1048,8 +1067,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     "agent_name": "Adi",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
-                if result.get("pending_approval"):
-                    p = result["pending_approval"]
+                if p and is_proposal_turn:
                     response_payload["approval"] = {
                         "approval_id": p.get("approval_id"),
                         "action": p.get("action"),

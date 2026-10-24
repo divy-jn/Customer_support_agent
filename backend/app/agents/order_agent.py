@@ -14,7 +14,7 @@ from app.agents.approval_service import create_pending_approval
 from app.tools import track_order, get_customer_history
 
 
-_ORDER_ID = re.compile(r"(?:order\s*(?:#|number)?\s*)(\d+)|#(\d+)", re.IGNORECASE)
+_ORDER_ID = re.compile(r"(?:order\s*(?:#|number|id)?\s*)(\d+)|#(\d+)", re.IGNORECASE)
 _CANCEL_INTENTS = {"cancel_order", "order_cancellation", "cancellation"}
 _HISTORY_INTENTS = {"view_order_history", "order_history", "list_orders", "past_orders", "my_orders"}
 _EXCEPTION_INTENTS = {
@@ -136,15 +136,20 @@ async def handle_order_request(state: dict[str, Any]) -> dict[str, Any]:
 
     if intent in _CANCEL_INTENTS:
         confirm_msg = f"I'd like to cancel order #{order_id} for you. Shall I go ahead?"
-        cust_id = state.get("customer_id")
+        cust_id_raw = state.get("customer_id")
+        try:
+            cust_id = int(cust_id_raw) if cust_id_raw is not None else None
+        except (ValueError, TypeError):
+            cust_id = None
         sess_id = state.get("session_id") or "unknown"
 
         existing_p = state.get("pending_approval")
         if (
             isinstance(existing_p, dict)
             and existing_p.get("action") == "cancel_order"
-            and existing_p.get("params", {}).get("order_id") == order_id
+            and str(existing_p.get("params", {}).get("order_id")) == str(order_id)
             and existing_p.get("status") == "pending"
+            and "approval_id" in existing_p
         ):
             pending_dict = existing_p
             confirm_msg = existing_p.get("message") or confirm_msg
@@ -160,13 +165,7 @@ async def handle_order_request(state: dict[str, Any]) -> dict[str, Any]:
             )
             pending_dict = pending_obj.model_dump(mode="json")
         else:
-            pending_dict = {
-                "action": "cancel_order",
-                "params": {"order_id": order_id},
-                "message": confirm_msg,
-                "customer_id": cust_id,
-                "session_id": sess_id,
-            }
+            pending_dict = None
 
         return {
             "response": confirm_msg,

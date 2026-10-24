@@ -28,6 +28,7 @@ from app.skills.loader import SkillLoader
 from app.skills.runtime import SkillRuntime
 from app.agents.product_agent import ProductAgent, ProductSkillResolver, ProductDomainContext
 from app.models import WorkflowState, OrchestrationDomain
+from app.agents.approval_service import create_pending_approval
 import os
 from pathlib import Path
 
@@ -271,15 +272,36 @@ async def db_plan_node(state: AgentState) -> dict:
             confirm_msg = f"I'll process a refund for order #{params.get('order_id', '?')}. Would you like me to proceed?"
         else:
             confirm_msg = f"I need your confirmation to perform: {action}. Proceed?"
-        
-        return {
-            "pending_approval": {
+
+        cust_id_raw = state.get("customer_id")
+        try:
+            cust_id = int(cust_id_raw) if cust_id_raw is not None else None
+        except (ValueError, TypeError):
+            cust_id = None
+        sess_id = state.get("session_id") or "unknown"
+
+        if cust_id and cust_id > 0:
+            pending_obj = create_pending_approval(
+                action=action,
+                params=params,
+                customer_id=cust_id,
+                session_id=sess_id,
+                message=confirm_msg,
+                intent=state.get("intent"),
+                original_message=state.get("message"),
+            )
+            pending_dict = pending_obj.model_dump(mode="json")
+        else:
+            pending_dict = {
                 "action": action,
                 "params": params,
                 "message": confirm_msg,
-                "customer_id": state.get("customer_id"),
-                "session_id": state.get("session_id"),
-            },
+                "customer_id": cust_id,
+                "session_id": sess_id,
+            }
+
+        return {
+            "pending_approval": pending_dict,
             "response": confirm_msg,
             "escalated": False,
         }
