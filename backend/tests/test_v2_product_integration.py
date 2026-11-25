@@ -436,7 +436,7 @@ async def test_tool_exception_distinguishes_could_not_verify_from_not_found():
 @patch("app.agents.domain_graph.product_node", new_callable=AsyncMock)
 async def test_v2_graph_traversal_product_intent(mock_prod_node, mock_classify, mock_cases):
     """End-to-end traversal from supervisor through v2_product to guardian_response."""
-    mock_cases.return_value = '{"cases": []}'
+    mock_cases.return_value = '{"recent_count": 0, "cases": []}'
     mock_classify.return_value = _make_semantic_result("product", "product_availability")
     mock_prod_node.return_value = {
         "response": "The PixelPro is in stock.",

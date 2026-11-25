@@ -240,14 +240,14 @@ class TestWebSocketConnection:
             assert "Missing client_request_id" in response["message"]
 
     @patch("app.persistence.escalation.ensure_durable_escalation_state")
-    @patch("app.websocket.chat_handler.customer_support_graph.ainvoke", new_callable=AsyncMock)
+    @patch("app.websocket.chat_handler.domain_support_graph.ainvoke", new_callable=AsyncMock)
     @patch("app.tools.supabase")
-    def test_websocket_reconnection_persistence(self, mock_supabase, mock_call_agent, mock_get_session_state, auth_token):
+    def test_websocket_reconnection_persistence(self, mock_supabase, mock_call_agent, mock_get_session_state, auth_token, monkeypatch):
         from app.models import EscalationLifecycleStatus
+        monkeypatch.setattr(settings, "agent_architecture_mode", "v2_all")
         mock_get_session_state.return_value = EscalationLifecycleStatus.NONE
         
-        # Mock LLM to return a fast response
-        mock_call_agent.return_value = {"messages": [{"role": "agent", "content": "mock LLM response", "metadata": {}}]}
+        mock_call_agent.return_value = {"response": "Mock V2 response", "escalated": False}
         
         # Mock supabase.table().upsert().execute() to prevent real network calls
         mock_supabase.table.return_value.upsert.return_value.execute.return_value = MagicMock()
@@ -351,6 +351,12 @@ class TestWebSocketConnection:
         -> active_connections[X] MUST still point to WS2
         Then WS2 sends/receives a message successfully.
         """
+        monkeypatch.setattr(settings, "agent_architecture_mode", "v2_all")
+        monkeypatch.setattr(
+            "app.websocket.chat_handler.domain_support_graph.ainvoke",
+            AsyncMock(return_value={"response": "Mock V2 response", "escalated": False}),
+        )
+        monkeypatch.setattr("app.websocket.rate_limiter._LOCAL_EVENTS", {})
         import uuid
         session_id = f"test-race-{uuid.uuid4().hex[:6]}"
         uri = f"/ws/chat/{session_id}?token={auth_token}"
@@ -377,7 +383,7 @@ class TestWebSocketConnection:
             
             # Should receive typing or agent_response
             response = ws2_conn.receive_json()
-            assert response["type"] in ("typing", "agent_response", "ping")
+            assert response["type"] in ("typing", "agent_response", "ping"), response
 
 class TestHumanHandover:
     """Test human-agent takeover and release flows."""

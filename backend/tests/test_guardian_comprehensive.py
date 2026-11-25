@@ -60,7 +60,7 @@ class TestDuplicatePrevention:
     def test_active_ticket_matching_domain_and_intent_is_updated(self):
         decision = Guardian.decide(GuardianInput(
             domain="product", intent="warranty_claim",
-            recent_cases=[SupportCase(id=786, status="open", domain="product", intent="warranty_claim")],
+            active_cases=[SupportCase(id=786, status="open", domain="product", intent="warranty_claim")],
         ))
         assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET
         assert decision.ticket_id == 786
@@ -70,7 +70,7 @@ class TestDuplicatePrevention:
         decision = Guardian.decide(GuardianInput(
             domain="order", intent="delivery_issue",
             requires_human=True,
-            recent_cases=[SupportCase(id=100, status="open", domain="order", intent=None)],
+            active_cases=[SupportCase(id=100, status="open", domain="order", intent=None)],
         ))
         assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET
         assert decision.ticket_id == 100
@@ -78,7 +78,7 @@ class TestDuplicatePrevention:
     def test_closed_ticket_is_never_matched(self):
         decision = Guardian.decide(GuardianInput(
             domain="payment", intent="refund_request", requires_human=True,
-            recent_cases=[SupportCase(id=50, status="closed", domain="payment", intent="refund_request")],
+            active_cases=[SupportCase(id=50, status="closed", domain="payment", intent="refund_request")],
         ))
         assert decision.action is GuardianAction.CREATE_TICKET
         assert decision.ticket_id is None
@@ -86,7 +86,7 @@ class TestDuplicatePrevention:
     def test_ticket_in_different_domain_is_not_matched(self):
         decision = Guardian.decide(GuardianInput(
             domain="payment", intent="billing_issue", requires_human=True,
-            recent_cases=[SupportCase(id=200, status="open", domain="order", intent="tracking")],
+            active_cases=[SupportCase(id=200, status="open", domain="order", intent="tracking")],
         ))
         assert decision.action is GuardianAction.CREATE_TICKET
         assert decision.ticket_id is None
@@ -96,7 +96,7 @@ class TestDuplicatePrevention:
         decision = Guardian.decide(GuardianInput(
             domain="product", intent="product_recommendation",
             requires_human=True,
-            recent_cases=[SupportCase(id=300, status="open", domain="product", intent="warranty_claim")],
+            active_cases=[SupportCase(id=300, status="open", domain="product", intent="warranty_claim")],
         ))
         assert decision.action is GuardianAction.CREATE_TICKET
 
@@ -104,7 +104,7 @@ class TestDuplicatePrevention:
         """Repository returns newest first; Guardian should select the first active match."""
         decision = Guardian.decide(GuardianInput(
             domain="product", intent="technical_support",
-            recent_cases=[
+            active_cases=[
                 SupportCase(id=500, status="open", domain="product", intent="technical_support"),
                 SupportCase(id=400, status="closed", domain="product", intent="technical_support"),
             ],
@@ -112,11 +112,11 @@ class TestDuplicatePrevention:
         assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET
         assert decision.ticket_id == 500  # newest first
 
-    def test_multiple_active_tickets_escalates_and_links_newest(self):
-        """Multiple active tickets trigger human review while referencing the newest match."""
+    def test_multiple_recent_tickets_escalates_and_links_newest(self):
+        """Multiple recent tickets trigger human review while referencing the newest match."""
         decision = Guardian.decide(GuardianInput(
-            domain="product", intent="technical_support",
-            recent_cases=[
+            domain="product", intent="technical_support", recent_ticket_count=2,
+            active_cases=[
                 SupportCase(id=500, status="open", domain="product", intent="technical_support"),
                 SupportCase(id=400, status="in_progress", domain="product", intent="technical_support"),
             ],
@@ -128,7 +128,7 @@ class TestDuplicatePrevention:
         for status in ("open", "in_progress", "pending_customer", "escalated"):
             decision = Guardian.decide(GuardianInput(
                 domain="order", intent="cancel_order",
-                recent_cases=[SupportCase(id=1, status=status, domain="order", intent="cancel_order")],
+                active_cases=[SupportCase(id=1, status=status, domain="order", intent="cancel_order")],
             ))
             assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET, f"Failed for status={status}"
 
@@ -150,7 +150,7 @@ class TestSafetyLegal:
         decision = Guardian.decide(GuardianInput(
             domain="product", intent="product_issue",
             safety_or_legal_issue=True,
-            recent_cases=[SupportCase(id=999, status="open", domain="product", intent="product_issue")],
+            active_cases=[SupportCase(id=999, status="open", domain="product", intent="product_issue")],
         ))
         assert decision.action is GuardianAction.ESCALATE
         assert decision.ticket_id == 999
@@ -194,7 +194,7 @@ class TestRepeatedAttempts:
         decision = Guardian.decide(GuardianInput(
             domain="product", intent="technical_support",
             unresolved_attempts=3,
-            recent_cases=[SupportCase(id=42, status="open", domain="product", intent="technical_support")],
+            active_cases=[SupportCase(id=42, status="open", domain="product", intent="technical_support")],
         ))
         assert decision.action is GuardianAction.ESCALATE
         assert decision.ticket_id == 42
@@ -253,7 +253,7 @@ class TestTicketHistoryEdgeCases:
         decision = Guardian.decide(GuardianInput(
             domain="product", intent="warranty_claim",
             requires_human=True,
-            recent_cases=[],
+            active_cases=[],
         ))
         assert decision.action is GuardianAction.CREATE_TICKET
 
@@ -261,7 +261,7 @@ class TestTicketHistoryEdgeCases:
         decision = Guardian.decide(GuardianInput(
             domain="general", intent="faq",
             domain_can_resolve=True,
-            recent_cases=[],
+            active_cases=[],
         ))
         assert decision.action is GuardianAction.RESOLVE
 
@@ -269,7 +269,7 @@ class TestTicketHistoryEdgeCases:
         decision = Guardian.decide(GuardianInput(
             domain="payment", intent="refund_request",
             requires_human=True,
-            recent_cases=[
+            active_cases=[
                 SupportCase(id=10, status="closed", domain="payment", intent="refund_request"),
                 SupportCase(id=20, status="open", domain="payment", intent="refund_request"),
             ],
@@ -281,7 +281,7 @@ class TestTicketHistoryEdgeCases:
         decision = Guardian.decide(GuardianInput(
             domain="payment", intent="billing_issue",
             requires_human=True,
-            recent_cases=[
+            active_cases=[
                 SupportCase(id=1, status="open", domain="order", intent="tracking"),
                 SupportCase(id=2, status="closed", domain="product", intent="warranty"),
             ],
@@ -334,7 +334,7 @@ class TestPriorityOrdering:
             safety_or_legal_issue=True,
             unresolved_attempts=5,
             requires_human=True,
-            recent_cases=[SupportCase(id=999, status="open", domain="product", intent="safety_concern")],
+            active_cases=[SupportCase(id=999, status="open", domain="product", intent="safety_concern")],
         ))
         assert decision.action is GuardianAction.ESCALATE
         assert decision.ticket_id == 999
@@ -390,7 +390,7 @@ class TestDecisionInvariants:
     def test_update_always_has_ticket_id(self):
         decision = Guardian.decide(GuardianInput(
             domain="product", intent="tech",
-            recent_cases=[SupportCase(id=42, status="open", domain="product", intent="tech")],
+            active_cases=[SupportCase(id=42, status="open", domain="product", intent="tech")],
         ))
         assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET
         assert decision.ticket_id == 42
@@ -422,7 +422,7 @@ class TestDecisionInvariants:
             ),
             GuardianInput(
                 domain="product", intent="tech",
-                recent_cases=[SupportCase(id=1, status="open", domain="product", intent="tech")],
+                active_cases=[SupportCase(id=1, status="open", domain="product", intent="tech")],
             ),
         ]
         for inp in inputs:

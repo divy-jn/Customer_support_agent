@@ -41,7 +41,9 @@ class GuardianInput(BaseModel):
     safety_or_legal_issue: bool = False
     domain_can_resolve: bool = False
     unresolved_attempts: int = Field(default=0, ge=0)
-    recent_cases: list[SupportCase] = Field(default_factory=list)
+    active_cases: list[SupportCase] = Field(default_factory=list)
+    recent_ticket_count: int = Field(default=0, ge=0)
+    allow_ticket_mutation: bool = True
     history_lookup_failed: bool = False
     sentiment: str = "neutral"
     urgency: str = "low"
@@ -61,7 +63,7 @@ class Guardian:
     def _matching_active_case(facts: GuardianInput) -> SupportCase | None:
         matches: Iterable[SupportCase] = (
             case
-            for case in facts.recent_cases
+            for case in facts.active_cases
             if case.is_active
             and case.domain == facts.domain
             and (case.intent is None or case.intent == facts.intent)
@@ -73,7 +75,6 @@ class Guardian:
     @classmethod
     def decide(cls, facts: GuardianInput) -> GuardianDecision:
         existing = cls._matching_active_case(facts)
-        active_recent_cases = [case for case in facts.recent_cases if case.is_active]
 
         # Safety/legal and severe distress always outrank duplicate prevention.
         if facts.safety_or_legal_issue:
@@ -100,11 +101,11 @@ class Guardian:
                 reason="Three or more unresolved attempts require human escalation.",
             )
 
-        if len(active_recent_cases) >= 2:
+        if facts.recent_ticket_count >= 2:
             return GuardianDecision(
                 action=GuardianAction.ESCALATE,
                 ticket_id=existing.id if existing else None,
-                reason="Multiple active recent support tickets require human review.",
+                reason="Multiple recent support tickets require human review.",
             )
 
         if facts.customer_requests_human and facts.customer_repeats_human_request:
@@ -114,14 +115,14 @@ class Guardian:
                 reason="The customer repeated a request for human assistance.",
             )
 
-        if existing:
+        if existing and facts.allow_ticket_mutation:
             return GuardianDecision(
                 action=GuardianAction.UPDATE_EXISTING_TICKET,
                 ticket_id=existing.id,
                 reason="An active ticket already covers this domain and intent; do not create a duplicate.",
             )
 
-        if facts.requires_human:
+        if facts.requires_human and facts.allow_ticket_mutation:
             if facts.history_lookup_failed:
                 return GuardianDecision(
                     action=GuardianAction.ESCALATE,

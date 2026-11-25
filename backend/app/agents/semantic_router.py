@@ -35,7 +35,8 @@ Definitions:
 - "general": Policies, general FAQs, store hours, generic questions.
 - "product": Product features, tech support, specifications, warranty queries.
 - "order": Order tracking, cancellations, missing/damaged items, shipping delays.
-- "payment": Billing, deductions, refunds, transaction failures.
+- "payment": Billing, deductions, refunds, transaction failures, and accepted payment methods.
+  Use the intent "payment_method" for questions about which payment methods are accepted.
 - "escalation": Severe complaints, explicit human handoff requests.
 
 If you are unsure of the domain, use "unknown".
@@ -138,8 +139,6 @@ async def classify_semantic_intent(message: str, conversation_history: list[dict
     Classify the message and output a strongly typed SemanticRouteResult.
     Catches and safely categorizes system exceptions (transport, auth, rate limit, etc.).
     """
-    llm = get_semantic_router_llm()
-
     # Pass recent 6 turns for conversational disambiguation
     context = ""
     if conversation_history:
@@ -157,6 +156,7 @@ Classify this message and respond with a JSON object."""
 
     start_time = time.time()
     try:
+        llm = get_semantic_router_llm()
         with track_llm_call(settings.llm_model, "semantic_router", prompt) as tracker:
             response = await llm.ainvoke([
                 {"role": "system", "content": SEMANTIC_ROUTER_SYSTEM_PROMPT},

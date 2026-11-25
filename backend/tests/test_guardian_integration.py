@@ -1,8 +1,8 @@
-"""Integration tests for the domain_graph guardian_response_node and _recent_cases paths.
+"""Integration tests for the domain_graph guardian_response_node and _ticket_history paths.
 
 These test the full integration boundary between the Guardian policy,
 the ticket lookup tool, and the response composition.  They cover:
-- DB failure paths (_recent_cases returns empty on error)
+- DB failure paths (_ticket_history returns empty on error)
 - Guardian ticket mutation error messaging
 - Response composition accuracy
 - Multi-domain routing through the graph
@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agents.domain_graph import (
-    _recent_cases,
+    _ticket_history,
     _requests_human,
     _safety_or_legal_issue,
     guardian_response_node,
@@ -77,71 +77,79 @@ class TestSafetyLegalDetection:
 
 
 # ──────────────────────────────────────────────
-#  _recent_cases DB failure resilience
+#  _ticket_history DB failure resilience
 # ──────────────────────────────────────────────
 
 class TestRecentCasesResilience:
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_db_error_returns_empty_list_and_failed_flag(self, mock_cases):
         mock_cases.return_value = '{"error": "connection timeout"}'
-        cases, failed = _recent_cases(7)
+        cases, count, failed = _ticket_history(7)
         assert cases == []
+        assert count == 0
         assert failed is True
 
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_invalid_json_returns_empty_list_and_failed_flag(self, mock_cases):
         mock_cases.return_value = "not valid json at all"
-        cases, failed = _recent_cases(7)
+        cases, count, failed = _ticket_history(7)
         assert cases == []
+        assert count == 0
         assert failed is True
 
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_exception_returns_empty_list_and_failed_flag(self, mock_cases):
         mock_cases.side_effect = RuntimeError("DB down")
-        cases, failed = _recent_cases(7)
+        cases, count, failed = _ticket_history(7)
         assert cases == []
+        assert count == 0
         assert failed is True
 
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_malformed_cases_payload_returns_failed_flag(self, mock_cases):
-        mock_cases.return_value = '{"cases": "not a list"}'
-        cases, failed = _recent_cases(7)
+        mock_cases.return_value = '{"recent_count": 0, "cases": "not a list"}'
+        cases, count, failed = _ticket_history(7)
         assert cases == []
+        assert count == 0
         assert failed is True
 
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_malformed_case_object_returns_failed_flag(self, mock_cases):
-        mock_cases.return_value = '{"cases": [{"malformed": True}]}'
-        cases, failed = _recent_cases(7)
+        mock_cases.return_value = '{"recent_count": 0, "cases": [{"malformed": True}]}'
+        cases, count, failed = _ticket_history(7)
         assert cases == []
+        assert count == 0
         assert failed is True
 
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_legitimate_empty_result_returns_false_flag(self, mock_cases):
-        mock_cases.return_value = '{"customer_id": 7, "cases": []}'
-        cases, failed = _recent_cases(7)
+        mock_cases.return_value = '{"customer_id": 7, "recent_count": 0, "cases": []}'
+        cases, count, failed = _ticket_history(7)
         assert cases == []
+        assert count == 0
         assert failed is False
 
     def test_none_customer_id_returns_empty_list_and_false_flag(self):
-        cases, failed = _recent_cases(None)
+        cases, count, failed = _ticket_history(None)
         assert cases == []
+        assert count == 0
         assert failed is False
 
     def test_zero_customer_id_returns_empty_list_and_false_flag(self):
-        cases, failed = _recent_cases(0)
+        cases, count, failed = _ticket_history(0)
         assert cases == []
+        assert count == 0
         assert failed is False
 
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_valid_cases_are_parsed(self, mock_cases):
         mock_cases.return_value = json.dumps({
-            "cases": [
+            "recent_count": 0, "cases": [
                 {"id": 1, "status": "open", "type": "technical_issue", "subject": "Issue: Warranty - phone", "priority": "high"},
-                {"id": 2, "status": "closed", "type": "billing", "subject": "Issue: Refund", "priority": "medium"},
+                {"id": 2, "status": "open", "type": "billing", "subject": "Issue: Refund", "priority": "medium"},
             ]
         })
-        cases, failed = _recent_cases(7)
+        cases, count, failed = _ticket_history(7)
         assert len(cases) == 2
         assert failed is False
         assert cases[0].id == 1
@@ -156,7 +164,7 @@ class TestRecentCasesResilience:
 
 class TestGuardianResponseNode:
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     async def test_resolve_does_not_modify_response(self, mock_cases):
         """When Guardian resolves, the domain response passes through unchanged."""
         result = await guardian_response_node({
@@ -172,7 +180,7 @@ class TestGuardianResponseNode:
         assert result["escalated"] is False
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.create_ticket", return_value='{"ticket_id": 901}')
     async def test_null_response_signals_requires_human_and_creates_ticket_when_history_verified(self, mock_create, mock_cases):
         """A None domain response triggers requires_human and creates a ticket if history verified."""
@@ -234,7 +242,7 @@ class TestGuardianResponseNode:
     async def test_mutation_error_on_ticket_update_appends_honest_failure_message(self, mock_cases, mock_update):
         """When the ticket update fails, an honest error message is appended without claiming success."""
         mock_cases.return_value = json.dumps({
-            "cases": [{"id": 100, "status": "open", "type": "technical_issue", "subject": "Issue: Warranty"}]
+            "recent_count": 0, "cases": [{"id": 100, "status": "open", "type": "technical_issue", "subject": "Issue: Warranty"}]
         })
         mock_update.return_value = '{"error": "DB write failed"}'
         result = await guardian_response_node({
@@ -253,7 +261,7 @@ class TestGuardianResponseNode:
 
     @pytest.mark.asyncio
     @patch("app.agents.domain_graph.create_ticket")
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     async def test_mutation_error_on_ticket_create_appends_honest_failure_message(self, mock_cases, mock_create):
         """When ticket creation fails, an honest failure message is appended without claiming success."""
         mock_create.return_value = '{"error": "duplicate request"}'
@@ -272,7 +280,7 @@ class TestGuardianResponseNode:
         assert "passing this to a support specialist" not in result["response"]
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     async def test_safety_message_triggers_escalation(self, mock_cases):
         result = await guardian_response_node({
             "message": "This product caused an injury to my child",
@@ -287,7 +295,7 @@ class TestGuardianResponseNode:
         assert "escalating" in result["response"].lower()
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     async def test_missing_client_request_id_skips_mutation(self, mock_cases):
         """Guardian ticket creation is skipped when client_request_id is missing."""
         result = await guardian_response_node({
@@ -304,7 +312,7 @@ class TestGuardianResponseNode:
         assert "couldn’t register" in result["response"] or "try again" in result["response"].lower()
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     async def test_pending_approval_survives_guardian_response_node(self, mock_cases):
         """Pending approval state passes through guardian_response_node without executing prematurely."""
         pending = {"action": "cancel_order", "params": {"order_id": 12345}, "message": "Confirm cancellation?"}
@@ -335,10 +343,11 @@ class TestRoutingEdgeCases:
             "supervisor_action": "request_clarification",
         }) == "clarification"
 
-    def test_unknown_domain_falls_to_legacy(self):
+    def test_unknown_domain_in_partial_rollout_falls_to_legacy(self):
         assert route_after_supervisor({
             "semantic_domain": "unknown",
             "supervisor_action": "start_new",
+            "architecture_mode": "v2_product",
         }) == "legacy"
 
     def test_payment_v2_gated_by_feature_flag(self, monkeypatch):

@@ -198,7 +198,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_auth_security_settings(self) -> "Settings":
-        """Allow an explicit development key only in debug mode; require a strong key otherwise."""
+        """Apply hosted defaults and validate security settings."""
+        if self.app_environment in {"staging", "production"} and "agent_architecture_mode" not in self.model_fields_set:
+            self.agent_architecture_mode = "v2_all"
         if self.app_environment in {"staging", "production"} and self.debug_mode:
             raise ValueError("DEBUG_MODE must be false when APP_ENVIRONMENT is staging or production")
 

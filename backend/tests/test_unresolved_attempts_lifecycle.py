@@ -101,7 +101,7 @@ class TestUnresolvedAttemptsMultiTurnLifecycle:
     """Multi-turn state-transition tests through the actual supervisor and guardian nodes."""
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.create_ticket", return_value='{"ticket_id": 7001}')
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_three_consecutive_unresolved_attempts_escalate(
@@ -203,7 +203,7 @@ class TestUnresolvedAttemptsMultiTurnLifecycle:
         assert guard_result3["workflow_state"]["global_status"] == GlobalWorkflowStatus.ESCALATED.value
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_successful_resolution_clears_unresolved_attempts(
         self, mock_classify, mock_cases, monkeypatch
@@ -248,7 +248,7 @@ class TestUnresolvedAttemptsMultiTurnLifecycle:
         assert guard_result["escalated"] is False
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_ordinary_high_turn_count_never_causes_escalation(
         self, mock_classify, mock_cases, monkeypatch

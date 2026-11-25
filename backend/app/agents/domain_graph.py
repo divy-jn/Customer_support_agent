@@ -2,8 +2,8 @@
 
 Every enabled V2 domain follows the same control boundary:
 semantic router -> supervisor -> domain agent -> guardian -> response composer.
-Unsupported intents deliberately use the legacy graph; the rollout flag remains
-the rollback boundary rather than silently treating a partial agent as complete.
+Partial rollout modes retain the legacy fallback. Full V2 asks for clarification
+through Guardian when it cannot dispatch a supported intent.
 """
 
 import asyncio
@@ -55,6 +55,7 @@ class DomainAgentState(AgentState):
     requires_human: bool | None
     resumed_domain: str | None
     suspended_domain: str | None
+    clarification_only: bool
 
 
 async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
@@ -110,7 +111,7 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
         # A malformed persisted workflow must never create a new V2 state.
         pass
 
-    # Router or state failure: retain the established legacy behavior.
+    # Full V2 handles router or state failures through clarification.
     return {
         "semantic_domain": "unknown",
         "semantic_confidence": 0.0,
@@ -122,6 +123,8 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
 
 def route_after_supervisor(state: DomainAgentState) -> str:
     """Dispatch only implemented slices; all enabled slices finish at Guardian."""
+    mode = state.get("architecture_mode") or settings.agent_architecture_mode
+    fallback = "clarification" if mode == "v2_all" else "legacy"
     supervisor_action = state.get("supervisor_action")
     if supervisor_action == SupervisorAction.ESCALATE.value:
         return "guardian"
@@ -136,7 +139,7 @@ def route_after_supervisor(state: DomainAgentState) -> str:
         SupervisorAction.RESUME.value,
     }
     if supervisor_action not in valid_actions:
-        return "legacy"
+        return fallback
 
     domain = state.get("semantic_domain")
     intent = state.get("intent")
@@ -144,7 +147,6 @@ def route_after_supervisor(state: DomainAgentState) -> str:
     if domain == "escalation":
         return "guardian"
 
-    mode = state.get("architecture_mode") or settings.agent_architecture_mode
     if mode in {"legacy", "shadow"}:
         return "legacy"
 
@@ -156,19 +158,21 @@ def route_after_supervisor(state: DomainAgentState) -> str:
     if domain == "order":
         if mode in {"v2_product_order", "v2_core", "v2_all"} and intent in _ORDER_V2_INTENTS:
             return "order"
-        return "legacy"
+        return fallback
 
     if domain == "payment":
+        if mode == "v2_all" and intent == "payment_method":
+            return "general"
         if mode in {"v2_core", "v2_all"} and intent in _PAYMENT_V2_INTENTS:
             return "payment"
-        return "legacy"
+        return fallback
 
     if domain == "general":
         if mode == "v2_all":
             return "general"
         return "legacy"
 
-    return "legacy"
+    return fallback
 
 
 async def v2_product_node(state: DomainAgentState) -> dict[str, Any]:
@@ -182,7 +186,7 @@ async def v2_order_node(state: DomainAgentState) -> dict[str, Any]:
 
 
 async def v2_payment_node(state: DomainAgentState) -> dict[str, Any]:
-    """Refund-only slice; payment mutations stay in the existing approval path."""
+    """Verify ledger facts and route payment issues for specialist review."""
     return await handle_payment_request(state)
 
 
@@ -197,16 +201,15 @@ def _requests_human(message: str) -> bool:
 
 def _previously_requested_human(history: list[dict[str, Any]], current_message: str) -> bool:
     """Return whether the customer asked for a human on a prior turn."""
-    current = current_message.strip().casefold()
-    for item in history[-10:]:
-        if item.get("role") not in {"customer", "user"}:
-            continue
-        content = str(item.get("content", "")).strip()
-        if not content or content.casefold() == current:
-            continue
-        if _requests_human(content):
-            return True
-    return False
+    prior = history
+    if history and history[-1].get("role") in {"customer", "user"}:
+        if str(history[-1].get("content", "")).strip().casefold() == current_message.strip().casefold():
+            prior = history[:-1]
+    return any(
+        item.get("role") in {"customer", "user"}
+        and _requests_human(str(item.get("content", "")))
+        for item in prior[-10:]
+    )
 
 
 def _safety_or_legal_issue(message: str) -> bool:
@@ -230,40 +233,31 @@ def _case_intent(ticket: dict) -> str | None:
     return subject[7:].split(" - ", 1)[0].lower().replace(" ", "_") or None
 
 
-def _recent_cases(customer_id: int | None) -> tuple[list[SupportCase], bool]:
-    """Read a narrow, recent ticket projection; DB trouble must not leak data.
-
-    Returns:
-        tuple[list[SupportCase], bool]: (cases, lookup_failed)
-    """
+def _ticket_history(customer_id: int | None) -> tuple[list[SupportCase], int, bool]:
+    """Load active cases and the independent recent count for this customer."""
     if not customer_id:
-        return [], False
+        return [], 0, False
     since = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
     try:
-        raw = find_customer_support_cases(customer_id, created_since=since)
-        if not raw or not isinstance(raw, str):
-            return [], True
-        payload = json.loads(raw)
+        payload = json.loads(find_customer_support_cases(customer_id, created_since=since))
         if not isinstance(payload, dict) or payload.get("error"):
-            return [], True
-        if "cases" not in payload or not isinstance(payload.get("cases"), list):
-            return [], True
-        cases: list[SupportCase] = []
-        for case in payload.get("cases", []):
-            if not isinstance(case, dict) or "id" not in case or "status" not in case:
-                return [], True
-            cases.append(
-                SupportCase(
-                    id=case["id"],
-                    status=case["status"],
-                    domain=_case_domain(case),
-                    intent=_case_intent(case),
-                    priority=case.get("priority"),
-                )
+            return [], 0, True
+        recent_count = payload.get("recent_count")
+        if type(recent_count) is not int or recent_count < 0 or not isinstance(payload.get("cases"), list):
+            return [], 0, True
+        cases = [
+            SupportCase(
+                id=case["id"],
+                status=case["status"],
+                domain=_case_domain(case),
+                intent=_case_intent(case),
+                priority=case.get("priority"),
             )
-        return cases, False
+            for case in payload["cases"]
+        ]
+        return cases, recent_count, False
     except Exception:
-        return [], True
+        return [], 0, True
 
 
 async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
@@ -278,7 +272,13 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
 
     domain = state.get("semantic_domain", "general")
     prior_attempts = max(0, int(new_workflow.get("unresolved_attempts", 0)))
-    recent_cases, ticket_history_lookup_failed = _recent_cases(state.get("customer_id"))
+    clarification_only = bool(state.get("clarification_only"))
+    payment_methods = domain == "payment" and state.get("intent") == "payment_method" and (
+        state.get("architecture_mode") or settings.agent_architecture_mode
+    ) == "v2_all"
+    active_cases, recent_count, ticket_history_lookup_failed = await asyncio.to_thread(
+        _ticket_history, state.get("customer_id")
+    )
     customer_requests_human = _requests_human(state["message"])
     previously_requested_human = _previously_requested_human(
         state.get("conversation_history", []), state["message"],
@@ -306,7 +306,9 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         safety_or_legal_issue=_safety_or_legal_issue(state["message"]),
         domain_can_resolve=state.get("response") is not None,
         unresolved_attempts=attempts_for_decision,
-        recent_cases=recent_cases,
+        active_cases=active_cases,
+        recent_ticket_count=recent_count,
+        allow_ticket_mutation=not (clarification_only or payment_methods),
         history_lookup_failed=ticket_history_lookup_failed,
         sentiment=state.get("sentiment", "neutral"),
         urgency=state.get("urgency", "low"),
@@ -335,7 +337,8 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         response = compose_response(response, decision)
 
     if decision.action in {GuardianAction.RESOLVE, GuardianAction.CONTINUE}:
-        next_unresolved_attempts = 0 if state.get("response") is not None else prior_attempts
+        answered = state.get("response") is not None and not clarification_only
+        next_unresolved_attempts = 0 if answered else prior_attempts
     else:
         next_unresolved_attempts = attempts_for_decision if domain_failed else prior_attempts
 
@@ -412,15 +415,22 @@ async def _apply_guardian_ticket_decision(
 
 async def safe_clarification_node(state: DomainAgentState) -> dict[str, Any]:
     """Dedicated safe clarification node that asks for clarification without tool execution."""
+    clarification_msg = (
+        "Could you please share a few more details or clarify your request so I can help you correctly?"
+    )
+    if (state.get("architecture_mode") or settings.agent_architecture_mode) == "v2_all":
+        return {
+            "response": clarification_msg,
+            "clarification_only": True,
+            "pending_approval": None,
+            "escalated": False,
+        }
+
     raw_workflow = state.get("workflow_state") or {}
     new_workflow = dict(raw_workflow) if isinstance(raw_workflow, dict) else {}
     new_workflow["turn_count"] = int(new_workflow.get("turn_count", 0)) + 1
     new_workflow["updated_at"] = datetime.now(timezone.utc).isoformat()
     reason = state.get("supervisor_reason")
-
-    clarification_msg = (
-        "Could you please share a few more details or clarify your request so I can help you correctly?"
-    )
     return {
         "response": clarification_msg,
         "guardian_action": GuardianAction.RESOLVE.value,
@@ -466,7 +476,11 @@ def create_domain_support_graph():
     workflow.add_edge("v2_order", "guardian_response")
     workflow.add_edge("v2_payment", "guardian_response")
     workflow.add_edge("v2_general", "guardian_response")
-    workflow.add_edge("safe_clarification", END)
+    workflow.add_conditional_edges(
+        "safe_clarification",
+        lambda state: "guardian_response" if state.get("clarification_only") else END,
+        ["guardian_response", END],
+    )
     workflow.add_edge("guardian_response", END)
     workflow.add_edge("legacy_fallback", END)
     return workflow.compile()

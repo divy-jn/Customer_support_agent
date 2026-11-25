@@ -102,7 +102,7 @@ def test_guardian_policy_scenario(scenario: ScenarioModel):
         safety_or_legal_issue=facts.get("safety_or_legal_issue", False),
         domain_can_resolve=facts.get("domain_can_resolve", False),
         unresolved_attempts=facts.get("unresolved_attempts", 0),
-        recent_cases=cases,
+        active_cases=cases,
         history_lookup_failed=lookup_failed,
     )
 

@@ -11,7 +11,7 @@ Verifies the routing matrix across all supported architecture modes:
 Proves:
 1. Runtime entry point selection in WebSocket/chat handler.
 2. Domain routing decisions based on feature flag and intent allowlists.
-3. Unsupported intents safely fall back to legacy.
+3. Full V2 clarifies unsupported intents; partial modes retain legacy fallback.
 4. Critical Invariant: REQUEST_CLARIFICATION never executes domain mutations (order, payment, product, general).
 5. Critical Invariant: ESCALATE always routes to Guardian policy control.
 6. Graph topology: Every enabled V2 domain node unconditionally terminates at guardian_response.
@@ -285,14 +285,14 @@ class TestSupervisorActionEnforcement:
         "legacy_fallback",
         "arbitrary_string",
     ])
-    def test_malformed_or_invalid_supervisor_action_falls_back_to_legacy(self, monkeypatch, invalid_action):
-        """Invalid or unrecognized supervisor actions must take safe fallback."""
-        monkeypatch.setattr(settings, "agent_architecture_mode", "v2_all")
+    @pytest.mark.parametrize(("mode", "expected"), [("v2_all", "clarification"), ("v2_core", "legacy")])
+    def test_invalid_supervisor_action_uses_mode_specific_fallback(self, monkeypatch, invalid_action, mode, expected):
+        monkeypatch.setattr(settings, "agent_architecture_mode", mode)
         assert route_after_supervisor({
             "semantic_domain": "order",
             "intent": "tracking",
             "supervisor_action": invalid_action,
-        }) == "legacy"
+        }) == expected
 
 
 # ──────────────────────────────────────────────────────────────

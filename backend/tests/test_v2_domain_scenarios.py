@@ -57,7 +57,7 @@ class TestV2BusinessDomains:
     """Verifies that each domain performs its distinct responsibility end-to-end."""
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.general_agent.rag_agent.generate_response")
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_general_domain_uses_grounded_rag_knowledge(
@@ -89,7 +89,7 @@ class TestV2BusinessDomains:
         mock_rag.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.product_node", new_callable=AsyncMock)
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_product_domain_passes_through_guardian(
@@ -118,7 +118,7 @@ class TestV2BusinessDomains:
         mock_product.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.order_agent.track_order")
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_order_domain_tracking_is_customer_scoped(
@@ -149,7 +149,7 @@ class TestV2BusinessDomains:
         mock_track.assert_called_once_with(8841, 55)
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.order_agent.track_order")
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_order_domain_missing_order_id_asks_for_clarification(
@@ -174,7 +174,7 @@ class TestV2BusinessDomains:
         mock_track.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_order_domain_cancellation_is_approval_gated(
         self, mock_classify, mock_cases, monkeypatch
@@ -200,7 +200,7 @@ class TestV2BusinessDomains:
 
     @pytest.mark.asyncio
     @patch("app.agents.domain_graph.create_ticket", return_value='{"ticket_id": 5502}')
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_payment_domain_refund_routes_to_specialist(
         self, mock_classify, mock_cases, mock_create, monkeypatch
@@ -228,7 +228,7 @@ class TestV2BusinessDomains:
 
     @pytest.mark.asyncio
     @patch("app.agents.domain_graph.create_ticket", return_value='{"ticket_id": 5501}')
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.payment_agent.get_payment_record")
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_payment_domain_billing_issue_uses_verified_context(
@@ -269,7 +269,7 @@ class TestMultiTurnCrossDomainWorkflows:
     """Verifies that WorkflowState maintains typed domain states across switches and resumes."""
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.order_agent.track_order")
     @patch("app.agents.domain_graph.product_node", new_callable=AsyncMock)
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
@@ -356,7 +356,7 @@ class TestMultiTurnCrossDomainWorkflows:
         monkeypatch.setattr(settings, "agent_architecture_mode", "v2_all")
         mock_classify.return_value = _route("order", "delivery_issue")
         mock_cases.return_value = json.dumps({
-            "cases": [{
+            "recent_count": 0, "cases": [{
                 "id": 9901,
                 "status": "open",
                 "type": "cancellation",

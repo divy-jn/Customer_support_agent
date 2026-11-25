@@ -80,7 +80,7 @@ class TestDirectedDomainTransitions:
     """Verifies all directed transitions between Product, Order, and Payment."""
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.order_agent.track_order")
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_product_to_order_transition(
@@ -125,7 +125,7 @@ class TestDirectedDomainTransitions:
         assert "shipped" in res["response"]
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.product_node", new_callable=AsyncMock)
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_order_to_product_transition(
@@ -170,7 +170,7 @@ class TestDirectedDomainTransitions:
         assert "2-year" in res["response"]
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_product_to_payment_transition(
         self, mock_classify, mock_cases, monkeypatch
@@ -210,7 +210,7 @@ class TestDirectedDomainTransitions:
         assert "specialist" in res["response"] and "#3003" in res["response"]
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.product_node", new_callable=AsyncMock)
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_payment_to_product_transition(
@@ -263,7 +263,7 @@ class TestDirectedDomainTransitions:
         assert res["pending_approval"]["approval_id"] == existing_approval.approval_id
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_order_to_payment_transition(
         self, mock_classify, mock_cases, monkeypatch
@@ -302,7 +302,7 @@ class TestDirectedDomainTransitions:
         assert "specialist" in res["response"] and "#5005" in res["response"]
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.order_agent.track_order")
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_payment_to_order_transition(
@@ -348,7 +348,7 @@ class TestStateResumptionAndInterruption:
     """Verifies that suspended workflows resume seamlessly from typed state without re-prompting."""
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.order_agent.track_order")
     @patch("app.agents.general_agent.rag_agent.generate_response")
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
@@ -423,7 +423,7 @@ class TestStateResumptionAndInterruption:
         mock_track.assert_called_with(7007, 70)
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.product_node", new_callable=AsyncMock)
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_repeated_switches_do_not_duplicate_approvals(
@@ -738,7 +738,7 @@ class TestMultiDomainAmbiguityAndFallback:
     """Verifies that ambiguous multi-domain requests trigger safe clarification without legacy fallback."""
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_unknown_or_ambiguous_domain_requests_clarification_safely(
         self, mock_classify, mock_cases, monkeypatch
@@ -874,7 +874,7 @@ class TestConcurrencyAndMetadataResilience:
         assert ws_switched.resumed_domain is None
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.product_node", new_callable=AsyncMock)
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_domain_switch_preserves_ticket_context_and_state(
@@ -928,7 +928,7 @@ class TestExactMatrixScenariosAndApprovalHardening:
     """Rigorous tests covering exact matrix scenarios 2, 8, 9, cryptographic signatures, and invariants."""
 
     @pytest.mark.asyncio
-    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+    @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.domain_graph.product_node", new_callable=AsyncMock)
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
     async def test_scenario_2_order_to_product_warranty_lookup(

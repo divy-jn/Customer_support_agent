@@ -119,32 +119,51 @@ def find_customer_support_cases(
     customer_id: int,
     *,
     statuses: tuple[str, ...] = ("open", "in_progress", "pending_customer", "escalated"),
-    created_since: str | None = None,
+    created_since: str,
 ) -> str:
-    """Return recent customer-owned tickets for Guardian duplicate checks.
-
-    `created_since` is an ISO-8601 UTC timestamp.  This is intentionally a
-    narrow projection: Guardian needs ticket identity and classification, not
-    the full ticket body or data belonging to other customers.
-    """
+    """Return all active cases and an exact, independent recent-ticket count."""
     try:
         _validate_positive_int(customer_id, "customer_id")
         if not statuses or any(not isinstance(status, str) or not status for status in statuses):
             raise ValueError("statuses must contain one or more non-empty values")
-        if created_since is not None:
-            datetime.fromisoformat(created_since.replace("Z", "+00:00"))
+        datetime.fromisoformat(created_since.replace("Z", "+00:00"))
 
-        query = (
+        recent = (
             supabase.table("tickets")
-            .select("id, subject, type, status, priority, created_at, order_id")
+            .select("id", count="exact", head=True)
             .eq("customer_id", customer_id)
-            .in_("status", list(statuses))
-            .order("created_at", desc=True)
+            .gte("created_at", created_since)
+            .execute()
         )
-        if created_since:
-            query = query.gte("created_at", created_since)
-        response = query.limit(20).execute()
-        return json.dumps({"customer_id": customer_id, "cases": response.data or []}, indent=2)
+        if type(recent.count) is not int or recent.count < 0:
+            raise ValueError("Recent ticket count unavailable")
+
+        cases = []
+        before_id = None
+        while True:
+            query = (
+                supabase.table("tickets")
+                .select("id, subject, type, status, priority, created_at, order_id")
+                .eq("customer_id", customer_id)
+                .in_("status", list(statuses))
+                .order("id", desc=True)
+                .limit(100)
+            )
+            if before_id is not None:
+                query = query.lt("id", before_id)
+            page = query.execute().data
+            if not isinstance(page, list):
+                raise ValueError("Active ticket response is not a list")
+            if not page:
+                break
+            next_id = page[-1]["id"]
+            if type(next_id) is not int or (before_id is not None and next_id >= before_id):
+                raise ValueError("Active ticket pagination did not advance")
+            cases.extend(page)
+            before_id = next_id
+
+        cases.sort(key=lambda case: case["created_at"] or "", reverse=True)
+        return json.dumps({"customer_id": customer_id, "cases": cases, "recent_count": recent.count})
     except Exception as e:
         return json.dumps({"error": str(e)})
 

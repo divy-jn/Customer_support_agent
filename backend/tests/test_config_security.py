@@ -132,6 +132,20 @@ def test_production_accepts_explicit_strong_secrets_and_database_password():
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
+def test_hosted_architecture_defaults_to_full_v2_and_allows_explicit_rollout(monkeypatch, environment):
+    monkeypatch.delenv("AGENT_ARCHITECTURE_MODE", raising=False)
+    values = dict(
+        APP_ENVIRONMENT=environment, DEBUG_MODE=False,
+        JWT_SECRET="unit-test-strong-secret-with-32-plus-characters",
+        APPROVAL_SIGNING_SECRET="unit-test-dedicated-approval-secret-long-enough",
+        SUPPORT_TEAM_EMAIL="support@support-operations.company",
+        DATABASE_PASSWORD="explicit-db-password",
+    )
+    assert _settings(**values).agent_architecture_mode == "v2_all"
+    assert _settings(**values, AGENT_ARCHITECTURE_MODE="v2_core").agent_architecture_mode == "v2_core"
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
 @pytest.mark.parametrize("recipient", ["", "  ", "support@example.com", "support@supportteam.com"])
 def test_hosted_environments_require_real_support_email(environment, recipient):
     with pytest.raises(ValidationError, match="SUPPORT_TEAM_EMAIL"):

@@ -30,6 +30,8 @@ async def generate_response(
     message: str,
     conversation_history: list[dict] = None,
     top_k: int = 5,
+    *,
+    context: str | None = None,
 ) -> dict:
     """
     Generate a RAG-grounded response to a customer query.
@@ -38,6 +40,7 @@ async def generate_response(
         message: The customer's question.
         conversation_history: Previous messages for context.
         top_k: Number of knowledge base chunks to retrieve.
+        context: Optional context from an approved knowledge base document.
 
     Returns:
         Dict with response text, sources used, and retrieval metadata.
@@ -59,7 +62,8 @@ async def generate_response(
             snippet = last_agent_msg.strip().split("\n")[0][:120]
             search_query = f"{snippet} {message}"
 
-    context = await asyncio.to_thread(retrieve_as_context, search_query, top_k=top_k)
+    if context is None:
+        context = await asyncio.to_thread(retrieve_as_context, search_query, top_k=top_k)
 
     # Step 3: Build the prompt
     system_prompt = RAG_SYSTEM_PROMPT.format(context=context)

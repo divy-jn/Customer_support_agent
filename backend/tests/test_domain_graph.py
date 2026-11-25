@@ -60,7 +60,7 @@ async def test_v2_product_node_delegates_to_hardened_product_agent(mock_product)
 @patch("app.agents.domain_graph.update_ticket")
 @patch("app.agents.domain_graph.find_customer_support_cases")
 async def test_guardian_updates_existing_ticket_instead_of_creating_duplicate(mock_cases, mock_update):
-    mock_cases.return_value = '{"cases": [{"id": 786, "status": "open", "type": "technical_issue", "subject": "Issue: Product Warranty"}]}'
+    mock_cases.return_value = '{"recent_count": 0, "cases": [{"id": 786, "status": "open", "type": "technical_issue", "subject": "Issue: Product Warranty"}]}'
     mock_update.return_value = '{"status": "success"}'
     result = await guardian_response_node({
         "message": "I need a manager about the warranty", "response": "Your warranty is active.",
@@ -78,7 +78,7 @@ async def test_guardian_updates_existing_ticket_instead_of_creating_duplicate(mo
 @patch("app.agents.domain_graph.customer_support_graph.ainvoke", new_callable=AsyncMock)
 async def test_non_product_domains_fall_back_to_legacy_graph(mock_legacy):
     mock_legacy.return_value = {"response": "Order status", "escalated": False}
-    state = {"message": "Track order 12", "conversation_history": []}
+    state = {"message": "Track order 12", "conversation_history": [], "architecture_mode": "v2_product"}
 
     assert route_after_supervisor({**state, "semantic_domain": "order"}) == "legacy"
     result = await legacy_fallback_node(state)
@@ -109,7 +109,7 @@ def test_order_and_general_v2_slices_also_cross_guardian_boundary(monkeypatch):
 
 
 @pytest.mark.asyncio
-@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
 async def test_guardian_uses_the_actual_order_domain_for_ticket_creation(mock_cases):
     result = await guardian_response_node({
         "message": "I need a human for my order", "response": "I can help with the order.",
@@ -171,7 +171,7 @@ async def test_guardian_escalates_without_mutation_when_ticket_history_is_unavai
 
 @pytest.mark.asyncio
 @patch("app.agents.domain_graph.create_ticket")
-@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
 async def test_one_off_human_keyword_does_not_trigger_handoff_by_itself(mock_cases, mock_create):
     result = await guardian_response_node({
         "message": "I want to speak to a human",
@@ -193,7 +193,7 @@ async def test_one_off_human_keyword_does_not_trigger_handoff_by_itself(mock_cas
 
 
 @pytest.mark.asyncio
-@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
 async def test_turn_count_alone_never_triggers_unresolved_attempt_escalation(mock_cases):
     result = await guardian_response_node({
         "message": "Can you confirm the order is on its way?",
@@ -214,7 +214,7 @@ async def test_turn_count_alone_never_triggers_unresolved_attempt_escalation(moc
 
 
 @pytest.mark.asyncio
-@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
 async def test_third_actual_unresolved_attempt_triggers_escalation_and_persists_count(mock_cases):
     result = await guardian_response_node({
         "message": "The device still does not turn on.",
@@ -238,7 +238,7 @@ async def test_third_actual_unresolved_attempt_triggers_escalation_and_persists_
 
 
 @pytest.mark.asyncio
-@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
+@patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
 async def test_guardian_preserves_order_cancellation_approval_request(mock_cases):
     pending = {
         "action": "cancel_order",
