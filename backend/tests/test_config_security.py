@@ -122,12 +122,27 @@ def test_production_accepts_explicit_strong_secrets_and_database_password():
         DEBUG_MODE=False,
         JWT_SECRET="unit-test-strong-secret-with-32-plus-characters",
         APPROVAL_SIGNING_SECRET="unit-test-dedicated-approval-secret-long-enough",
+        SUPPORT_TEAM_EMAIL="support@support-operations.company",
         DATABASE_PASSWORD="explicit-db-password",
         AGENT_SECRET="",
         ADMIN_API_KEY="",
     )
     assert settings.app_environment == "production"
     assert settings.debug_mode is False
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+@pytest.mark.parametrize("recipient", ["", "  ", "support@example.com", "support@supportteam.com"])
+def test_hosted_environments_require_real_support_email(environment, recipient):
+    with pytest.raises(ValidationError, match="SUPPORT_TEAM_EMAIL"):
+        _settings(
+            APP_ENVIRONMENT=environment,
+            DEBUG_MODE=False,
+            DATABASE_PASSWORD="explicit-db-password",
+            JWT_SECRET="unit-test-strong-secret-with-32-plus-characters",
+            APPROVAL_SIGNING_SECRET="unit-test-dedicated-approval-secret-long-enough",
+            SUPPORT_TEAM_EMAIL=recipient,
+        )
 
 
 @pytest.mark.parametrize("environment", ["production", "staging"])

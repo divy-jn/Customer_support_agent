@@ -356,6 +356,7 @@ class TicketContext(BaseModel):
     # Transient reference to the active ticket, provided for deduplication logic,
     # NOT representing ownership.
     active_ticket_id: int | None = Field(default=None, gt=0)
+    client_request_id: str | None = None
 
 class GlobalWorkflowStatus(str, Enum):
     IDLE = "idle"

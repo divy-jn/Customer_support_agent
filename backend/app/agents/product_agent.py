@@ -48,6 +48,7 @@ class ProductDomainContext(BaseModel):
     # V2 orchestration owns ticket side effects.  Legacy callers retain the
     # established lifecycle behavior until their migration is complete.
     manage_tickets: bool = True
+    client_request_id: str | None = None
 
 
 # ──────────────────────────────────────────────
@@ -283,7 +284,8 @@ class ProductAgent:
                 product_name=merged_state.product_state.product_name,
                 urgency=urgency,
                 sentiment=sentiment,
-                active_ticket_id=merged_state.product_state.active_ticket_id
+                active_ticket_id=merged_state.product_state.active_ticket_id,
+                client_request_id=context.client_request_id
             )
             ticket_res = TicketLifecycleService.process_issue(ticket_ctx)
             
@@ -744,6 +746,7 @@ async def handle_product_request(
         workflow_state=workflow_state,
         conversation_history=state.get("conversation_history") or [],
         manage_tickets=state.get("manage_tickets", False),
+        client_request_id=state.get("client_request_id"),
     )
 
     resp = await agent.handle(ctx)

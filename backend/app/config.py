@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     # --- Email ---
     gmail_address: str = Field(default="", alias="GMAIL_ADDRESS")
     gmail_app_password: str = Field(default="", alias="GMAIL_APP_PASSWORD")
-    support_team_email: str = Field(default="support@supportteam.com", alias="SUPPORT_TEAM_EMAIL")
+    support_team_email: str = Field(default="", alias="SUPPORT_TEAM_EMAIL")
     tech_team_email: str = Field(default="tech@supportteam.com", alias="TECH_TEAM_EMAIL")
     from_email: str = Field(default="", alias="FROM_EMAIL")
     email_test_recipient: str | None = Field(default=None, alias="EMAIL_TEST_RECIPIENT")
@@ -186,6 +186,11 @@ class Settings(BaseSettings):
             raise ValueError(f"APP_ENVIRONMENT must be one of {sorted(valid)}")
         return normalized
 
+    @field_validator("support_team_email")
+    @classmethod
+    def normalize_support_team_email(cls, value: str) -> str:
+        return value.strip()
+
     @field_validator("jwt_secret")
     @classmethod
     def normalize_jwt_secret(cls, v: str) -> str:
@@ -235,6 +240,13 @@ class Settings(BaseSettings):
             secret = (self.approval_signing_secret or "").strip()
             if len(secret) < 32 or "change-me" in secret.lower() or secret == self.jwt_secret:
                 raise ValueError("Configure a dedicated APPROVAL_SIGNING_SECRET of at least 32 characters")
+
+            local, _, domain = self.support_team_email.lower().partition("@")
+            if (not local or "." not in domain or "@" in domain
+                or any(char.isspace() for char in self.support_team_email)
+                or domain in {"example.com", "example.net", "example.org", "supportteam.com", "yourcompany.com"}
+                or domain.endswith((".example", ".invalid", ".test"))):
+                raise ValueError("Configure a real SUPPORT_TEAM_EMAIL for staging and production")
         return self
 
     model_config = {

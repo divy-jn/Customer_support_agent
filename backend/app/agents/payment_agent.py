@@ -1,16 +1,10 @@
-"""Safe Payment-domain rollout slice.
-
-Only refunds are enabled because they have an existing idempotent transaction
-and confirmation boundary. Other payment intents deliberately fall back to
-legacy until a customer-scoped payment-record capability exists.
-"""
+"""Handle verified payment lookups and route refund requests for specialist review."""
 
 import asyncio
 import json
 import re
 from typing import Any
 
-from app.agents.approval_service import create_pending_approval
 from app.tools import get_payment_record
 
 
@@ -47,7 +41,7 @@ def _update_payment_state(ws: Any, tool_name: str | None = None, tool_res: Any =
 
 
 async def handle_payment_request(state: dict[str, Any]) -> dict[str, Any]:
-    """Prepare a refund request without performing a mutation."""
+    """Resolve payment facts or ask Guardian for specialist review."""
     intent = state.get("intent", "").lower()
 
     order_id = _order_id(state["message"])
@@ -80,7 +74,7 @@ async def handle_payment_request(state: dict[str, Any]) -> dict[str, Any]:
             record = {"error": "Unable to read the payment record."}
         if record.get("error"):
             return {
-                "response": f"I couldn’t verify a payment record for order #{order_id}. I’ll have a specialist investigate this safely.",
+                "response": f"I couldn’t verify a payment record for order #{order_id}. A payment specialist needs to review this.",
                 "workflow_state": ws_updated,
                 "requires_human": True,
                 "escalated": False,
@@ -107,45 +101,14 @@ async def handle_payment_request(state: dict[str, Any]) -> dict[str, Any]:
 
     if order_id is None:
         return {
-            "response": "Please share the order number so I can prepare the refund request.",
+            "response": "Please share the order number for payment specialist review.",
             "escalated": False,
         }
 
-    confirmation = f"I’ll initiate a refund for order #{order_id}. Would you like me to proceed?"
-    cust_id_raw = state.get("customer_id")
-    try:
-        cust_id = int(cust_id_raw) if cust_id_raw is not None else None
-    except (ValueError, TypeError):
-        cust_id = None
-    sess_id = state.get("session_id") or "unknown"
-
-    existing_p = state.get("pending_approval")
-    if (
-        isinstance(existing_p, dict)
-        and existing_p.get("action") == "process_refund"
-        and str(existing_p.get("params", {}).get("order_id")) == str(order_id)
-        and existing_p.get("status") == "pending"
-        and "approval_id" in existing_p
-    ):
-        pending_dict = existing_p
-        confirmation = existing_p.get("message") or confirmation
-    elif cust_id and cust_id > 0:
-        pending_obj = create_pending_approval(
-            action="process_refund",
-            params={"order_id": order_id},
-            customer_id=cust_id,
-            session_id=sess_id,
-            message=confirmation,
-            intent=intent,
-            original_message=state.get("message"),
-        )
-        pending_dict = pending_obj.model_dump(mode="json")
-    else:
-        pending_dict = None
-
     return {
-        "response": confirmation,
-        "pending_approval": pending_dict,
+        "response": f"A payment specialist needs to review the refund request for order #{order_id}.",
+        "pending_approval": None,
         "workflow_state": ws_updated,
+        "requires_human": True,
         "escalated": False,
     }

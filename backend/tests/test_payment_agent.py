@@ -13,12 +13,13 @@ async def test_refund_needs_order_id():
 
 
 @pytest.mark.asyncio
-async def test_refund_is_approval_gated():
+async def test_refund_requires_specialist_review():
     result = await handle_payment_request({
         "message": "Refund order #19", "intent": "refund_request", "customer_id": 7, "session_id": "s1",
     })
-    assert result["pending_approval"]["action"] == "process_refund"
-    assert result["pending_approval"]["params"] == {"order_id": 19}
+    assert result["pending_approval"] is None
+    assert result["requires_human"]
+    assert "specialist" in result["response"] and "#19" in result["response"]
 
 
 @pytest.mark.asyncio

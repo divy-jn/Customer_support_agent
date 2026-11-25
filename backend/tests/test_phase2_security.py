@@ -201,13 +201,14 @@ class TestOrderMutationCustomerIdPropagation:
         mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
             {"id": 202, "customer_id": 88, "status": "delivered"}
         ]
-        mock_rpc_exec = MagicMock(data={"status": "success"})
+        error = "Refund processing is unavailable; payment specialist review required"
+        mock_rpc_exec = MagicMock(data={"error": error})
         mock_supabase.rpc.return_value.execute.return_value = mock_rpc_exec
         
         req_id = str(uuid.uuid4())
         res_str = process_refund(order_id=202, customer_id=None, client_request_id=req_id)
         res = json.loads(res_str)
-        assert res.get("status") == "success"
+        assert res == {"error": error}
         
         mock_supabase.rpc.assert_called_once()
         rpc_name, rpc_params = mock_supabase.rpc.call_args[0]

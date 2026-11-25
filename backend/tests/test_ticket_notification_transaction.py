@@ -380,9 +380,33 @@ class TestSlice34Business:
         pass
 
     # D. EMAIL BOUNDARY
-    @patch('app.outbox.sender.GmailSmtpSender.send')
-    def test_d19_d20_no_smtp(self, mock_send):
-        # Already proven by the fact that the SQL wrapper runs in Postgres without Python callbacks.
-        # But we can assert the mock was never called.
-        mock_send.assert_not_called()
-        assert True
+    def test_ticket_create_replay_enqueues_once_without_inline_smtp(self):
+        from app.tools import create_ticket
+
+        request_id = str(uuid.uuid4())
+
+        def run_rpc(name, params):
+            assert name == "execute_ticket_mutation_with_outbox"
+            result = exec_wrapper_rpc(
+                "create_ticket", "new", params["p_payload"],
+                {
+                    "logical_identity_hash": params["p_outbox_logical_identity_hash"],
+                    "source_event_id": params["p_outbox_source_event_id"],
+                    "notification_type": params["p_outbox_notification_type"],
+                    "recipient_identity": params["p_outbox_recipient_identity"],
+                    "payload_template": params["p_outbox_payload_template"],
+                },
+                client_request_id=request_id,
+            )
+            return MagicMock(execute=MagicMock(return_value=MagicMock(data=result)))
+
+        with patch("app.tools.supabase.rpc", side_effect=run_rpc) as rpc, patch(
+            "app.email_service.send_ticket_created_email"
+        ) as inline_email:
+            first = json.loads(create_ticket(1, "Replay audit", "Details", client_request_id=request_id))
+            replay = json.loads(create_ticket(1, "Replay audit", "Details", client_request_id=request_id))
+
+        assert first["ticket_id"] == replay["ticket_id"]
+        params = rpc.call_args.args[1]
+        assert len(get_outbox_events_for_source(params["p_outbox_source_event_id"])) == 1
+        inline_email.assert_not_called()

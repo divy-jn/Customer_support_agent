@@ -266,8 +266,9 @@ BEGIN
         ELSIF v_order_status NOT IN ('cancelled', 'delivered') THEN
             v_result := jsonb_build_object('error', 'Cannot refund order #' || p_canonical_target || '. Current status: ' || v_order_status || '. Order must be cancelled or delivered.');
         ELSE
-            UPDATE orders SET status = 'refunded' WHERE id = p_canonical_target::BIGINT;
-            v_result := jsonb_build_object('status', 'success', 'message', 'Refund initiated for order #' || p_canonical_target || '. The refund will be processed within 5-7 business days.');
+            v_result := jsonb_build_object(
+                'error', 'Refund processing is unavailable; payment specialist review required'
+            );
         END IF;
     ELSE
         v_result := jsonb_build_object('error', 'Unknown operation type: ' || p_operation_type);
@@ -626,7 +627,7 @@ DECLARE
     v_result JSONB;
     v_cust_email TEXT;
     v_cust_name TEXT;
-    v_support_email TEXT := 'support@example.com'; -- fallback/template logic
+    v_support_email TEXT := NULLIF(p_payload->>'support_team_email', '');
     
     v_support_identity_string TEXT;
     v_support_outbox_hash TEXT;
@@ -728,6 +729,9 @@ BEGIN
         v_support_outbox_hash := encode(digest(v_support_identity_string, 'sha256'), 'hex');
 
         -- Outbox Support Notification
+        IF v_support_email IS NULL THEN
+            RAISE EXCEPTION 'SUPPORT_TEAM_EMAIL is required for new escalation notifications';
+        END IF;
         PERFORM enqueue_outbox_event(
             v_support_outbox_hash,
             p_escalation_event_id::TEXT,

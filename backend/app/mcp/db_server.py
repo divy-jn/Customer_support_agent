@@ -251,30 +251,8 @@ def cancel_order(order_id: int) -> str:
 
 @mcp.tool()
 def process_refund(order_id: int) -> str:
-    """
-    Initiate a refund for an order. The order must be in 'cancelled' or 'delivered' status.
-
-    Args:
-        order_id: The numeric ID of the order to refund.
-    """
-    try:
-        response = supabase.table("orders").select("status").eq("id", order_id).execute()
-        
-        if not response.data:
-            return json.dumps({"error": f"Order #{order_id} not found"})
-
-        if response.data[0]["status"] not in ("cancelled", "delivered"):
-            return json.dumps({
-                "error": f"Cannot refund order #{order_id}. Current status: {response.data[0]['status']}. Order must be cancelled or delivered."
-            })
-
-        update_resp = supabase.table("orders").update({"status": "refunded"}).eq("id", order_id).execute()
-        return json.dumps({
-            "status": "success",
-            "message": f"Refund initiated for order #{order_id}. The refund will be processed within 5-7 business days."
-        })
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    """Report that the order refund requires payment specialist review."""
+    return json.dumps({"error": "Refund processing is unavailable; payment specialist review required"})
 
 
 # ──────────────────────────────────────────────

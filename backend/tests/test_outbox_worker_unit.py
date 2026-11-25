@@ -64,7 +64,7 @@ class MockCursor:
         return self.fetch_results
 
     def fetchone(self):
-        return self.fetch_results[0] if self.fetch_results else None
+        return self.fetch_results.pop(0) if self.fetch_results else None
 
     def __enter__(self):
         return self

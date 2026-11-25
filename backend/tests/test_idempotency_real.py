@@ -191,9 +191,9 @@ class TestRealDatabaseIdempotency:
         results = execute_concurrently(exec_rpc, "process_refund", "888", payload, client_request_id=req_id)
         
         # Verify
-        assert get_order_status(888) == "refunded"
+        assert get_order_status(888) == "cancelled"
         for res in results:
-            assert res.get("status") == "success"
+            assert res["error"] == "Refund processing is unavailable; payment specialist review required"
 
     def test_customer_isolation(self):
         # Customer 1 request

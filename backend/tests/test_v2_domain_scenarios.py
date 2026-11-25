@@ -8,7 +8,7 @@ Verifies:
    - Missing order ID triggers clarification without tool execution.
    - Cancellation requires and creates an explicit pending_approval structure.
 4. Payment Domain:
-   - Refund requires explicit approval and customer confirmation.
+   - Refund goes to a payment specialist for review.
    - Billing failures query verified payment records and require specialist review.
 5. Escalation Domain:
    - Severe issues (safety/legal, complex complaints) routed to Guardian.
@@ -199,10 +199,11 @@ class TestV2BusinessDomains:
         assert "Shall I go ahead?" in result["response"]
 
     @pytest.mark.asyncio
+    @patch("app.agents.domain_graph.create_ticket", return_value='{"ticket_id": 5502}')
     @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
-    async def test_payment_domain_refund_is_approval_gated(
-        self, mock_classify, mock_cases, monkeypatch
+    async def test_payment_domain_refund_routes_to_specialist(
+        self, mock_classify, mock_cases, mock_create, monkeypatch
     ):
         monkeypatch.setattr(settings, "agent_architecture_mode", "v2_core")
         mock_classify.return_value = _route("payment", "refund")
@@ -210,6 +211,7 @@ class TestV2BusinessDomains:
         state = {
             "session_id": "sess-pay-1",
             "customer_id": 77,
+            "client_request_id": "f452578e-c486-455b-85bb-db0d27e854fc",
             "message": "I would like a refund for order #4002",
             "conversation_history": [],
             "workflow_state": {"session_id": "sess-pay-1", "customer_id": 77},
@@ -218,10 +220,11 @@ class TestV2BusinessDomains:
         result = await domain_support_graph.ainvoke(state)
 
         assert result["semantic_domain"] == "payment"
-        assert result["pending_approval"] is not None
-        assert result["pending_approval"]["action"] == "process_refund"
-        assert result["pending_approval"]["params"] == {"order_id": 4002}
-        assert "Would you like me to proceed?" in result["response"]
+        assert result["pending_approval"] is None
+        assert result["guardian_action"] == GuardianAction.CREATE_TICKET.value
+        assert result["guardian_ticket_id"] == 5502
+        assert "specialist" in result["response"] and "#4002" in result["response"]
+        assert mock_create.call_args.kwargs["client_request_id"] == state["client_request_id"]
 
     @pytest.mark.asyncio
     @patch("app.agents.domain_graph.create_ticket", return_value='{"ticket_id": 5501}')

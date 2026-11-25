@@ -2,11 +2,10 @@ import uuid
 import json
 import hashlib
 import logging
-from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel
+from app.config import settings
 from app.tools import supabase
-from app.notification_identity import SourceEventIdentity, LogicalNotificationIdentity, NotificationType, RecipientIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -75,25 +74,9 @@ class EscalationService:
         # Calculate payload hash
         payload_hash = hashlib.sha256(json.dumps(canonical_fingerprint, sort_keys=True).encode()).hexdigest()
         
-        # Pre-generate IDs to establish logical notification identities in Python
+        payload["support_team_email"] = settings.support_team_email
         escalation_event_id = str(uuid.uuid4())
-        source_event = SourceEventIdentity.from_escalation(escalation_event_id)
-        
-        support_identity = LogicalNotificationIdentity(
-            source_event=source_event,
-            notification_type=NotificationType.ESCALATION_TEAM,
-            recipient=RecipientIdentity.support_team()
-        )
-        
-        customer_hash = None
-        if request.customer_notification_required:
-            customer_identity = LogicalNotificationIdentity(
-                source_event=source_event,
-                notification_type=NotificationType.ESCALATION_CUSTOMER,
-                recipient=RecipientIdentity.customer(request.customer_id)
-            )
-            customer_hash = customer_identity.get_hash()
-        
+
         # Call the Postgres RPC for atomic state transition & outbox record creation
         try:
             res = supabase.rpc(
@@ -107,112 +90,11 @@ class EscalationService:
                     "p_escalation_event_id": escalation_event_id
                 }
             ).execute()
-            data = res.data or {}
-        except Exception as rpc_err:
-            logger.warning(
-                f"execute_escalation_transition RPC failed ({rpc_err}). Falling back to durable direct table operations."
-            )
-            # Authoritative fallback via Supabase tables
-            state_res = supabase.table("session_escalation_state").select("*").eq("session_id", request.session_id).execute()
-            if not state_res.data:
-                return EscalationResult(
-                    status="failed",
-                    message=f"Session state not initialized for {request.session_id}",
-                    session_id=request.session_id,
-                    error=f"Session state not initialized for {request.session_id}"
-                )
-            current_state = state_res.data[0]
-            if current_state.get("customer_id") != request.customer_id:
-                return EscalationResult(
-                    status="failed",
-                    message="Session belongs to a different customer.",
-                    session_id=request.session_id,
-                    error="Session belongs to a different customer."
-                )
-
-            # Idempotency check
-            try:
-                idem_res = supabase.table("idempotency_records").select("*").eq("customer_id", request.customer_id).eq("client_request_id", str(request.client_request_id)).execute()
-                if idem_res.data:
-                    rec = idem_res.data[0]
-                    if rec.get("operation_type") != "escalate_session" or rec.get("canonical_target") != request.session_id or rec.get("payload_hash") != payload_hash:
-                        raise IdempotencyConflict(
-                            "Request ID already used for a different operation/payload.",
-                            rec.get("terminal_result", {})
-                        )
-                    prev_res = rec.get("terminal_result") or {}
-                    return EscalationResult(
-                        status=prev_res.get("status", "success"),
-                        message=prev_res.get("message", "Replayed escalation."),
-                        session_id=request.session_id,
-                        escalation_event_id=uuid.UUID(prev_res["escalation_event_id"]) if prev_res.get("escalation_event_id") else None
-                    )
-            except IdempotencyConflict:
-                raise
-            except Exception as e:
-                logger.debug(f"Idempotency read skipped: {e}")
-
-            if current_state.get("status") == "ACTIVE":
-                return EscalationResult(
-                    status="bypassed",
-                    message="Session is already ACTIVE. Escalation bypassed.",
-                    session_id=request.session_id
-                )
-
-            # Record in idempotency_records
-            try:
-                supabase.table("idempotency_records").insert({
-                    "customer_id": request.customer_id,
-                    "client_request_id": str(request.client_request_id),
-                    "operation_type": "escalate_session",
-                    "canonical_target": request.session_id,
-                    "payload_hash": payload_hash
-                }).execute()
-            except Exception:
-                pass
-
-            # Update session state to ACTIVE
-            supabase.table("session_escalation_state").update({
-                "status": "ACTIVE",
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }).eq("session_id", request.session_id).execute()
-
-            # Insert escalation_events with all required NOT NULL constraints
-            supabase.table("escalation_events").insert({
-                "escalation_event_id": escalation_event_id,
-                "session_id": request.session_id,
-                "customer_id": request.customer_id,
-                "ticket_id": request.ticket_id,
-                "client_request_id": str(request.client_request_id),
-                "payload_hash": payload_hash,
-                "sentiment": request.sentiment,
-                "urgency": request.urgency,
-                "last_message": request.last_message,
-                "customer_notification_required": request.customer_notification_required,
-                "event_type": "takeover",
-                "new_status": "ACTIVE",
-                "metadata": {"source": "human_takeover"}
-            }).execute()
-
-            terminal_data = {
-                "status": "success",
-                "message": "Escalation triggered successfully.",
-                "escalation_event_id": escalation_event_id,
-                "session_id": request.session_id
-            }
-            try:
-                supabase.table("idempotency_records").update({
-                    "terminal_result": terminal_data
-                }).eq("customer_id", request.customer_id).eq("client_request_id", str(request.client_request_id)).execute()
-            except Exception:
-                pass
-
-            return EscalationResult(
-                status="success",
-                message="Escalation triggered successfully.",
-                session_id=request.session_id,
-                escalation_event_id=uuid.UUID(escalation_event_id)
-            )
+            data = res.data
+            if not isinstance(data, dict) or not ("status" in data or "error" in data):
+                raise ValueError("Missing escalation RPC outcome")
+        except Exception as exc:
+            raise RuntimeError("Escalation transaction could not be confirmed") from exc
 
         if "error" in data:
             if data["error"] == "IdempotencyConflict":

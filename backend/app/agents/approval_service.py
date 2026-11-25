@@ -408,12 +408,8 @@ async def reconcile_uncertain_operation(
                         status=ApprovalStatus.FAILED,
                         is_uncertain=False,
                     )
-                if term.get("status") == "success" and "error" not in term:
-                    success_msg = term.get("message") or (
-                        f"Order #{order_id} has been cancelled"
-                        if action == "cancel_order"
-                        else f"Refund initiated for order #{order_id}. The refund will be processed within 5-7 business days."
-                    )
+                if term.get("status") == "success" and action == "cancel_order":
+                    success_msg = term.get("message") or f"Order #{order_id} has been cancelled"
                     return ApprovalExecutionResult(
                         success=True,
                         action=action,
@@ -427,7 +423,7 @@ async def reconcile_uncertain_operation(
         logger.warning(f"Could not query idempotency_records for reconciliation of {op_key}: {e}")
 
     # 2. Secondary fallback / status check
-    from app.tools import get_payment_record, track_order
+    from app.tools import track_order
 
     try:
         if action == "cancel_order":
@@ -452,19 +448,6 @@ async def reconcile_uncertain_operation(
                     raw_result=order_data,
                     error="Order remains active after timeout",
                     status=ApprovalStatus.FAILED,
-                    is_uncertain=False,
-                )
-        elif action == "process_refund":
-            pay_raw = await asyncio.to_thread(get_payment_record, order_id=order_id, customer_id=authenticated_customer_id)
-            pay_data = json.loads(pay_raw)
-            if pay_data.get("status") == "refunded":
-                return ApprovalExecutionResult(
-                    success=True,
-                    action=action,
-                    operation_key=op_key,
-                    response_text=f"Refund initiated for order #{order_id}. The refund will be processed within 5-7 business days.",
-                    raw_result=pay_data,
-                    status=ApprovalStatus.SUCCEEDED,
                     is_uncertain=False,
                 )
     except Exception as e:
@@ -629,6 +612,8 @@ async def execute_approved_action(
                 error=err_msg,
                 status=ApprovalStatus.FAILED,
             )
+
+        success_msg = payload.get("message") or f"Operation confirmed for order #{order_id}."
 
         # Dispatch customer email notification
         try:

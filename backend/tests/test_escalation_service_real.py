@@ -106,6 +106,7 @@ class MockSupabaseRPC:
 @pytest.fixture(autouse=True)
 def mock_supabase_client(monkeypatch):
     monkeypatch.setattr("app.escalation.service.supabase.rpc", MockSupabaseRPC)
+    monkeypatch.setattr("app.escalation.service.settings.support_team_email", "support@support-operations.company")
 
 class TestRealEscalationService:
     

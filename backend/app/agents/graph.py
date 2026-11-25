@@ -235,6 +235,7 @@ async def product_node(state: AgentState) -> dict:
         workflow_state=WorkflowState.from_legacy(ws),
         conversation_history=state.get("conversation_history") or [],
         manage_tickets=state.get("manage_tickets", True),
+        client_request_id=state.get("client_request_id"),
     )
     
     response = await agent.handle(ctx)
@@ -263,13 +264,18 @@ async def db_plan_node(state: AgentState) -> dict:
     action = action_plan.get("action")
     params = action_plan.get("params", {})
     
+    if action == "process_refund":
+        return {
+            "response": f"A payment specialist needs to review the refund request for order #{params['order_id']}.",
+            "pending_approval": None,
+            "escalated": True,
+        }
+
     # Check if this is a high-risk action
     if action in HIGH_RISK_ACTIONS:
         # Build a human-readable confirmation message
         if action == "cancel_order":
             confirm_msg = f"I'd like to cancel order #{params.get('order_id', '?')} for you. Shall I go ahead?"
-        elif action == "process_refund":
-            confirm_msg = f"I'll process a refund for order #{params.get('order_id', '?')}. Would you like me to proceed?"
         else:
             confirm_msg = f"I need your confirmation to perform: {action}. Proceed?"
 

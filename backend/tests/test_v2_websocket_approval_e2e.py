@@ -84,6 +84,59 @@ def read_next_agent_response(websocket, timeout_cycles=15) -> dict:
     raise TimeoutError("Did not receive agent_response within expected cycles")
 
 
+@pytest.mark.parametrize("rpc_succeeds", [False, True])
+def test_compound_handoff_confirms_only_after_rpc(monkeypatch, rpc_succeeds):
+    from app.escalation import service
+    from app.websocket import chat_handler
+
+    session_id = str(uuid.uuid4())
+    turn_id = uuid.uuid4()
+    db = MagicMock()
+
+    def finish_transition():
+        session = session_store[session_id]
+        assert session["mode"] == "ai"
+        assert all(item["role"] != "agent" for item in session["conversation_history"])
+        if not rpc_succeeds:
+            raise TimeoutError("Escalation RPC outcome unknown")
+        return MagicMock(data={"status": "success"})
+
+    db.rpc.return_value.execute.side_effect = finish_transition
+    monkeypatch.setattr(service, "supabase", db)
+    graph = AsyncMock(return_value={
+        "response": "I’m connecting you to a specialist.",
+        "intent": "technical_support",
+        "guardian_action": "create_ticket",
+        "guardian_ticket_id": 786,
+        "workflow_state": {"active_domain": "product", "product_state": {}},
+        "escalated": True,
+    })
+    alerts = AsyncMock()
+    monkeypatch.setattr(chat_handler.domain_support_graph, "ainvoke", graph)
+    monkeypatch.setattr(chat_handler.manager, "broadcast_to_all_agents", alerts)
+
+    with TestClient(app).websocket_connect(
+        f"/ws/chat/{session_id}?token={generate_customer_token()}"
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "system"
+        websocket.send_json({"message": "The device does not turn on", "client_request_id": str(turn_id)})
+        response = read_next_agent_response(websocket)
+        assert response["type"] == "agent_response"
+        assert response["escalated"] is rpc_succeeds
+        saved = asyncio.run(session_store.get_session(session_id))
+        assert saved["mode"] == ("human" if rpc_succeeds else "ai")
+        assert saved["conversation_history"][-1]["escalated"] is rpc_succeeds
+        if not rpc_succeeds:
+            assert "Ticket #786 was created" in response["message"]
+            assert "couldn’t confirm" in response["message"]
+
+    args = db.rpc.call_args.args[1]
+    assert args["p_client_request_id"] == str(uuid.uuid5(turn_id, f"escalate_session:{session_id}"))
+    assert args["p_payload"]["ticket_id"] == 786
+    db.table.assert_not_called()
+    assert alerts.await_count == int(rpc_succeeds)
+
+
 # ══════════════════════════════════════════════════════════════════
 # Scenario 1 — Proposal only
 # ══════════════════════════════════════════════════════════════════

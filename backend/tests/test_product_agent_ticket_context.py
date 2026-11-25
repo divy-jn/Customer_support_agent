@@ -66,6 +66,7 @@ async def test_product_agent_constructs_ticket_context(mock_process, product_age
         customer_message="My order is 999 and my phone screen is broken.",
         semantic_intent="technical_support",
         customer_id=1,
+        client_request_id="test-turn-id",
         workflow_state=state
     )
     
@@ -80,6 +81,7 @@ async def test_product_agent_constructs_ticket_context(mock_process, product_age
     assert ticket_ctx.active_ticket_id == 50
     assert ticket_ctx.order_id == 999
     assert ticket_ctx.product_name == "Phone"
+    assert ticket_ctx.client_request_id == "test-turn-id"
     
     # Assert result propagates to state
     assert res.workflow_state.product_state.active_ticket_id == 101

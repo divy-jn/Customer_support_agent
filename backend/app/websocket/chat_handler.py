@@ -142,6 +142,42 @@ async def get_all_active_sessions() -> list:
     ]
 
 
+async def _confirm_graph_handoff(result, session_id, customer_id, client_request_id, message):
+    from app.escalation.service import EscalationRequest, EscalationService
+
+    ticket_id = result.get("guardian_ticket_id")
+    workflow = result.get("workflow_state") or {}
+    domain_state = workflow.get(f"{workflow.get('active_domain')}_state") or {}
+    ticket_id = ticket_id or domain_state.get("active_ticket_id")
+    try:
+        turn_id = uuid.UUID(client_request_id)
+        request = EscalationRequest(
+            customer_id=customer_id,
+            session_id=session_id,
+            client_request_id=(
+                uuid.uuid5(turn_id, f"escalate_session:{session_id}")
+                if result.get("guardian_action") == "create_ticket" else turn_id
+            ),
+            ticket_id=ticket_id,
+            sentiment=result.get("sentiment", "negative"),
+            urgency=result.get("urgency", "high"),
+            last_message=message,
+            customer_notification_required=True,
+        )
+        outcome = await asyncio.to_thread(EscalationService.escalate_session, request)
+        if outcome.is_success or outcome.status == "bypassed":
+            return True, None
+        logger.warning("Handoff could not be confirmed for session %s: %s", session_id, outcome.status)
+    except Exception:
+        logger.exception("Handoff could not be confirmed for session %s", session_id)
+
+    if result.get("guardian_action") == "create_ticket" and result.get("guardian_ticket_id"):
+        return False, f"Ticket #{ticket_id} was created, but I couldn’t confirm the live handoff right now."
+    if result.get("intent") in {"refund", "refund_request", "process_refund"}:
+        return False, "A payment specialist needs to review this refund request. I couldn’t confirm the live handoff right now."
+    return False, "I couldn’t confirm the live handoff right now. Please try again."
+
+
 async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None, authenticated_customer_id: int | None = None):
     """
     Main handler for customer WebSocket connections.
@@ -955,7 +991,19 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
 
                 # We still re-check mode but the whole mutation must be atomic
                 raw_response = result.get("response", "I'm sorry, I couldn't process your request.")
-                is_escalated = result.get("escalated", False)
+                handoff_requested = bool(result.get("escalated"))
+                is_escalated = False
+                if handoff_requested:
+                    is_escalated, handoff_failure = await _confirm_graph_handoff(
+                        result, session_id, customer_id, client_request_id, message,
+                    )
+                    if handoff_failure:
+                        raw_response = handoff_failure
+                        workflow = result.get("workflow_state")
+                        if workflow and workflow.get("global_status") == "escalated":
+                            previous_status = (session.get("workflow_state") or {}).get("global_status")
+                            result["workflow_state"] = {**workflow, "global_status": previous_status or "in_progress"}
+
                 emit_workflow_turn({
                     "session_id": session_id,
                     "customer_id": customer_id,
@@ -974,7 +1022,10 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     "approval_status": "pending" if result.get("pending_approval") else None,
                     "escalated": is_escalated,
                     "latency_ms": round((time.perf_counter() - turn_started) * 1000, 1),
-                    "outcome": "approval_proposed" if result.get("pending_approval") else "response_generated",
+                    "outcome": (
+                        "handoff_unconfirmed" if handoff_requested and not is_escalated
+                        else "approval_proposed" if result.get("pending_approval") else "response_generated"
+                    ),
                 })
 
                 # ── Output Guardrails ──
@@ -999,8 +1050,10 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 )
 
                 def _apply_graph_result(s):
-                    if s.get("mode") == "human":
-                        return False # do not save, human took over
+                    if s.get("mode") == "human" and not is_escalated:
+                        return False
+                    if is_escalated:
+                        s["mode"] = "human"
                     
                     if p:
                         s["pending_approval"] = p
@@ -1021,6 +1074,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     agent_entry = {
                         "role": "agent",
                         "content": response_text,
+                        "escalated": is_escalated,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                     if p and is_proposal_turn:
@@ -1036,7 +1090,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
 
                 try:
                     # NEVER blindly merge arbitrary typed domain state. 
-                    session, was_changed = await _mutate_session(session_id, _apply_graph_result, allow_retry=False, customer_id=customer_id)
+                    session, was_changed = await _mutate_session(session_id, _apply_graph_result, allow_retry=is_escalated, customer_id=customer_id)
                     if not was_changed:
                         logger.info(f"AI response discarded for {session_id} - agent took over during processing.")
                         continue
@@ -1083,67 +1137,16 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     **response_payload,
                 }, session_id)
 
-                # If escalated, trigger transactional EscalationService
-                if is_escalated and customer_id is not None:
-                    from app.escalation.service import EscalationService, EscalationRequest, IdempotencyConflict
-                    
-                    ticket_id = result.get("guardian_ticket_id")
-                    ws_state = result.get("workflow_state", {})
-                    if ws_state.get("active_domain") == "product" and ws_state.get("product_state"):
-                        ticket_id = ws_state["product_state"].get("active_ticket_id")
-                    elif ws_state.get("active_domain") == "order" and ws_state.get("order_state"):
-                        ticket_id = ws_state["order_state"].get("active_ticket_id")
-                    elif ws_state.get("active_domain") == "payment" and ws_state.get("payment_state"):
-                        ticket_id = ws_state["payment_state"].get("active_ticket_id")
-                        
-                    if not client_request_id:
-                        logger.error(f"Missing client_request_id for escalation in session {session_id}")
-                        await manager.send_personal_message({
-                            "type": "error",
-                            "message": "Missing client_request_id. Cannot perform escalation.",
-                            "agent_name": "System",
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        }, session_id)
-                        continue
-                        
-                    esc_req = EscalationRequest(
-                        customer_id=customer_id,
-                        session_id=session_id,
-                        client_request_id=uuid.UUID(client_request_id),
-                        ticket_id=ticket_id,
-                        sentiment=result.get("sentiment", "negative"),
-                        urgency=result.get("urgency", "high"),
-                        last_message=message,
-                        customer_notification_required=True
-                    )
-                    
-                    try:
-                        esc_res = await asyncio.to_thread(EscalationService.escalate_session, esc_req)
-                        
-                        if esc_res.is_success or getattr(esc_res, 'status', None) == "bypassed":
-                            def _escalate_mode(s):
-                                if s.get("mode") != "human":
-                                    s["mode"] = "human"
-                                    return True
-                                return False
-                            session, _ = await _mutate_session(session_id, _escalate_mode, allow_retry=True, customer_id=customer_id)
-                            
-                        # Send escalation alert to ALL dashboard agents so they can pick it up
-                        escalation_msg = {
-                            "type": "escalation_alert",
-                            "session_id": session_id,
-                            "customer_id": customer_id,
-                            "sentiment": result.get("sentiment", "negative"),
-                            "urgency": result.get("urgency", "high"),
-                            "last_message": message,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        }
-                        await manager.broadcast_to_all_agents(escalation_msg)
-                        
-                    except IdempotencyConflict as ic:
-                        logger.warning(f"Idempotency conflict on escalation for session {session_id}: {ic}")
-                    except Exception as e:
-                        logger.error(f"Failed to execute escalation service for session {session_id}: {e}")
+                if is_escalated:
+                    await manager.broadcast_to_all_agents({
+                        "type": "escalation_alert",
+                        "session_id": session_id,
+                        "customer_id": customer_id,
+                        "sentiment": result.get("sentiment", "negative"),
+                        "urgency": result.get("urgency", "high"),
+                        "last_message": message,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
 
             except Exception as e:
                 logger.error(f"LangGraph error for session {session_id}: {e}")

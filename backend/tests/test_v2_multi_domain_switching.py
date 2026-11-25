@@ -175,7 +175,7 @@ class TestDirectedDomainTransitions:
     async def test_product_to_payment_transition(
         self, mock_classify, mock_cases, monkeypatch
     ):
-        """3. Product -> Payment: Product is suspended, refund proposed without mutation."""
+        """3. Product -> Payment: Product is suspended, refund needs specialist review."""
         monkeypatch.setattr(settings, "agent_architecture_mode", "v2_all")
         mock_classify.return_value = _route("payment", "refund")
 
@@ -206,9 +206,8 @@ class TestDirectedDomainTransitions:
         assert ws["active_domain"] == OrchestrationDomain.PAYMENT.value
         assert OrchestrationDomain.PRODUCT.value in ws["suspended_domains"]
         assert ws["product_state"]["domain_status"] == DomainWorkflowStatus.SUSPENDED.value
-        assert res["pending_approval"] is not None
-        assert res["pending_approval"]["action"] == "process_refund"
-        assert res["pending_approval"]["params"]["order_id"] == 3003
+        assert res["pending_approval"] is None
+        assert "specialist" in res["response"] and "#3003" in res["response"]
 
     @pytest.mark.asyncio
     @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')
@@ -269,7 +268,7 @@ class TestDirectedDomainTransitions:
     async def test_order_to_payment_transition(
         self, mock_classify, mock_cases, monkeypatch
     ):
-        """5. Order -> Payment: Order is suspended with order_id, Payment proposes refund."""
+        """5. Order -> Payment: Order is suspended with order_id, refund needs specialist review."""
         monkeypatch.setattr(settings, "agent_architecture_mode", "v2_all")
         mock_classify.return_value = _route("payment", "refund")
 
@@ -299,7 +298,8 @@ class TestDirectedDomainTransitions:
         assert ws["active_domain"] == OrchestrationDomain.PAYMENT.value
         assert OrchestrationDomain.ORDER.value in ws["suspended_domains"]
         assert ws["order_state"]["order_id"] == "5005"
-        assert res["pending_approval"]["action"] == "process_refund"
+        assert res["pending_approval"] is None
+        assert "specialist" in res["response"] and "#5005" in res["response"]
 
     @pytest.mark.asyncio
     @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"cases": []}')

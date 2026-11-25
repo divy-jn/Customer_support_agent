@@ -19,6 +19,7 @@ class IssueContext(BaseModel):
     product_name: str | None = None
     urgency: str = "medium"
     sentiment: str = "neutral"
+    client_request_id: str | None = None
 
 class TicketLifecycleResult(BaseModel):
     action: Literal["CREATED", "UPDATED", "IGNORED", "FAILED"]
@@ -253,7 +254,8 @@ class TicketLifecycleService:
                 sentiment=sentiment,
                 order_id=context.order_id,
                 product_name=context.product_name,
-                active_ticket_id=active_ticket_id
+                active_ticket_id=active_ticket_id,
+                client_request_id=context.client_request_id
             )
         elif active_ticket_id is not None:
             raise ValueError("active_ticket_id must not be passed separately when using TicketContext")
@@ -272,6 +274,19 @@ class TicketLifecycleService:
                 timestamp=datetime.now(timezone.utc)
             )
             
+        if not (context.client_request_id or "").strip():
+            return TicketLifecycleResult(
+                action="FAILED",
+                ticket_id=None,
+                customer_id=context.customer_id,
+                order_id=context.order_id,
+                issue_type=None,
+                status=None,
+                matched_existing=False,
+                reason="client_request_id is required for ticket mutations.",
+                timestamp=datetime.now(timezone.utc),
+            )
+
         try:
             # 2. Find existing ticket
             existing = cls._find_matching_ticket(context)
@@ -291,7 +306,8 @@ class TicketLifecycleService:
                     customer_id=context.customer_id, 
                     priority=priority_update,
                     description_append=context.message,
-                    order_id=order_update
+                    order_id=order_update,
+                    client_request_id=context.client_request_id
                 )
                 
                 resp_json = json.loads(resp_str)
@@ -318,9 +334,6 @@ class TicketLifecycleService:
                 ticket_type = cls._map_to_ticket_type(context.intent)
                 priority = cls._map_to_priority(context.urgency.value, context.sentiment.value)
                 
-                # #review: create_ticket in tools.py requires client_request_id for outbox idempotency.
-                # If client_request_id is not passed here, create_ticket returns an error response
-                # causing process_issue to fail.
                 resp_str = create_ticket(
                     customer_id=context.customer_id,
                     subject=subject,
@@ -328,7 +341,8 @@ class TicketLifecycleService:
                     ticket_type=ticket_type,
                     priority=priority,
                     channel="chat",
-                    order_id=context.order_id
+                    order_id=context.order_id,
+                    client_request_id=context.client_request_id
                 )
                 
                 resp_json = json.loads(resp_str)

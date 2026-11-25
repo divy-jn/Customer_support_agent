@@ -2,7 +2,7 @@
 
 Covers all 20 enumerated cases required by PROMPT 4:
 1. V2 cancellation proposal creates an approval without mutating the order.
-2. V2 refund proposal creates an approval without processing the refund.
+2. V2 refund requests require specialist review.
 3. Valid confirmation executes the exact approved action once.
 4. Confirmation without a pending approval does not execute a tool.
 5. A different customer's token cannot approve another customer's operation.
@@ -104,8 +104,7 @@ async def test_v2_cancellation_proposal_creates_approval_without_mutating_order(
 
 @pytest.mark.asyncio
 @patch("app.agents.payment_agent.get_payment_record")
-async def test_v2_refund_proposal_creates_approval_without_processing_refund(mock_payment):
-    """Case 2: V2 refund proposal creates an approval without processing the refund."""
+async def test_v2_refund_requires_specialist_review_without_approval(mock_payment):
     state = {
         "message": "I would like a refund for order #202",
         "intent": "process_refund",
@@ -114,18 +113,10 @@ async def test_v2_refund_proposal_creates_approval_without_processing_refund(moc
     }
     result = await handle_payment_request(state)
 
-    assert "initiate a refund for order #202" in result["response"]
+    assert "specialist" in result["response"] and "#202" in result["response"]
+    assert result["requires_human"]
     assert result["escalated"] is False
-    assert "pending_approval" in result
-
-    pending = result["pending_approval"]
-    assert pending["action"] == "process_refund"
-    assert pending["params"] == {"order_id": 202}
-    assert pending["customer_id"] == 9
-    assert pending["session_id"] == "sess-pay-1"
-    assert pending["status"] == ApprovalStatus.PENDING.value
-    # Must be a valid UUID string matching database schema idempotency_records.client_request_id UUID
-    assert uuid.UUID(pending["operation_key"])
+    assert result["pending_approval"] is None
     mock_payment.assert_not_called()
 
 

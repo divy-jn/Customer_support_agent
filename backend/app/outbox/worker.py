@@ -305,11 +305,21 @@ def render_notification(notification_type: str, payload: dict) -> tuple[str, str
     subject = f"Notification: {notification_type}"
     body = "<html><body>"
     
-    if notification_type in ("TICKET_CREATED", "TICKET_UPDATED", "TICKET_RESOLVED", "ESCALATION_TEAM"):
+    if notification_type in ("TICKET_CREATED", "TICKET_UPDATED", "TICKET_RESOLVED"):
         if "ticket_id" not in payload:
             raise ValueError(f"Missing required field 'ticket_id' for {notification_type}")
         subject = payload.get("subject") or f"Update on Ticket #{payload['ticket_id']}"
         body += f"<h1>Ticket #{escape(str(payload['ticket_id']), quote=True)}</h1>"
+        if notification_type == "TICKET_CREATED":
+            for field, label in (("customer_name", "Customer"), ("description", "Description"), ("priority", "Priority")):
+                if payload.get(field):
+                    body += f"<p>{label}: {escape(str(payload[field]), quote=True)}</p>"
+    elif notification_type == "ESCALATION_TEAM":
+        subject = payload.get("subject") or "Customer support handoff"
+        body += "<h1>Customer support handoff</h1>"
+        for field, label in (("session_id", "Session"), ("ticket_id", "Ticket"), ("urgency", "Urgency")):
+            if payload.get(field) is not None:
+                body += f"<p>{label}: {escape(str(payload[field]), quote=True)}</p>"
     elif notification_type == "ESCALATION_CUSTOMER":
         subject = payload.get("subject", "Update regarding your support request")
         body += "<h1>Support Escalation Update</h1>"
@@ -485,34 +495,27 @@ class OutboxWorker:
             conn = psycopg2.connect(self.dsn)
             conn.autocommit = False
 
-            # 1. Atomically claim a batch
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(CLAIM_SQL, (self.batch_size,))
-                claimed_rows = cur.fetchall()
-            conn.commit()
+            processed = 0
+            for _ in range(self.batch_size):
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(CLAIM_SQL, (1,))
+                    row = cur.fetchone()
+                conn.commit()
+                if row is None:
+                    break
 
-            if not claimed_rows:
-                return 0
-
-            logger.info(
-                "Claimed %d outbox rows",
-                len(claimed_rows),
-                extra={"worker_id": self.worker_id},
-            )
-
-            # 2. Process each claimed row with poison-pill isolation
-            for row in claimed_rows:
+                processed += 1
                 try:
                     self._process_row(conn, row)
-                except Exception as ex:
+                except Exception:
+                    conn.rollback()
                     logger.exception(
-                        "Unexpected error processing claimed row %s: %s",
+                        "Unexpected error processing claimed row %s",
                         row.get("event_id"),
-                        ex,
                         extra={"worker_id": self.worker_id, "event_id": str(row.get("event_id"))},
                     )
 
-            return len(claimed_rows)
+            return processed
 
         except Exception:
             if conn:

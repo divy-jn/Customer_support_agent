@@ -265,29 +265,6 @@ def create_ticket(
             return json.dumps({"error": "Failed to create ticket: RPC returned no data"})
             
         result = response.data
-        if "error" in result:
-            # #review: Idempotency conflict returned as JSON payload; client should check for IdempotencyConflict error key
-            if result.get("error") == "IdempotencyConflict":
-                pass
-            return json.dumps(result)
-
-        try:
-            from app.email_service import send_ticket_created_email
-            cust_info = supabase.table("customers").select("name, email").eq("id", customer_id).execute()
-            c_name = cust_info.data[0].get("name", "Customer") if cust_info.data else "Customer"
-            c_email = cust_info.data[0].get("email", "customer@example.com") if cust_info.data else "customer@example.com"
-            ticket_id_created = result.get("ticket_id") or result.get("id") or 0
-            send_ticket_created_email(
-                customer_email=c_email,
-                customer_name=c_name,
-                ticket_id=ticket_id_created,
-                subject=subject,
-                description=description,
-                priority=priority_enum.value
-            )
-        except Exception as e:
-            logger.warning(f"Could not dispatch ticket created email: {e}")
-
         return json.dumps(result)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -498,42 +475,15 @@ def get_payment_record(order_id: int, customer_id: int | None = None) -> str:
                 .limit(1)
                 .execute()
             )
-            if response.data:
-                record = response.data[0]
-                if customer_id is not None and record.get("customer_id") != customer_id:
-                    return json.dumps({"error": f"Payment record for order #{order_id} not found or does not belong to you"})
-                return json.dumps(record, indent=2)
-        except Exception as pe:
-            logger.info(f"payment_records table lookup skipped or failed ({pe}); falling back to orders table")
+        except Exception:
+            logger.exception("Payment ledger lookup failed")
+            return json.dumps({"error": "Payment verification is temporarily unavailable"})
 
-        # Fallback to authoritative orders record with product pricing
-        ord_resp = (
-            supabase.table("orders")
-            .select("id, customer_id, status, order_date, products(price)")
-            .eq("id", order_id)
-            .limit(1)
-            .execute()
-        )
-        if not ord_resp.data:
-            return json.dumps({"error": f"Payment record for order #{order_id} not found"})
-        ord_item = ord_resp.data[0]
-        if customer_id is not None and ord_item.get("customer_id") != customer_id:
-            return json.dumps({"error": f"Payment record for order #{order_id} not found or does not belong to you"})
-
-        ord_status = ord_item.get("status", "unknown")
-        pay_status = "refunded" if ord_status == "refunded" else "paid"
-        price = (ord_item.get("products") or {}).get("price", 0.0)
-        record = {
-            "order_id": ord_item["id"],
-            "customer_id": ord_item.get("customer_id"),
-            "transaction_reference": f"TXN-{ord_item['id']}",
-            "status": pay_status,
-            "amount": price,
-            "currency": "USD",
-            "payment_method": "Credit Card",
-            "processed_at": ord_item.get("order_date"),
-        }
-        return json.dumps(record, indent=2)
+        if not response.data or (
+            customer_id is not None and response.data[0].get("customer_id") != customer_id
+        ):
+            return json.dumps({"error": "No verified payment record is available"})
+        return json.dumps(response.data[0], indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -580,11 +530,6 @@ def cancel_order(order_id: int, customer_id: int | None = None, client_request_i
         if customer_id is not None and order_record.get("customer_id") != customer_id:
             return json.dumps({"error": f"Order #{order_id} not found or does not belong to you"})
             
-        if order_record.get("status") != "active":
-            return json.dumps({
-                "error": f"Cannot cancel order #{order_id}. Current status: {order_record.get('status')}. Only active orders can be cancelled."
-            })
-
         actual_customer_id = order_record.get("customer_id")
         if actual_customer_id is None:
             return json.dumps({"error": f"Order #{order_id} has no associated customer"})
@@ -619,7 +564,7 @@ def cancel_order(order_id: int, customer_id: int | None = None, client_request_i
 @track_tool_call("process_refund")
 @_supabase_retry
 def process_refund(order_id: int, customer_id: int | None = None, client_request_id: str | None = None) -> str:
-    """Initiate a refund for an order. Must be cancelled or delivered."""
+    """Check the idempotent refund result for an owned order."""
     try:
         if not client_request_id:
             return json.dumps({"error": "client_request_id is required for mutating operations"})
@@ -635,11 +580,6 @@ def process_refund(order_id: int, customer_id: int | None = None, client_request
         if customer_id is not None and order_record.get("customer_id") != customer_id:
             return json.dumps({"error": f"Order #{order_id} not found or does not belong to you"})
             
-        if order_record.get("status") not in ("cancelled", "delivered"):
-            return json.dumps({
-                "error": f"Cannot refund order #{order_id}. Current status: {order_record.get('status')}. Order must be cancelled or delivered."
-            })
-
         actual_customer_id = order_record.get("customer_id")
         if actual_customer_id is None:
             return json.dumps({"error": f"Order #{order_id} has no associated customer"})
@@ -664,8 +604,9 @@ def process_refund(order_id: int, customer_id: int | None = None, client_request
             return json.dumps({"error": f"Failed to refund order #{order_id}: RPC returned no data"})
             
         result = rpc_resp.data
-        if "error" not in result:
-            result["message"] = f"Refund initiated for order #{order_id}. The refund will be processed within 5-7 business days."
+        if result.get("status") == "success" and "error" not in result:
+            # Historical success rows record an order flag, without provider confirmation.
+            return json.dumps({"error": "Refund could not be verified; payment specialist review required"})
         return json.dumps(result)
     except Exception as e:
         return json.dumps({"error": str(e)})
