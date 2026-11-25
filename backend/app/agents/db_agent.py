@@ -83,11 +83,10 @@ Do NOT invent IDs.
             else:
                 params["order_id"] = result.order_id
         elif action == "create_ticket":
-            if not result.subject or not result.description:
+            if not result.subject or not result.description or not customer_id:
                 action = "missing_argument"
             else:
-                # #review: Defaulting customer_id to 1 if missing can assign tickets to wrong customer or leak account 1
-                params["customer_id"] = result.customer_id or customer_id or 1
+                params["customer_id"] = customer_id
                 params["subject"] = result.subject
                 params["description"] = result.description
         elif action == "get_ticket":
@@ -100,21 +99,11 @@ Do NOT invent IDs.
                 action = "missing_argument"
             else:
                 params["product_name"] = result.product_name
-        elif action == "get_chat_history":
-            if not (result.customer_id or customer_id):
+        elif action in {"get_chat_history", "get_customer_history", "lookup_customer"}:
+            if not customer_id:
                 action = "missing_argument"
-            else:
-                params["customer_id"] = result.customer_id or customer_id
-        elif action == "lookup_customer":
-            if not result.identifier:
-                action = "missing_argument"
-            else:
-                params["identifier"] = result.identifier
-        elif action == "get_customer_history":
-            if not (result.customer_id or customer_id):
-                action = "missing_argument"
-            else:
-                params["customer_id"] = result.customer_id or customer_id
+            elif action != "lookup_customer":
+                params["customer_id"] = customer_id
         elif action == "list_all_products":
             pass
             

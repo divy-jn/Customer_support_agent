@@ -78,12 +78,12 @@ class Settings(BaseSettings):
     reconciliation_batch_size: int = Field(default=100, alias="RECONCILIATION_BATCH_SIZE")
 
     # --- Email ---
-    gmail_address: str = Field(default="jdivy7151@gmail.com", alias="GMAIL_ADDRESS")  #review: hardcoded personal email in defaults
+    gmail_address: str = Field(default="", alias="GMAIL_ADDRESS")
     gmail_app_password: str = Field(default="", alias="GMAIL_APP_PASSWORD")
     support_team_email: str = Field(default="support@supportteam.com", alias="SUPPORT_TEAM_EMAIL")
     tech_team_email: str = Field(default="tech@supportteam.com", alias="TECH_TEAM_EMAIL")
-    from_email: str = Field(default="jdivy7151@gmail.com", alias="FROM_EMAIL")  #review: same hardcoded email
-    email_test_recipient: str | None = Field(default="pdfallen0@gmail.com", alias="EMAIL_TEST_RECIPIENT")  #review: test recipient should be None in prod
+    from_email: str = Field(default="", alias="FROM_EMAIL")
+    email_test_recipient: str | None = Field(default=None, alias="EMAIL_TEST_RECIPIENT")
 
     # --- Logging & Debug ---
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
@@ -228,6 +228,13 @@ class Settings(BaseSettings):
                     raise ValueError(
                         f"{name} must be at least 32 characters and must not use a demo/example value outside DEBUG_MODE"
                     )
+        if self.app_environment in {"staging", "production"}:
+            if self.email_test_recipient:
+                raise ValueError("EMAIL_TEST_RECIPIENT is permitted only in development or test")
+
+            secret = (self.approval_signing_secret or "").strip()
+            if len(secret) < 32 or "change-me" in secret.lower() or secret == self.jwt_secret:
+                raise ValueError("Configure a dedicated APPROVAL_SIGNING_SECRET of at least 32 characters")
         return self
 
     model_config = {

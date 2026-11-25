@@ -17,7 +17,7 @@ from app.config import settings
 from app.agents import intent_router, rag_agent, db_agent, web_agent, escalation_agent
 
 from app.tools import (
-    lookup_customer, get_customer_history, get_ticket, create_ticket,
+    get_customer_by_id, get_customer_history, get_ticket, create_ticket,
     update_ticket, track_order, cancel_order, process_refund, check_inventory,
     web_search, list_all_products, get_chat_history, send_ticket_email_to_customer,
     search_manufacturer_warranty, check_warranty_status
@@ -365,17 +365,22 @@ async def db_execute_node(state: AgentState) -> dict:
 def _execute_tool(action: str, params: dict, authenticated_customer_id: int | None, client_request_id: str | None = None) -> str:
     """Execute a database tool by name, injecting the authenticated customer_id securely."""
     try:
-        # Security Boundary: Force the customer_id for all customer-scoped actions
-        # This completely overwrites any customer_id the LLM tried to pass
-        if action in ["get_customer_history", "track_order", "cancel_order", "process_refund", "get_ticket", "create_ticket", "update_ticket", "send_ticket_email_to_customer", "check_warranty_status"]:
-            if authenticated_customer_id:
-                params["customer_id"] = authenticated_customer_id
+        if action in {
+            "lookup_customer", "get_chat_history", "get_customer_history", "track_order",
+            "cancel_order", "process_refund", "get_ticket", "create_ticket", "update_ticket",
+            "send_ticket_email_to_customer", "check_warranty_status",
+        }:
+            if type(authenticated_customer_id) is not int or authenticated_customer_id <= 0:
+                return json.dumps({"error": "Authenticated customer required"})
+            if action == "lookup_customer":
+                return get_customer_by_id(authenticated_customer_id)
+            if action == "get_chat_history":
+                return get_chat_history(customer_id=authenticated_customer_id)
+            params = {**params, "customer_id": authenticated_customer_id}
             if client_request_id and action in ["create_ticket", "update_ticket", "cancel_order", "process_refund", "send_ticket_email_to_customer"]:
                 params["client_request_id"] = client_request_id
             
-        if action == "lookup_customer":
-            return lookup_customer(**params)
-        elif action == "get_customer_history":
+        if action == "get_customer_history":
             return get_customer_history(customer_id=params.get("customer_id"))
         elif action == "get_ticket":
             return get_ticket(**params)
@@ -394,8 +399,6 @@ def _execute_tool(action: str, params: dict, authenticated_customer_id: int | No
             return update_ticket(**params)
         elif action == "list_all_products":
             return list_all_products(**params)
-        elif action == "get_chat_history":
-            return get_chat_history(**params)
         elif action == "send_ticket_email_to_customer":
             return send_ticket_email_to_customer(**params)
         elif action == "search_manufacturer_warranty":

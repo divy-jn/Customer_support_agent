@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { API_BASE } from "../lib/api";
+import { adminFetch } from "../lib/agent-auth";
 
 const PREDEFINED_MODELS = [
   "gemini-3.8-flash",
@@ -19,8 +20,11 @@ export function DynamicModelSettings() {
   const [saveStatus, setSaveStatus] = useState(null);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/v1/admin/llm-settings`)
-      .then((res) => res.json())
+    adminFetch(`${API_BASE}/api/v1/admin/llm-settings`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Model settings request failed (${res.status})`);
+        return res.json();
+      })
       .then((data) => {
         if (data && data.model) {
           setSettings({ model: data.model });
@@ -42,7 +46,7 @@ export function DynamicModelSettings() {
     setIsSaving(true);
     setSaveStatus(null);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/admin/llm-settings`, {
+      const res = await adminFetch(`${API_BASE}/api/v1/admin/llm-settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(settings),

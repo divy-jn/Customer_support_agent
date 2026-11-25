@@ -5,4 +5,13 @@ venv/
 chroma_db/
 knowledge_base/
 .env
+.env.*
+!.env.example
+token.json
+credentials.json
+**/token.json
+**/credentials.json
+logs/
+scratch/
+.pytest_cache/
 .DS_Store

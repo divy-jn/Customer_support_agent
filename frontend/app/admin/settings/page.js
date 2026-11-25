@@ -5,6 +5,7 @@ import { SkeletonCard } from "../../components/LoadingSkeleton";
 import { DynamicModelSettings } from "../../components/DynamicModelSettings";
 import { useToast } from "../../components/Toast";
 import { API_BASE } from "../../lib/api";
+import { adminFetch } from "../../lib/agent-auth";
 
 function ConfigRow({ label, description, value, valueColor, badge }) {
   return (
@@ -41,9 +42,10 @@ export default function SettingsPage() {
     const fetchData = async () => {
       try {
         const [infoRes, metricsRes] = await Promise.all([
-          fetch(`${API_BASE}/api/v1/admin/system-info`),
-          fetch(`${API_BASE}/api/v1/admin/metrics`).catch(() => null),
+          adminFetch(`${API_BASE}/api/v1/admin/system-info`),
+          adminFetch(`${API_BASE}/api/v1/admin/metrics`).catch(() => null),
         ]);
+        if (!infoRes.ok) throw new Error(`System info request failed (${infoRes.status})`);
         setInfo(await infoRes.json());
         if (metricsRes?.ok) setMetrics(await metricsRes.json());
       } catch (err) {

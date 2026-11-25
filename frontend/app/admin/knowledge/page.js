@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 import { SkeletonCard } from "../../components/LoadingSkeleton";
 import EmptyState from "../../components/EmptyState";
 import { useToast } from "../../components/Toast";
 import { API_BASE } from "../../lib/api";
+import { adminFetch } from "../../lib/agent-auth";
 
 export default function KnowledgeBasePage() {
   const [docs, setDocs] = useState([]);
@@ -16,7 +18,8 @@ export default function KnowledgeBasePage() {
 
   const fetchDocs = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/admin/knowledge-base`);
+      const res = await adminFetch(`${API_BASE}/api/v1/admin/knowledge-base`);
+      if (!res.ok) throw new Error(`Document list failed (${res.status})`);
       const data = await res.json();
       setDocs(data.documents || []);
     } catch (err) {
@@ -35,7 +38,7 @@ export default function KnowledgeBasePage() {
   const handleReingest = async () => {
     setReingesting(true);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/admin/knowledge-base/reingest`, {
+      const res = await adminFetch(`${API_BASE}/api/v1/admin/knowledge-base/reingest`, {
         method: "POST",
       });
       const data = await res.json();
@@ -43,7 +46,7 @@ export default function KnowledgeBasePage() {
         toast("Knowledge base successfully re-ingested into Pinecone!", "success");
         fetchDocs(); // Refresh the document list
       } else {
-        toast("Failed to re-ingest: " + (data.error || "Unknown error"), "error");
+        toast("Failed to re-ingest: " + (data.detail || data.error || "Unknown error"), "error");
       }
     } catch (err) {
       toast("Error triggering re-ingestion.", "error");
@@ -56,24 +59,13 @@ export default function KnowledgeBasePage() {
     setSelectedDoc(filename);
     setDocContent("Loading...");
     try {
-      const res = await fetch(`${API_BASE}/api/v1/admin/knowledge-base/${filename}`);
+      const res = await adminFetch(`${API_BASE}/api/v1/admin/knowledge-base/${filename}`);
+      if (!res.ok) throw new Error(`Document request failed (${res.status})`);
       const data = await res.json();
       setDocContent(data.content);
     } catch (err) {
       setDocContent("Failed to load document content.");
     }
-  };
-
-  // Simple markdown rendering for preview
-  const renderSimpleMarkdown = (text) => {
-    if (!text) return text;
-    return text
-      .replace(/^### (.*$)/gm, '<h3 style="font-size:14px;font-weight:700;color:var(--text-primary);margin:16px 0 8px;">$1</h3>')
-      .replace(/^## (.*$)/gm, '<h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:20px 0 10px;">$1</h2>')
-      .replace(/^# (.*$)/gm, '<h1 style="font-size:20px;font-weight:700;color:var(--text-primary);margin:24px 0 12px;">$1</h1>')
-      .replace(/\*\*(.*?)\*\*/g, '<strong style="color:var(--text-primary);">$1</strong>')
-      .replace(/^[-•]\s+(.*)$/gm, '<div style="display:flex;gap:8px;margin:4px 0;"><span style="color:var(--accent);">•</span><span>$1</span></div>')
-      .replace(/\n/g, '<br/>');
   };
 
   // Total KB size
@@ -183,7 +175,7 @@ export default function KnowledgeBasePage() {
                     <div className="w-6 h-6 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
                   </div>
                 ) : (
-                  <div dangerouslySetInnerHTML={{ __html: renderSimpleMarkdown(docContent) }} />
+                  <ReactMarkdown skipHtml>{docContent ?? ""}</ReactMarkdown>
                 )}
               </div>
             </>
