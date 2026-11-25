@@ -71,15 +71,28 @@ class TestPhase2Security:
     def test_customer_can_search_self_only(self, customer_token, mocker):
         headers = {"Authorization": f"Bearer {customer_token}"}
         
-        # Mock lookup to return two customers
-        mock_data = '[{"id": 123, "name": "Me"}, {"id": 456, "name": "Other"}]'
-        mocker.patch("app.routes.lookup_customer", return_value=mock_data)
+        staff_lookup = mocker.patch("app.routes.lookup_customer")
+        self_lookup = mocker.patch(
+            "app.routes.get_customer_by_id", return_value='{"id":123,"email":"me@test.local"}'
+        )
         
         resp = client.get("/api/v1/customers/search?q=test", headers=headers)
         assert resp.status_code == 200
-        # Should filter out id=456 because token is for 123
         assert len(resp.json()) == 1
         assert resp.json()[0]["id"] == 123
+        assert client.get("/api/v1/customers/search?q=other", headers=headers).json() == []
+        assert self_lookup.call_args_list[0].args == (123,)
+        assert self_lookup.call_args_list[1].args == (123,)
+        staff_lookup.assert_not_called()
+
+    def test_agent_can_search_customers(self, agent_token, mocker):
+        lookup = mocker.patch("app.routes.lookup_customer", return_value='[{"id":456}]')
+        response = client.get(
+            "/api/v1/customers/search?q=other", headers={"Authorization": f"Bearer {agent_token}"}
+        )
+        assert response.status_code == 200
+        assert response.json() == [{"id": 456}]
+        lookup.assert_called_once_with("other")
 
     def test_customer_cannot_access_other_customer_history(self, customer_token, other_customer_token):
         headers = {"Authorization": f"Bearer {customer_token}"}

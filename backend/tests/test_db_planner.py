@@ -71,3 +71,12 @@ def test_planner_check_inventory(mock_llm_chain):
     result = determine_db_action("Do you have Wireless Mouse in stock?", "product_inquiry", None)
     assert result["action"] == "check_inventory"
     assert result["params"] == {"product_name": "Wireless Mouse"}
+
+
+@pytest.mark.parametrize("action", ["get_chat_history", "get_customer_history", "create_ticket"])
+def test_planner_ignores_model_customer_id(mock_llm_chain, action):
+    mock_llm_chain.invoke.return_value = DBPlannerOutput(
+        action=action, customer_id=456, subject="Help", description="Please help"
+    )
+    assert determine_db_action("Help", "support", 123)["params"]["customer_id"] == 123
+    assert determine_db_action("Help", "support", None) == {"action": "missing_argument", "params": {}}

@@ -11,6 +11,7 @@ def _settings(**overrides):
         # Do not inherit CI or developer-machine static credentials in config tests.
         "AGENT_SECRET": "",
         "ADMIN_API_KEY": "",
+        "EMAIL_TEST_RECIPIENT": "",
         "_env_file": None,
     }
     values.update(overrides)
@@ -120,9 +121,39 @@ def test_production_accepts_explicit_strong_secrets_and_database_password():
         APP_ENVIRONMENT="production",
         DEBUG_MODE=False,
         JWT_SECRET="unit-test-strong-secret-with-32-plus-characters",
+        APPROVAL_SIGNING_SECRET="unit-test-dedicated-approval-secret-long-enough",
         DATABASE_PASSWORD="explicit-db-password",
         AGENT_SECRET="",
         ADMIN_API_KEY="",
     )
     assert settings.app_environment == "production"
     assert settings.debug_mode is False
+
+
+@pytest.mark.parametrize("environment", ["production", "staging"])
+def test_hosted_environments_reject_email_redirect(environment):
+    with pytest.raises(ValidationError, match="EMAIL_TEST_RECIPIENT"):
+        _settings(
+            APP_ENVIRONMENT=environment,
+            DEBUG_MODE=False,
+            DATABASE_PASSWORD="explicit-db-password",
+            JWT_SECRET="unit-test-strong-secret-with-32-plus-characters",
+            APPROVAL_SIGNING_SECRET="unit-test-dedicated-approval-secret-long-enough",
+            EMAIL_TEST_RECIPIENT="test-inbox@example.com",
+        )
+
+
+@pytest.mark.parametrize("environment", ["production", "staging"])
+@pytest.mark.parametrize("secret", [
+    "", "short-secret", "example-approval-secret-change-me-long-enough",
+    "unit-test-strong-secret-with-32-plus-characters",
+])
+def test_hosted_environments_require_dedicated_approval_secret(environment, secret):
+    with pytest.raises(ValidationError, match="APPROVAL_SIGNING_SECRET"):
+        _settings(
+            APP_ENVIRONMENT=environment,
+            DEBUG_MODE=False,
+            DATABASE_PASSWORD="explicit-db-password",
+            JWT_SECRET="unit-test-strong-secret-with-32-plus-characters",
+            APPROVAL_SIGNING_SECRET=secret,
+        )

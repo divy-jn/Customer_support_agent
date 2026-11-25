@@ -53,11 +53,10 @@ def send_email(to: str, subject: str, body: str, is_html: bool = True) -> str:
         else:
             message.set_content(body)
             
-        # Development guard: redirect outgoing emails to email_test_recipient if configured
-        if settings.email_test_recipient:
-            message["To"] = settings.email_test_recipient
-        else:
-            message["To"] = to
+        test_recipient = (
+            settings.email_test_recipient if settings.app_environment in {"development", "test"} else None
+        )
+        message["To"] = test_recipient or to
         message["From"] = settings.from_email or settings.gmail_address
         message["Subject"] = subject
 

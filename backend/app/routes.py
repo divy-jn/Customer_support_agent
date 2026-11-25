@@ -8,7 +8,10 @@ import json
 import uuid
 import asyncio
 
-from app.dependencies import verify_admin_key, verify_agent_token, verify_customer_token, verify_any_token
+from app.dependencies import (
+    verify_admin_key, verify_agent_token, verify_customer_token, verify_any_token,
+    verify_operator_access,
+)
 from app.config import settings
 
 # ──────────────────────────────────────────────
@@ -24,7 +27,7 @@ class DevLoginRequest(BaseModel):
 # Move dev_login below
 
 from app.tools import (
-    lookup_customer, get_customer_history, get_ticket, create_ticket,
+    lookup_customer, get_customer_by_id, get_customer_history, get_ticket, create_ticket,
     update_ticket, track_order, cancel_order, process_refund,
     check_inventory, get_dashboard_stats, get_all_customers, get_all_tickets,
     check_llm_health, check_vectordb_health, check_supabase_health,
@@ -94,15 +97,18 @@ async def search_customer(q: str, auth_user: dict = Depends(verify_any_token)):
     """Search for a customer by name or email."""
     if not q or not q.strip():
         raise HTTPException(status_code=400, detail="Search query cannot be empty")
-    result = lookup_customer(q)
-    data = json.loads(result)
+    if auth_user["role"] == "customer":
+        customer = json.loads(get_customer_by_id(auth_user["id"]))
+        if customer.get("id") != auth_user["id"]:
+            return []
+        query = q.casefold()
+        return [customer] if any(
+            query in (customer.get(field) or "").casefold() for field in ("name", "email")
+        ) else []
+
+    data = json.loads(lookup_customer(q))
     if isinstance(data, dict) and "error" in data:
         raise HTTPException(status_code=400, detail=data["error"])
-        
-    if auth_user.get("role") == "customer":
-        customer_id = auth_user.get("id")
-        data = [c for c in data if c.get("id") == customer_id]
-        
     return data
 
 
@@ -312,7 +318,7 @@ async def active_sessions(_: bool = Depends(verify_agent_token)):
 # ──────────────────────────────────────────────
 
 @router.get("/admin/health")
-async def admin_health_check(_: bool = Depends(verify_admin_key)):
+async def admin_health_check(_: bool = Depends(verify_operator_access)):
     """Aggregated health check for all services."""
     llm = check_llm_health()
     vectordb = check_vectordb_health()
@@ -335,7 +341,7 @@ async def admin_health_check(_: bool = Depends(verify_admin_key)):
 
 
 @router.get("/admin/system-info")
-async def admin_system_info(_: bool = Depends(verify_admin_key)):
+async def admin_system_info(_: bool = Depends(verify_operator_access)):
     """Get system configuration and version info."""
     return get_system_info()
 
@@ -395,7 +401,7 @@ async def admin_get_logs(level: str = None, search: str = None, limit: int = 100
 from app.middleware.tracking import get_aggregate_metrics
 
 @router.get("/admin/metrics")
-async def admin_get_metrics(_: bool = Depends(verify_admin_key)):
+async def admin_get_metrics(_: bool = Depends(verify_operator_access)):
     """Get aggregate LLM, tool, and guardrail metrics for the admin dashboard."""
     return get_aggregate_metrics()
 
@@ -403,7 +409,7 @@ async def admin_get_metrics(_: bool = Depends(verify_admin_key)):
 from app.websocket.connection import get_connection_metrics
 
 @router.get("/admin/connections")
-async def admin_get_connection_metrics(_: bool = Depends(verify_admin_key)):
+async def admin_get_connection_metrics(_: bool = Depends(verify_operator_access)):
     """Get WebSocket connection metrics."""
     return get_connection_metrics()
 

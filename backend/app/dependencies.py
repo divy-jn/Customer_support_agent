@@ -1,6 +1,7 @@
 """Authentication & authorization dependency functions for FastAPI routes/websockets."""
 
 from fastapi import Depends, HTTPException, status, Header, Query, WebSocket, WebSocketException
+from hmac import compare_digest
 from typing import Optional
 import jwt
 from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
@@ -19,33 +20,45 @@ def _validate_websocket_origin(websocket: WebSocket) -> None:
             reason="Untrusted WebSocket origin",
         )
 
+def _verify_admin_access(
+    x_api_key: str | None, authorization: str | None, *, allow_agent: bool = False
+) -> bool:
+    if settings.admin_api_key and x_api_key and compare_digest(
+        x_api_key.encode(), settings.admin_api_key.encode()
+    ):
+        return True
+
+    if authorization and authorization.lower().startswith("bearer "):
+        candidate = authorization.split(" ", 1)[1].strip()
+        try:
+            payload = jwt.decode(candidate, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        except InvalidTokenError:
+            pass
+        else:
+            role = payload.get("role")
+            if role == "admin" or (allow_agent and role == "agent"):
+                return True
+            raise HTTPException(status_code=403, detail="Insufficient role")
+
+    raise HTTPException(
+        status_code=401,
+        detail="Valid authentication is required",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
 def verify_admin_key(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ) -> bool:
-    """Verify the admin API key from headers, or fall back to a valid agent/admin JWT."""
-    # 1. Check static admin API key
-    if settings.admin_api_key and x_api_key == settings.admin_api_key:
-        return True
+    return _verify_admin_access(x_api_key, authorization)
 
-    # 2. Fall back to agent/admin JWT (allows the frontend dashboard to authenticate)
-    if authorization and authorization.lower().startswith("bearer "):
-        candidate = authorization.split(" ", 1)[1].strip()
-        try:
-            payload = jwt.decode(
-                candidate,
-                settings.jwt_secret,
-                algorithms=[settings.jwt_algorithm],
-            )
-            if payload.get("role") in ("agent", "admin"):
-                return True
-        except (InvalidTokenError, ExpiredSignatureError):
-            pass
 
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Valid admin API key or agent authentication is required",
-    )
+def verify_operator_access(
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+) -> bool:
+    return _verify_admin_access(x_api_key, authorization, allow_agent=True)
 
 def verify_agent_token(
     x_agent_token: Optional[str] = Header(None, alias="X-Agent-Token"),

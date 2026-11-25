@@ -36,6 +36,15 @@ export async function getAgentToken({ forceRefresh = false } = {}) {
   return data.access_token;
 }
 
+export async function adminFetch(url, init = {}) {
+  const token = localStorage.getItem(AGENT_TOKEN_KEY);
+  if (!token) throw new Error("Sign in as an administrator to use this page.");
+
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  return fetch(url, { ...init, headers });
+}
+
 export async function agentFetch(url, init = {}) {
   let token = await getAgentToken();
   const send = (accessToken) =>

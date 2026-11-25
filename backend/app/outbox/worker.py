@@ -59,6 +59,7 @@ import re
 import time
 import uuid
 from datetime import datetime, timezone
+from html import escape
 from typing import Optional, Callable
 
 import psycopg2
@@ -308,7 +309,7 @@ def render_notification(notification_type: str, payload: dict) -> tuple[str, str
         if "ticket_id" not in payload:
             raise ValueError(f"Missing required field 'ticket_id' for {notification_type}")
         subject = payload.get("subject") or f"Update on Ticket #{payload['ticket_id']}"
-        body += f"<h1>Ticket #{payload['ticket_id']}</h1>"
+        body += f"<h1>Ticket #{escape(str(payload['ticket_id']), quote=True)}</h1>"
     elif notification_type == "ESCALATION_CUSTOMER":
         subject = payload.get("subject", "Update regarding your support request")
         body += "<h1>Support Escalation Update</h1>"
@@ -316,15 +317,15 @@ def render_notification(notification_type: str, payload: dict) -> tuple[str, str
         if "order_id" not in payload:
             raise ValueError(f"Missing required field 'order_id' for {notification_type}")
         subject = payload.get("subject") or f"Update on Order #{payload['order_id']}"
-        body += f"<h1>Order #{payload['order_id']}</h1>"
+        body += f"<h1>Order #{escape(str(payload['order_id']), quote=True)}</h1>"
     elif notification_type == "CUSTOM_EMAIL":
         subject = payload.get("subject") or (f"Custom Email for Ticket #{payload['ticket_id']}" if "ticket_id" in payload else "Customer Notification")
-        body += f"<h1>{subject}</h1>"
+        body += f"<h1>{escape(str(subject), quote=True)}</h1>"
         if "message_content" in payload:
-            body += f"<p>{payload['message_content']}</p>"
+            body += f"<p>{escape(str(payload['message_content']), quote=True)}</p>"
         
     if "message" in payload:
-        body += f"<p>{payload['message']}</p>"
+        body += f"<p>{escape(str(payload['message']), quote=True)}</p>"
         
     body += "</body></html>"
         
