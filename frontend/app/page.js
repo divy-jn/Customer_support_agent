@@ -6,21 +6,12 @@ import remarkGfm from "remark-gfm";
 import { useToast } from "./components/Toast";
 import ApprovalCard from "./components/ApprovalCard";
 import { API_BASE, WS_BASE } from "./lib/api";
+import { getPortalToken, signIn, signOut, signOutIfCurrent } from "./lib/supabase-auth";
 
 export default function CustomerChatPage() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
-  // Lazy initializers — restore from localStorage without cascading renders in useEffect
-  const [sessionId, setSessionId] = useState(() => {
-    if (typeof window !== "undefined") {
-      try {
-        return localStorage.getItem("intellisupport_session_id") || null;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
+  const [sessionId, setSessionId] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -30,32 +21,16 @@ export default function CustomerChatPage() {
 
   // Customer Identity
   const [customerEmail, setCustomerEmail] = useState("");
-  const [identifiedCustomer, setIdentifiedCustomer] = useState(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const savedCust = localStorage.getItem("intellisupport_customer");
-        return savedCust ? JSON.parse(savedCust) : null;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
+  const [customerPassword, setCustomerPassword] = useState("");
+  const [signInError, setSignInError] = useState("");
+  const [identifiedCustomer, setIdentifiedCustomer] = useState(null);
   const [identifying, setIdentifying] = useState(false);
-  const [showIdentityModal, setShowIdentityModal] = useState(() => {
-    if (typeof window !== "undefined") {
-      try {
-        return !localStorage.getItem("intellisupport_customer");
-      } catch {
-        return true;
-      }
-    }
-    return false;
-  });
+  const [showIdentityModal, setShowIdentityModal] = useState(false);
 
   // Drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [customerHistory, setCustomerHistory] = useState(null);
+  const [historyError, setHistoryError] = useState("");
 
   // Auto-scroll
   const [autoScroll, setAutoScroll] = useState(true);
@@ -100,43 +75,21 @@ export default function CustomerChatPage() {
       wsRef.current = null;
     }
 
-    let token = localStorage.getItem("intellisupport_jwt");
+    const token = getPortalToken("customer");
     if (!token) {
-      try {
-        // #review: Hardcoded development customer email 'amit.sharma@example.com'.
-        // In production, guest users should receive an anonymous token or a real login flow.
-        const res = await fetch(`${API_BASE}/api/v1/auth/dev-login?email=amit.sharma@example.com`, { method: 'POST' });
-        if (res.ok) {
-          const data = await res.json();
-          token = data.access_token;
-          localStorage.setItem("intellisupport_jwt", token);
-        } else {
-          console.error("Dev login failed:", res.status, res.statusText);
-          setMessages((prev) => [...prev, { role: "error", content: `Authentication failed: Dev login returned ${res.status}. Please check backend configuration.`, timestamp: new Date().toISOString() }]);
-          setReconnecting(false);
-          return;
-        }
-      } catch (e) {
-        console.error("Failed to fetch dev token", e);
-        setMessages((prev) => [...prev, { role: "error", content: "Network error during authentication. Backend may be unreachable.", timestamp: new Date().toISOString() }]);
-        setReconnecting(false);
-        return;
-      }
+      setShowIdentityModal(true);
+      setReconnecting(false);
+      return;
     }
 
     const savedSession = localStorage.getItem("intellisupport_session_id");
-    let wsUrl = savedSession
-      ? `${WS_BASE}/ws/chat/${savedSession}`
-      : `${WS_BASE}/ws/chat`;
-      
-    if (token) {
-        wsUrl += `?token=${token}`;
-    }
-
+    const path = savedSession ? `/ws/chat/${encodeURIComponent(savedSession)}` : "/ws/chat";
+    const wsUrl = `${WS_BASE}${path}?token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (wsRef.current !== ws) return;
       setIsConnected(true);
       setReconnecting(false);
       setReconnectCountdown(0);
@@ -147,6 +100,7 @@ export default function CustomerChatPage() {
     };
 
     ws.onmessage = (event) => {
+      if (wsRef.current !== ws) return;
       const data = JSON.parse(event.data);
       if (data.type === "ping") return;
 
@@ -225,18 +179,26 @@ export default function CustomerChatPage() {
     };
 
     ws.onclose = (event) => {
+      if (wsRef.current !== ws) return;
+      wsRef.current = null;
       setIsConnected(false);
       setIsTyping(false);
       if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
       
-      if (event.code === 1008 || event.code === 1011 || event.code === 1006) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "error", content: `Authentication failed (Code: ${event.code}). Getting a new token and reconnecting...`, timestamp: new Date().toISOString() },
-        ]);
-        localStorage.removeItem("intellisupport_jwt");
+      if (event.code === 1008 || !getPortalToken("customer")) {
+        signOutIfCurrent("customer", token);
         localStorage.removeItem("intellisupport_session_id");
+        localStorage.removeItem("intellisupport_customer");
         setSessionId(null);
+        setIdentifiedCustomer(null);
+        setMessages([]);
+        setCustomerHistory(null);
+        setHistoryError("");
+        setDrawerOpen(false);
+        setReconnecting(false);
+        setSignInError("Your session ended. Sign in again to continue.");
+        setShowIdentityModal(true);
+        return;
       }
 
       setReconnecting(true);
@@ -265,6 +227,14 @@ export default function CustomerChatPage() {
     // Start the connection after the effect commits. This keeps state updates
     // in the connection lifecycle out of the synchronous effect body.
     const connectTimer = setTimeout(() => {
+      if (getPortalToken("customer")) {
+        try {
+          const profile = JSON.parse(localStorage.getItem("intellisupport_customer"));
+          setIdentifiedCustomer(profile);
+        } catch {
+          localStorage.removeItem("intellisupport_customer");
+        }
+      }
       void connectWebSocket();
     }, 0);
 
@@ -274,69 +244,54 @@ export default function CustomerChatPage() {
         clearInterval(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
-      wsRef.current?.close();
+      const socket = wsRef.current;
+      wsRef.current = null;
+      socket?.close();
     };
   }, [connectWebSocket]);
 
   // ── Customer Identification ──
   const handleIdentify = async (e) => {
     e.preventDefault();
-    if (!customerEmail.trim()) return;
+    if (!customerEmail.trim() || !customerPassword) return;
+    setSignInError("");
     setIdentifying(true);
     try {
-      const authRes = await fetch(`${API_BASE}/api/v1/auth/dev-login?email=${encodeURIComponent(customerEmail)}`, { method: 'POST' });
-      if (!authRes.ok) {
-          toast("No account found with that email. Try another or continue as guest.", "warning");
-          setIdentifying(false);
-          return;
-      }
-      const authData = await authRes.json();
-      localStorage.setItem("intellisupport_jwt", authData.access_token);
-
-      const res = await fetch(
-        `${API_BASE}/api/v1/customers/search?q=${encodeURIComponent(customerEmail)}`,
-        { headers: { "Authorization": `Bearer ${authData.access_token}` } }
-      );
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        setIdentifiedCustomer(data[0]);
-        setShowIdentityModal(false);
-        localStorage.setItem("intellisupport_customer", JSON.stringify(data[0]));
-        // Clear previous session ID so new customer starts a clean, authorized session
-        localStorage.removeItem("intellisupport_session_id");
-        setSessionId(null);
-        setMessages([]);
-        toast(`Welcome back, ${data[0].name}! 🎉`, "success");
-        // Reconnect WebSocket with new customer token
-        if (wsRef.current) {
-          try { wsRef.current.close(); } catch {}
-          wsRef.current = null;
-        }
-        setTimeout(() => connectWebSocket(), 100);
-      } else {
-        toast("Failed to load customer profile.", "warning");
-      }
+      const customer = await signIn("customer", customerEmail, customerPassword);
+      localStorage.setItem("intellisupport_customer", JSON.stringify(customer));
+      localStorage.removeItem("intellisupport_session_id");
+      const socket = wsRef.current;
+      wsRef.current = null;
+      socket?.close();
+      setIdentifiedCustomer(customer);
+      setSessionId(null);
+      setMessages([]);
+      setCustomerHistory(null);
+      setHistoryError("");
+      setShowIdentityModal(false);
+      await connectWebSocket();
     } catch (err) {
-      toast("Connection error. Please try again.", "error");
+      setSignInError(err.message || "Sign-in failed. Please try again.");
     } finally {
+      setCustomerPassword("");
       setIdentifying(false);
     }
   };
 
-  const continueAsGuest = () => {
-    setShowIdentityModal(false);
-    setIdentifiedCustomer(null);
-    inputRef.current?.focus();
-  };
-
   const loadHistory = async () => {
     if (!identifiedCustomer) return;
+    const token = getPortalToken("customer");
+    setHistoryError("");
     try {
-      const res = await fetch(`${API_BASE}/api/v1/customers/${identifiedCustomer.id}/history`);
+      if (!token) throw new Error("Sign in again to view your history.");
+      const res = await fetch(`${API_BASE}/api/v1/customers/${identifiedCustomer.id}/history`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`Could not load your history (${res.status}).`);
       const data = await res.json();
-      setCustomerHistory(data);
+      if (getPortalToken("customer") === token) setCustomerHistory(data);
     } catch (err) {
-      console.error(err);
+      if (getPortalToken("customer") === token) setHistoryError(err.message);
     }
   };
 
@@ -436,12 +391,19 @@ export default function CustomerChatPage() {
   };
 
   const endChat = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
+    const socket = wsRef.current;
+    wsRef.current = null;
+    socket?.close();
+    clearInterval(reconnectTimerRef.current);
+    reconnectTimerRef.current = null;
     localStorage.removeItem("intellisupport_session_id");
     localStorage.removeItem("intellisupport_customer");
-    localStorage.removeItem("intellisupport_jwt");
+    signOut("customer");
+    setIsConnected(false);
+    setReconnecting(false);
+    setIsTyping(false);
+    setCustomerHistory(null);
+    setHistoryError("");
     setSessionId(null);
     setIdentifiedCustomer(null);
     setMessages([]);
@@ -486,50 +448,52 @@ export default function CustomerChatPage() {
               {/* Identify form */}
               <form onSubmit={handleIdentify} className="space-y-3">
                 <div>
-                  <label className="text-xs text-[var(--text-secondary)] font-medium mb-1.5 block">
-                    Link your account (optional)
+                  <label htmlFor="customer-email" className="text-xs text-[var(--text-secondary)] font-medium mb-1.5 block">
+                    Email
                   </label>
                   <input
+                    id="customer-email"
                     type="email"
+                    autoComplete="username"
+                    required
                     value={customerEmail}
                     onChange={(e) => setCustomerEmail(e.target.value)}
                     placeholder="Enter your email address"
                     className="w-full bg-[var(--bg-input)] border border-[var(--border)] rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all placeholder:text-[var(--text-muted)]"
                   />
                 </div>
+                <label className="grid gap-1.5 text-xs text-[var(--text-secondary)]">
+                  Password
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    value={customerPassword}
+                    onChange={(event) => setCustomerPassword(event.target.value)}
+                    className="w-full bg-[var(--bg-input)] border border-[var(--border)] rounded-xl px-4 py-3 text-sm"
+                  />
+                </label>
+                {signInError && <p role="alert" className="text-sm text-red-400">{signInError}</p>}
                 <button
                   type="submit"
-                  disabled={identifying || !customerEmail.trim()}
+                  disabled={identifying || !customerEmail.trim() || !customerPassword}
                   className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-semibold text-sm hover:from-indigo-500 hover:to-purple-500 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 flex items-center justify-center gap-2"
                 >
                   {identifying ? (
                     <>
                       <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                      Looking up...
+                      Signing in…
                     </>
                   ) : (
                     <>
                       <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
                         <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
                       </svg>
-                      Link My Account
+                      Sign in
                     </>
                   )}
                 </button>
               </form>
-
-              <div className="flex items-center gap-3 my-5">
-                <div className="flex-1 border-t border-[var(--border)]"></div>
-                <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest">or</span>
-                <div className="flex-1 border-t border-[var(--border)]"></div>
-              </div>
-
-              <button
-                onClick={continueAsGuest}
-                className="w-full py-3 rounded-xl bg-[var(--bg-input)] border border-[var(--border)] text-[var(--text-secondary)] font-medium text-sm hover:border-indigo-500/50 hover:text-white transition-all"
-              >
-                Continue as Guest →
-              </button>
 
               <p className="text-[10px] text-[var(--text-muted)] text-center mt-5 leading-relaxed">
                 By continuing you agree to our terms of service. Your conversations may be recorded for quality assurance.
@@ -603,7 +567,7 @@ export default function CustomerChatPage() {
                 onClick={() => setShowIdentityModal(true)}
                 className="text-[11px] text-[var(--text-muted)] hover:text-indigo-400 transition-colors px-3 py-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border)] hover:border-indigo-500/30"
               >
-                Link Account
+                Sign in
               </button>
             )}
             
@@ -827,8 +791,9 @@ export default function CustomerChatPage() {
               </div>
             )}
 
+            {historyError && <p role="alert" className="text-sm text-red-400">{historyError}</p>}
             {/* Tickets */}
-            <div>
+            <div hidden={Boolean(historyError)}>
               <h4 className="text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">
                 My Tickets
               </h4>
@@ -857,7 +822,7 @@ export default function CustomerChatPage() {
             </div>
 
             {/* Orders */}
-            <div>
+            <div hidden={Boolean(historyError)}>
               <h4 className="text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">
                 Recent Orders
               </h4>

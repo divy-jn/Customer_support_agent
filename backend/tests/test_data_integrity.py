@@ -98,20 +98,22 @@ class TestToolContracts:
     def test_cancel_order_rejects_non_active(self, mock_supabase):
         # Mock order lookup returning non-active
         mock_select = MagicMock()
-        mock_select.select().eq().execute.return_value = MagicMock(data=[{"id": 1, "status": "shipped"}])
+        mock_select.select().eq().execute.return_value = MagicMock(data=[{"id": 1, "customer_id": 7, "status": "shipped"}])
         mock_supabase.table().select().eq().execute = mock_select.select().eq().execute
+        mock_supabase.rpc().execute.return_value.data = {"error": "Shipped orders cannot be cancelled"}
         
-        res = json.loads(cancel_order(order_id=1, client_request_id="test-req"))
-        assert "error" in res
-        assert "shipped" in res["error"].lower() or "cannot be cancelled" in res["error"].lower()
+        res = json.loads(cancel_order(order_id=1, customer_id=7, client_request_id="test-req"))
+        assert res == {"error": "Shipped orders cannot be cancelled"}
+        assert mock_supabase.rpc.call_args.args[1]["p_customer_id"] == 7
 
     @patch("app.tools.supabase")
     def test_process_refund_rejects_active(self, mock_supabase):
         # Mock order lookup returning active
         mock_select = MagicMock()
-        mock_select.select().eq().execute.return_value = MagicMock(data=[{"id": 1, "status": "active"}])
+        mock_select.select().eq().execute.return_value = MagicMock(data=[{"id": 1, "customer_id": 7, "status": "active"}])
         mock_supabase.table().select().eq().execute = mock_select.select().eq().execute
+        mock_supabase.rpc().execute.return_value.data = {"error": "Only cancelled or delivered orders can be refunded"}
         
-        res = json.loads(process_refund(order_id=1, client_request_id="test-req"))
-        assert "error" in res
-        assert "active" in res["error"].lower() or "cannot process refund" in res["error"].lower()
+        res = json.loads(process_refund(order_id=1, customer_id=7, client_request_id="test-req"))
+        assert res == {"error": "Only cancelled or delivered orders can be refunded"}
+        assert mock_supabase.rpc.call_args.args[1]["p_customer_id"] == 7

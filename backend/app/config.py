@@ -18,7 +18,8 @@ class Settings(BaseSettings):
 
     # --- Database (Supabase) ---
     supabase_url: str = Field(..., alias="SUPABASE_URL")       # required, validated below
-    supabase_key: str = Field(..., alias="SUPABASE_KEY")       # required, min 10 chars
+    supabase_key: str = Field(..., alias="SUPABASE_KEY")       # server-only database credential
+    supabase_anon_key: str = Field(default="", alias="SUPABASE_ANON_KEY")
     database_password: str = Field(default="", alias="DATABASE_PASSWORD")  # falls back to supabase_key
 
     # --- LLM (Vertex AI) ---

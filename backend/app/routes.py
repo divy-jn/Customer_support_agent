@@ -10,9 +10,10 @@ import asyncio
 
 from app.dependencies import (
     verify_admin_key, verify_agent_token, verify_customer_token, verify_any_token,
-    verify_operator_access,
+    verify_operator_access, verify_staff_directory,
 )
 from app.config import settings
+from app.supabase_auth import exchange_supabase_token
 
 # ──────────────────────────────────────────────
 #  Development Authentication
@@ -27,7 +28,7 @@ class DevLoginRequest(BaseModel):
 # Move dev_login below
 
 from app.tools import (
-    lookup_customer, get_customer_by_id, get_customer_history, get_ticket, create_ticket,
+    lookup_customer, get_customer_history, get_ticket, create_ticket,
     update_ticket, track_order, cancel_order, process_refund,
     check_inventory, get_dashboard_stats, get_all_customers, get_all_tickets,
     check_llm_health, check_vectordb_health, check_supabase_health,
@@ -38,6 +39,8 @@ from app.persistence.session import session_store
 from app.email_service import send_ticket_created_email, send_resolution_email
 
 router = APIRouter()
+auth_router = APIRouter()
+auth_router.add_api_route("/auth/supabase/exchange", exchange_supabase_token, methods=["POST"])
 
 # ──────────────────────────────────────────────
 #  Development Authentication Endpoints
@@ -48,7 +51,7 @@ async def dev_agent_login():
     Local-development agent login. Disabled unless DEBUG_MODE is explicitly enabled.
     Production deployments must use a real agent identity provider.
     """
-    if not settings.debug_mode:
+    if not settings.debug_mode or settings.app_environment not in {"development", "test"}:
         raise HTTPException(status_code=403, detail="Development agent login is disabled")
     expiration = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expiration_minutes)
     payload = {
@@ -68,8 +71,8 @@ async def dev_login(email: str):
     #review: In DEBUG_MODE, this endpoint allows impersonating any customer by email.
     # Must remain strictly disabled in production environments.
     """
-    if not settings.debug_mode:
-        raise HTTPException(status_code=403, detail="Development login is disabled in production")
+    if not settings.debug_mode or settings.app_environment not in {"development", "test"}:
+        raise HTTPException(status_code=403, detail="Development customer login is disabled")
         
     from app.tools import supabase
     res = supabase.table("customers").select("id").eq("email", email).execute()
@@ -93,41 +96,38 @@ async def dev_login(email: str):
 # ──────────────────────────────────────────────
 
 @router.get("/customers/search")
-async def search_customer(q: str, auth_user: dict = Depends(verify_any_token)):
+async def search_customer(q: str, _: dict = Depends(verify_staff_directory)):
     """Search for a customer by name or email."""
     if not q or not q.strip():
         raise HTTPException(status_code=400, detail="Search query cannot be empty")
-    if auth_user["role"] == "customer":
-        customer = json.loads(get_customer_by_id(auth_user["id"]))
-        if customer.get("id") != auth_user["id"]:
-            return []
-        query = q.casefold()
-        return [customer] if any(
-            query in (customer.get(field) or "").casefold() for field in ("name", "email")
-        ) else []
-
     data = json.loads(lookup_customer(q))
     if isinstance(data, dict) and "error" in data:
-        raise HTTPException(status_code=400, detail=data["error"])
+        raise HTTPException(status_code=503, detail="Customer search is unavailable")
     return data
 
 
 @router.get("/customers")
-async def list_customers(limit: int = 50, offset: int = 0, _: bool = Depends(verify_agent_token)):
+async def list_customers(limit: int = 50, offset: int = 0, _: dict = Depends(verify_staff_directory)):
     """Get all customers with pagination."""
     if limit <= 0 or offset < 0:
         raise HTTPException(status_code=400, detail="Invalid pagination parameters")
-    result = get_all_customers(limit=limit, offset=offset)
-    return json.loads(result)
+    data = json.loads(get_all_customers(limit=limit, offset=offset))
+    if isinstance(data, dict) and "error" in data:
+        raise HTTPException(status_code=503, detail="Customer directory is unavailable")
+    return data
 
 
 @router.get("/customers/{customer_id}/history")
-async def customer_history(customer_id: int, authenticated_customer_id: int = Depends(verify_customer_token)):
-    """Get a customer's order and ticket history."""
-    if customer_id != authenticated_customer_id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this customer's history")
-    result = get_customer_history(customer_id)
-    return json.loads(result)
+async def customer_history(customer_id: int, auth_user: dict = Depends(verify_any_token)):
+    """Allow staff to read customer history and customers to read their own."""
+    if auth_user["role"] == "customer" and auth_user["id"] != customer_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    data = json.loads(get_customer_history(customer_id))
+    if "error" in data:
+        if data["error"] == f"Customer #{customer_id} not found":
+            raise HTTPException(status_code=404, detail="Customer not found")
+        raise HTTPException(status_code=503, detail="Customer history is unavailable")
+    return data
 
 
 # ──────────────────────────────────────────────

@@ -171,6 +171,12 @@ def verify_any_token(
 
     raise HTTPException(status_code=401, detail="Valid authentication is required")
 
+def verify_staff_directory(auth_user: dict = Depends(verify_any_token)) -> dict:
+    if auth_user["role"] not in {"agent", "admin"}:
+        raise HTTPException(status_code=403, detail="Staff access is required")
+    return auth_user
+
+
 async def verify_customer_ws_token(websocket: WebSocket, token: str = Query(None)) -> int:
     """Verify WebSocket origin and customer JWT token from query parameters."""
     _validate_websocket_origin(websocket)

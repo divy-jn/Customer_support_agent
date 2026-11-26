@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { SkeletonTable } from "../../components/LoadingSkeleton";
 import EmptyState from "../../components/EmptyState";
 import { API_BASE } from "../../lib/api";
+import { agentFetch } from "../../lib/agent-auth";
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState([]);
@@ -12,21 +13,29 @@ export default function CustomersPage() {
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [customerHistory, setCustomerHistory] = useState(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [directoryError, setDirectoryError] = useState("");
+  const [historyError, setHistoryError] = useState("");
+  const directoryRequest = useRef(0);
+  const historyRequest = useRef(0);
   const debounceRef = useRef(null);
 
   const fetchCustomers = useCallback(async (query = "") => {
+    const request = ++directoryRequest.current;
     setLoading(true);
+    setDirectoryError("");
     try {
       const url = query
         ? `${API_BASE}/api/v1/customers/search?q=${encodeURIComponent(query)}`
         : `${API_BASE}/api/v1/customers`;
-      const res = await fetch(url);
+      const res = await agentFetch(url);
+      if (!res.ok) throw new Error(`Could not load customers (${res.status}).`);
       const data = await res.json();
-      setCustomers(Array.isArray(data) ? data : []);
+      if (!Array.isArray(data)) throw new Error("The directory returned an invalid response.");
+      if (request === directoryRequest.current) setCustomers(data);
     } catch (err) {
-      console.error("Failed to fetch customers:", err);
+      if (request === directoryRequest.current) setDirectoryError(err.message);
     } finally {
-      setLoading(false);
+      if (request === directoryRequest.current) setLoading(false);
     }
   }, []);
 
@@ -34,6 +43,7 @@ export default function CustomersPage() {
     (async () => {
       await fetchCustomers();
     })();
+    return () => clearTimeout(debounceRef.current);
   }, [fetchCustomers]);
 
   // Debounced search as user types
@@ -53,17 +63,20 @@ export default function CustomersPage() {
   };
 
   const loadCustomerDetails = async (customer) => {
+    const request = ++historyRequest.current;
     setSelectedCustomer(customer);
     setLoadingHistory(true);
     setCustomerHistory(null);
+    setHistoryError("");
     try {
-      const res = await fetch(`${API_BASE}/api/v1/customers/${customer.id}/history`);
+      const res = await agentFetch(`${API_BASE}/api/v1/customers/${customer.id}/history`);
+      if (!res.ok) throw new Error(`Could not load customer history (${res.status}).`);
       const data = await res.json();
-      setCustomerHistory(data);
+      if (request === historyRequest.current) setCustomerHistory(data);
     } catch (err) {
-      console.error("Failed to fetch history:", err);
+      if (request === historyRequest.current) setHistoryError(err.message);
     } finally {
-      setLoadingHistory(false);
+      if (request === historyRequest.current) setLoadingHistory(false);
     }
   };
 
@@ -116,6 +129,8 @@ export default function CustomersPage() {
               <div className="p-4">
                 <SkeletonTable rows={6} cols={3} />
               </div>
+            ) : directoryError ? (
+              <p role="alert" className="p-4 text-sm text-red-400">{directoryError}</p>
             ) : customers.length === 0 ? (
               <EmptyState
                 icon="👥"
@@ -194,6 +209,8 @@ export default function CustomersPage() {
                   <div className="flex justify-center p-8">
                     <div className="w-6 h-6 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin"></div>
                   </div>
+                ) : historyError ? (
+                  <p role="alert" className="text-sm text-red-400">{historyError}</p>
                 ) : (
                   <>
                     {/* Quick Stats */}

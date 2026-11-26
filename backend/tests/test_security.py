@@ -73,12 +73,14 @@ def test_expired_jwt(expired_headers):
     response = client.get("/api/v1/customers/1/history", headers=expired_headers)
     assert response.status_code in (401, 403)
 
-def test_wrong_role():
+def test_agent_role_can_read_history(monkeypatch):
+    monkeypatch.setattr("app.routes.get_customer_history", lambda customer_id: '{"customer_id":1}')
     token = create_mock_jwt(1, role="agent")
     response = client.get("/api/v1/customers/1/history", headers={"Authorization": f"Bearer {token}"})
-    assert response.status_code == 403
+    assert response.status_code == 200
 
-def test_valid_customer_jwt(auth_headers_a):
+def test_valid_customer_jwt(auth_headers_a, monkeypatch):
+    monkeypatch.setattr("app.routes.get_customer_history", lambda customer_id: '{"customer_id":1}')
     response = client.get("/api/v1/customers/1/history", headers=auth_headers_a)
     assert response.status_code == 200
 
@@ -114,7 +116,8 @@ def test_dev_login_unavailable_in_production(monkeypatch):
 # REST OWNERSHIP TESTS
 # ==========================================
 
-def test_customer_a_can_access_own_history(auth_headers_a):
+def test_customer_a_can_access_own_history(auth_headers_a, monkeypatch):
+    monkeypatch.setattr("app.routes.get_customer_history", lambda customer_id: '{"customer_id":1}')
     response = client.get("/api/v1/customers/1/history", headers=auth_headers_a)
     assert response.status_code == 200
 

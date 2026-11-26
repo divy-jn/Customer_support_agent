@@ -9,8 +9,16 @@ async function setupCustomerChat(page, { customerName = 'Amit Sharma', customerE
   // 1. Reset backend session store & mutation call counters
   await page.request.post(`${BACKEND_URL}/api/test/e2e/reset`);
 
-  // 2. Pre-seed localStorage with authenticated customer identity
-  await page.addInitScript(({ name, email }) => {
+  // 2. Pre-seed an app token from the isolated test server.
+  const login = await page.request.post(
+    `${BACKEND_URL}/api/v1/auth/dev-login?email=${encodeURIComponent(customerEmail)}`
+  );
+  expect(login.ok()).toBeTruthy();
+  const { access_token } = await login.json();
+  await page.addInitScript(({ name, email, token }) => {
+    if (!localStorage.getItem('intellisupport_customer_app_jwt')) {
+      localStorage.setItem('intellisupport_customer_app_jwt', token);
+    }
     if (!localStorage.getItem('intellisupport_customer')) {
       localStorage.setItem('intellisupport_customer', JSON.stringify({
         id: 1,
@@ -20,20 +28,12 @@ async function setupCustomerChat(page, { customerName = 'Amit Sharma', customerE
         status: 'active',
       }));
     }
-  }, { name: customerName, email: customerEmail });
+  }, { name: customerName, email: customerEmail, token: access_token });
 
   // 3. Navigate to chat page
   await page.goto('/');
 
-  // 4. Ensure identity modal is dismissed if shown
-  const continueGuestBtn = page.locator('button:has-text("Continue as Guest")');
-  try {
-    if (await continueGuestBtn.isVisible({ timeout: 500 })) {
-      await continueGuestBtn.click({ timeout: 1000 }).catch(() => {});
-    }
-  } catch {}
-
-  // 5. Wait for WebSocket connection indicator (Online)
+  // 4. Wait for WebSocket connection indicator (Online)
   const statusIndicator = page.locator('header').locator('text=Online');
   await expect(statusIndicator).toBeVisible({ timeout: 15000 });
 

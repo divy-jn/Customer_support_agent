@@ -1,4 +1,5 @@
 import AgentSidebar from "../components/Sidebar";
+import StaffAuthGate from "../components/StaffAuthGate";
 
 export const metadata = {
   title: "Agent Dashboard — Support Team",
@@ -7,9 +8,11 @@ export const metadata = {
 
 export default function AgentLayout({ children }) {
   return (
-    <div className="flex min-h-screen">
-      <AgentSidebar />
-      <main className="flex-1 ml-64 min-h-screen">{children}</main>
-    </div>
+    <StaffAuthGate>
+      <div className="flex min-h-screen">
+        <AgentSidebar />
+        <main className="flex-1 ml-64 min-h-screen">{children}</main>
+      </div>
+    </StaffAuthGate>
   );
 }

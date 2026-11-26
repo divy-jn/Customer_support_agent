@@ -42,6 +42,10 @@ export default defineConfig({
     {
       command: 'npm run dev',
       url: 'http://localhost:3003',
+      env: {
+        NEXT_PUBLIC_SUPABASE_URL: 'https://auth.example.test',
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: 'sb_publishable_example_test',
+      },
       reuseExistingServer: !process.env.CI,
       timeout: 60000,
     },

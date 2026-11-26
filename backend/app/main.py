@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
-from app.routes import router as api_router
+from app.routes import auth_router, router as api_router
 from app.websocket.chat_handler import handle_customer_ws, handle_agent_ws
 
 from app.logger import setup_logger, set_trace_id
@@ -214,6 +214,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ──────────────────────────────────────────────
 #  REST API Routes
 # ──────────────────────────────────────────────
+app.include_router(auth_router, prefix="/api", tags=["auth"])
 app.include_router(api_router, prefix="/api/v1", tags=["api"])
 
 

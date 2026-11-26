@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import EmptyState from "../../components/EmptyState";
 import { useToast } from "../../components/Toast";
 import { API_BASE, WS_BASE } from "../../lib/api";
+import { signOutIfCurrent } from "../../lib/supabase-auth";
 import { agentFetch, getAgentToken } from "../../lib/agent-auth";
 
 const CANNED_RESPONSES = [
@@ -60,14 +61,27 @@ export default function LiveSessionsPage() {
     };
     fetchSessions();
     const interval = setInterval(fetchSessions, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(reconnectTimerRef.current);
+      selectedSessionRef.current = null;
+      const socket = wsRef.current;
+      wsRef.current = null;
+      if (socket) {
+        socket.onclose = null;
+        socket.close();
+      }
+    };
   }, []);
 
   // Connect to session as agent
   const monitorSession = useCallback(async (session) => {
     const previousSocket = wsRef.current;
     wsRef.current = null;
-    if (previousSocket) previousSocket.close();
+    if (previousSocket) {
+      previousSocket.onclose = null;
+      previousSocket.close();
+    }
 
     setSelectedSession(session);
     selectedSessionRef.current = session;
@@ -156,7 +170,10 @@ export default function LiveSessionsPage() {
 
     ws.onclose = (event) => {
       setIsMonitoring(false);
-      if (event.code === 1008) localStorage.removeItem("intellisupport_agent_jwt");
+      if (event.code === 1008) {
+        signOutIfCurrent("staff", token);
+        return;
+      }
       // Auto-reconnect after 3 seconds if we still have a selected session
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = setTimeout(async () => {
