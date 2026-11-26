@@ -658,7 +658,7 @@ REVOKE ALL ON public.session_escalation_state FROM anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.session_escalation_state TO service_role;
 
 -- 10. Escalation Events (Slice 3.5.2)
-CREATE TABLE IF NOT EXISTS escalation_events (
+CREATE TABLE IF NOT EXISTS public.escalation_events (
     escalation_event_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES session_escalation_state(session_id),
     customer_id BIGINT NOT NULL REFERENCES customers(id),
@@ -669,8 +669,16 @@ CREATE TABLE IF NOT EXISTS escalation_events (
     urgency TEXT,
     last_message TEXT,
     customer_notification_required BOOLEAN DEFAULT FALSE,
+    event_type text,
+    new_status text,
+    metadata jsonb DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+ALTER TABLE public.escalation_events
+    ADD COLUMN IF NOT EXISTS event_type text,
+    ADD COLUMN IF NOT EXISTS new_status text,
+    ADD COLUMN IF NOT EXISTS metadata jsonb DEFAULT '{}'::jsonb;
 
 ALTER TABLE public.escalation_events ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.escalation_events FROM anon, authenticated;
