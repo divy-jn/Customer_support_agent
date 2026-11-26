@@ -331,10 +331,13 @@ class TestToolBoundary:
         registry.register(skill)
         resolver = ProductSkillResolver(registry)
 
+        from threading import get_ident
+
         tool_calls = []
+        loop_thread = get_ident()
 
         def tracking_executor(tool_name, kwargs):
-            tool_calls.append(tool_name)
+            tool_calls.append((tool_name, get_ident()))
             return "Custom result"
 
         runtime = SkillRuntime(tracking_executor)
@@ -354,7 +357,8 @@ class TestToolBoundary:
         )
         result = await agent.handle(ctx)
         assert result.execution_status == "success"
-        assert tool_calls == ["custom_retriever"]
+        assert [name for name, _ in tool_calls] == ["custom_retriever"]
+        assert tool_calls[0][1] != loop_thread
 
     @pytest.mark.asyncio
     async def test_no_tools_declared_handled(self):

@@ -619,18 +619,22 @@ async def execute_approved_action(
         try:
             from app.email_service import send_order_update_email
             from app.tools import supabase
-            cust_res = supabase.table("customers").select("name, email").eq("id", authenticated_customer_id).execute()
-            c_name = cust_res.data[0].get("name", "Customer") if cust_res.data else "Customer"
-            c_email = cust_res.data[0].get("email", "customer@example.com") if cust_res.data else "customer@example.com"
-            status_text = "cancelled" if action == "cancel_order" else "refund_initiated"
-            await asyncio.to_thread(
-                send_order_update_email,
-                customer_email=c_email,
-                customer_name=c_name,
-                order_id=order_id,
-                status=status_text,
-                message_content=success_msg,
+            cust_res = await asyncio.to_thread(
+                lambda: supabase.table("customers").select("name, email").eq("id", authenticated_customer_id).execute()
             )
+            customer = cust_res.data[0] if cust_res.data else {}
+            recipient = (customer.get("email") or "").strip()
+            if not recipient:
+                logger.warning("Skipping order #%s update email because the customer has no email", order_id)
+            else:
+                await asyncio.to_thread(
+                    send_order_update_email,
+                    customer_email=recipient,
+                    customer_name=customer.get("name") or "Customer",
+                    order_id=order_id,
+                    status="cancelled" if action == "cancel_order" else "refund_initiated",
+                    message_content=success_msg,
+                )
         except Exception as e:
             logger.warning(f"Failed to dispatch order update email for order #{order_id}: {e}")
 

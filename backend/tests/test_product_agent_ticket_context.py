@@ -1,5 +1,6 @@
 import pytest
 import json
+from threading import get_ident
 from unittest.mock import MagicMock, AsyncMock, patch
 from app.models import (
     WorkflowState, ProductState, OrderState, OrchestrationDomain, 
@@ -60,6 +61,14 @@ async def test_product_agent_constructs_ticket_context(mock_process, product_age
         timestamp=datetime.now(timezone.utc)
     )
     
+    loop_thread = get_ident()
+
+    def process(context):
+        assert get_ident() != loop_thread
+        return mock_process.return_value
+
+    mock_process.side_effect = process
+
     state = WorkflowState(session_id="test")
     state.product_state = ProductState(active_ticket_id=50)
     ctx = ProductDomainContext(

@@ -153,7 +153,7 @@ async def get_all_active_sessions() -> list:
     ]
 
 
-async def _confirm_graph_handoff(result, session_id, customer_id, client_request_id, message):
+async def _confirm_graph_handoff(result, session_id, customer_id, client_request_id, message, *, handoff_id=None):
     from app.escalation.service import EscalationRequest, EscalationService
 
     ticket_id = result.get("guardian_ticket_id")
@@ -165,7 +165,7 @@ async def _confirm_graph_handoff(result, session_id, customer_id, client_request
         request = EscalationRequest(
             customer_id=customer_id,
             session_id=session_id,
-            client_request_id=(
+            client_request_id=handoff_id or (
                 uuid.uuid5(turn_id, f"escalate_session:{session_id}")
                 if result.get("guardian_action") == "create_ticket" else turn_id
             ),
@@ -399,6 +399,8 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
             sanitized_message = guard_result.sanitized_text
 
             def _append_customer(s):
+                if client_request_id in s.get("pending_handoffs", {}):
+                    return False
                 s["conversation_history"].append({
                     "role": "customer",
                     "content": message,
@@ -408,6 +410,13 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 })
                 return True
             session, _ = await _mutate_session(session_id, _append_customer, allow_retry=True, customer_id=customer_id)
+            pending_handoff = session.get("pending_handoffs", {}).get(client_request_id)
+            if pending_handoff and pending_handoff["message"] != message:
+                await manager.send_personal_message({
+                    "type": "error",
+                    "message": "This request ID is already associated with another message.",
+                }, session_id)
+                continue
 
             # Broadcast to monitoring agents
             await manager.broadcast_to_agents({
@@ -459,11 +468,11 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 continue
 
             # If human agent has taken over, do NOT run ANY AI logic
-            if session.get("mode") == "human":
+            if session.get("mode") == "human" and not pending_handoff:
                 continue
 
             # Check if this is an approval response for a pending action
-            pending = session.get("pending_approval")
+            pending = None if pending_handoff else session.get("pending_approval")
             clean_msg = message.lower().strip()
             is_rejection = (
                 clean_msg in ("no", "nope", "nah", "cancel", "don't", "dont", "stop", "never mind")
@@ -979,10 +988,13 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         if settings.agent_architecture_mode.startswith("v2_")
                         else customer_support_graph
                     )
-                    result = await asyncio.wait_for(
-                        active_graph.ainvoke(initial_state),
-                        timeout=timeout_secs,
-                    )
+                    if pending_handoff:
+                        result = pending_handoff["result"]
+                    else:
+                        result = await asyncio.wait_for(
+                            active_graph.ainvoke(initial_state),
+                            timeout=timeout_secs,
+                        )
                 except asyncio.TimeoutError:
                     logger.error(f"LangGraph timed out after {timeout_secs}s for session {session_id}")
                     emit_workflow_turn({
@@ -1009,8 +1021,35 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 handoff_requested = bool(result.get("escalated"))
                 is_escalated = False
                 if handoff_requested:
+                    if (
+                        not pending_handoff
+                        and result.get("guardian_action") == "create_ticket"
+                        and result.get("guardian_ticket_id")
+                    ):
+                        child_id = uuid.uuid5(uuid.UUID(client_request_id), f"escalate_session:{session_id}")
+                        snapshot = {
+                            "message": message,
+                            "handoff_id": str(child_id),
+                            "result": {key: result[key] for key in (
+                                "response", "escalated", "guardian_action", "guardian_reason", "guardian_ticket_id",
+                                "semantic_domain", "intent", "sentiment", "urgency", "workflow_state",
+                            ) if key in result},
+                        }
+
+                        def _remember_handoff(s):
+                            pending = s.setdefault("pending_handoffs", {})
+                            if client_request_id in pending:
+                                return False
+                            pending[client_request_id] = snapshot
+                            return True
+
+                        session, _ = await _mutate_session(
+                            session_id, _remember_handoff, customer_id=customer_id,
+                        )
+                        pending_handoff = session["pending_handoffs"][client_request_id]
+                    handoff_options = {"handoff_id": uuid.UUID(pending_handoff["handoff_id"])} if pending_handoff else {}
                     is_escalated, handoff_failure = await _confirm_graph_handoff(
-                        result, session_id, customer_id, client_request_id, message,
+                        result, session_id, customer_id, client_request_id, message, **handoff_options,
                     )
                     if handoff_failure:
                         raw_response = handoff_failure
@@ -1069,6 +1108,8 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         return False
                     if is_escalated:
                         s["mode"] = "human"
+                        if pending_handoff:
+                            s.get("pending_handoffs", {}).pop(client_request_id, None)
                     
                     if p:
                         s["pending_approval"] = p

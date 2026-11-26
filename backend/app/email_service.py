@@ -9,6 +9,7 @@ Provides templated email notifications for:
 """
 
 import json
+from html import escape
 import logging
 import urllib.request
 import urllib.parse
@@ -23,6 +24,10 @@ logger = logging.getLogger(__name__)
 #  HTML Email Templates
 # ──────────────────────────────────────────────
 
+def _escape(value: object) -> str:
+    return escape(str(value), quote=True)
+
+
 def _base_template(title: str, body: str) -> str:
     """Wrap email content in a styled HTML template."""
     return f"""<!DOCTYPE html>
@@ -35,7 +40,7 @@ def _base_template(title: str, body: str) -> str:
     <p style="color:#606078;font-size:13px;margin:4px 0 0;">Intelligent Customer Support</p>
   </div>
   <div style="background:#16161f;border:1px solid #2a2a3a;border-radius:16px;padding:32px;">
-    <h2 style="color:#f0f0f5;font-size:20px;margin:0 0 16px;">{title}</h2>
+    <h2 style="color:#f0f0f5;font-size:20px;margin:0 0 16px;">{_escape(title)}</h2>
     {body}
   </div>
   <div style="text-align:center;margin-top:24px;">
@@ -50,8 +55,8 @@ def _base_template(title: str, body: str) -> str:
 
 def _info_row(label: str, value: str) -> str:
     return f"""<tr>
-      <td style="color:#9090a8;font-size:14px;padding:8px 12px;border-bottom:1px solid #2a2a3a;">{label}</td>
-      <td style="color:#f0f0f5;font-size:14px;padding:8px 12px;border-bottom:1px solid #2a2a3a;font-weight:500;">{value}</td>
+      <td style="color:#9090a8;font-size:14px;padding:8px 12px;border-bottom:1px solid #2a2a3a;">{_escape(label)}</td>
+      <td style="color:#f0f0f5;font-size:14px;padding:8px 12px;border-bottom:1px solid #2a2a3a;font-weight:500;">{_escape(value)}</td>
     </tr>"""
 
 
@@ -99,17 +104,17 @@ def send_ticket_created_email(
     """Send ticket creation confirmation to the customer."""
     body = f"""
     <p style="color:#9090a8;font-size:14px;line-height:1.6;">
-      Hi <strong style="color:#f0f0f5;">{customer_name}</strong>, your support ticket has been created.
+      Hi <strong style="color:#f0f0f5;">{_escape(customer_name)}</strong>, your support ticket has been created.
       Our team will review it shortly.
     </p>
     {_info_table([
         ("Ticket ID", f"#{ticket_id}"),
         ("Subject", subject),
-        ("Priority", f'<span style="text-transform:capitalize;">{priority}</span>'),
+        ("Priority", priority),
         ("Status", "Open"),
     ])}
     <p style="color:#606078;font-size:13px;margin-top:16px;">
-      <em>Description:</em> {description[:200]}{'...' if len(description) > 200 else ''}
+      <em>Description:</em> {_escape(description[:200])}{'...' if len(description) > 200 else ''}
     </p>
     """
     html = _base_template("Ticket Created", body)
@@ -134,11 +139,11 @@ def send_escalation_email(
     {_info_table([
         ("Customer", customer_name or "Unknown"),
         ("Session", session_id[:12] + "..."),
-        ("Sentiment", f'<span style="color:#f87171;">{sentiment}</span>'),
-        ("Urgency", f'<span style="color:#fbbf24;text-transform:uppercase;">{urgency}</span>'),
+        ("Sentiment", sentiment),
+        ("Urgency", urgency),
     ])}
     <p style="color:#9090a8;font-size:13px;margin-top:16px;">
-      <strong>Last message:</strong> "{last_message[:300]}"
+      <strong>Last message:</strong> "{_escape(last_message[:300])}"
     </p>
     <p style="color:#818cf8;font-size:14px;margin-top:20px;">
       → Open the <strong>Agent Dashboard</strong> to take over this conversation.
@@ -151,7 +156,7 @@ def send_escalation_email(
     if customer_email:
         cust_body = f"""
         <p style="color:#9090a8;font-size:14px;line-height:1.6;">
-          Hi <strong style="color:#f0f0f5;">{customer_name}</strong>, we understand your concern.
+          Hi <strong style="color:#f0f0f5;">{_escape(customer_name)}</strong>, we understand your concern.
           A human support agent has been notified and will be with you shortly.
         </p>
         <p style="color:#606078;font-size:13px;margin-top:16px;">
@@ -174,15 +179,15 @@ def send_resolution_email(
     """Send ticket resolution notification to the customer."""
     body = f"""
     <p style="color:#9090a8;font-size:14px;line-height:1.6;">
-      Hi <strong style="color:#f0f0f5;">{customer_name}</strong>, your support ticket has been resolved.
+      Hi <strong style="color:#f0f0f5;">{_escape(customer_name)}</strong>, your support ticket has been resolved.
     </p>
     {_info_table([
         ("Ticket ID", f"#{ticket_id}"),
         ("Subject", subject),
-        ("Status", '<span style="color:#4ade80;">Closed</span>'),
+        ("Status", "Closed"),
     ])}
     <p style="color:#9090a8;font-size:14px;margin-top:16px;">
-      <strong>Resolution:</strong> {resolution or 'Your issue has been addressed.'}
+      <strong>Resolution:</strong> {_escape(resolution or 'Your issue has been addressed.')}
     </p>
     <p style="color:#606078;font-size:13px;margin-top:20px;">
       If you need further assistance, don't hesitate to reach out again.
@@ -206,10 +211,10 @@ def send_system_alert_email(
     color = "#f87171" if alert_type == "error" else "#fbbf24"
     body = f"""
     <p style="color:{color};font-size:14px;font-weight:600;">
-      🔧 System Alert — {alert_type.upper()}
+      🔧 System Alert — {_escape(alert_type.upper())}
     </p>
     <p style="color:#9090a8;font-size:14px;line-height:1.6;">
-      {message}
+      {_escape(message)}
     </p>
     {details_html}
     <p style="color:#606078;font-size:12px;margin-top:16px;">
@@ -230,14 +235,14 @@ def send_custom_ticket_email(
     """Send an update or custom message regarding a ticket to the customer."""
     body = f"""
     <p style="color:#9090a8;font-size:14px;line-height:1.6;">
-      Hi <strong style="color:#f0f0f5;">{customer_name}</strong>, here is an update regarding your support ticket.
+      Hi <strong style="color:#f0f0f5;">{_escape(customer_name)}</strong>, here is an update regarding your support ticket.
     </p>
     {_info_table([
         ("Ticket ID", f"#{ticket_id}"),
         ("Subject", subject),
     ])}
     <p style="color:#f0f0f5;font-size:14px;margin-top:16px;white-space:pre-wrap;">
-      {message_content}
+      {_escape(message_content)}
     </p>
     """
     html = _base_template(f"Update on Ticket #{ticket_id}", body)
@@ -254,14 +259,14 @@ def send_order_update_email(
     """Send an order status update email to the customer."""
     body = f"""
     <p style="color:#9090a8;font-size:14px;line-height:1.6;">
-      Hi <strong style="color:#f0f0f5;">{customer_name}</strong>, here is an update on your order.
+      Hi <strong style="color:#f0f0f5;">{_escape(customer_name)}</strong>, here is an update on your order.
     </p>
     {_info_table([
         ("Order ID", f"#{order_id}"),
-        ("Status", f'<span style="text-transform:capitalize;">{status}</span>'),
+        ("Status", status),
     ])}
     <p style="color:#f0f0f5;font-size:14px;margin-top:16px;white-space:pre-wrap;">
-      {message_content}
+      {_escape(message_content)}
     </p>
     """
     html = _base_template(f"Order #{order_id} Update", body)

@@ -242,7 +242,8 @@ class Settings(BaseSettings):
                 raise ValueError("EMAIL_TEST_RECIPIENT is permitted only in development or test")
 
             secret = (self.approval_signing_secret or "").strip()
-            if len(secret) < 32 or "change-me" in secret.lower() or secret == self.jwt_secret:
+            bearer_secrets = {self.jwt_secret.strip(), self.agent_secret.strip(), self.admin_api_key.strip()}
+            if len(secret) < 32 or "change-me" in secret.lower() or secret in bearer_secrets:
                 raise ValueError("Configure a dedicated APPROVAL_SIGNING_SECRET of at least 32 characters")
 
             local, _, domain = self.support_team_email.lower().partition("@")

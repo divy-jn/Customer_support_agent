@@ -103,7 +103,7 @@ async def test_transcript_writer_drains_retries_and_reports_permanent_error(monk
     assert not drain.done()
     release.set()
     await asyncio.wait_for(drain, 2)
-    assert writes == [("active", 12), ("active", 12), ("active", 11), ("permanent-error", 1)]
+    assert writes == [("active", 12), ("active", 12), ("permanent-error", 1)]
     assert persisted["active"]["p_transcript"] == snapshot(12)["conversation_history"]
     assert "Retrying transcript write for session active revision 12" in caplog.text
     assert "Transcript write failed for session permanent-error revision 1 (ValueError)" in caplog.text
@@ -237,6 +237,8 @@ async def test_blocking_queries_allow_async_heartbeats(monkeypatch, local_sessio
 @pytest.mark.parametrize("count", [0, 1250])
 def test_dashboard_rest_and_mcp_use_one_aggregate_rpc(monkeypatch, agent_headers, count):
     from app.mcp import db_server
+
+    monkeypatch.setenv("MCP_DB_STAFF_MODE", "true")
 
     aggregate = {
         "total_tickets": count, "open_tickets": count, "escalated_tickets": 0,

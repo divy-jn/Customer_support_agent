@@ -7,9 +7,12 @@ database for the LangGraph agents using the Supabase REST API.
 Usage:
     cd backend
     python -m app.mcp.db_server
+
+Set MCP_DB_STAFF_MODE=true only for a staff-controlled stdio client.
 """
 
 import json
+from functools import wraps
 import os
 import sys
 
@@ -29,6 +32,16 @@ mcp = FastMCP(
     instructions="MCP server providing secure access to the customer support Supabase database.",
 )
 
+def staff_only(tool):
+    """Enable privileged tools only on an operator-configured staff stdio process."""
+    @wraps(tool)
+    def guarded(*args, **kwargs):
+        if os.environ.get("MCP_DB_STAFF_MODE") != "true":
+            return json.dumps({"error": "Staff-only database tool is disabled"})
+        return tool(*args, **kwargs)
+    return guarded
+
+
 # Initialize Supabase client
 supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
 
@@ -38,6 +51,7 @@ supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
 # ──────────────────────────────────────────────
 
 @mcp.tool()
+@staff_only
 def lookup_customer(identifier: str) -> str:
     """
     Look up a customer by name or email address.
@@ -64,6 +78,7 @@ def lookup_customer(identifier: str) -> str:
 
 
 @mcp.tool()
+@staff_only
 def get_customer_history(customer_id: int) -> str:
     """
     Get a customer's complete history: their orders, tickets, and satisfaction ratings.
@@ -94,6 +109,7 @@ def get_customer_history(customer_id: int) -> str:
 # ──────────────────────────────────────────────
 
 @mcp.tool()
+@staff_only
 def get_ticket(ticket_id: int) -> str:
     """
     Get detailed information about a specific support ticket.
@@ -113,6 +129,7 @@ def get_ticket(ticket_id: int) -> str:
 
 
 @mcp.tool()
+@staff_only
 def create_ticket(
     customer_id: int,
     subject: str,
@@ -120,6 +137,7 @@ def create_ticket(
     ticket_type: str = "inquiry",
     priority: str = "medium",
     channel: str = "chat",
+    client_request_id: str | None = None,
 ) -> str:
     """
     Create a new support ticket for a customer.
@@ -132,40 +150,25 @@ def create_ticket(
         priority: Priority level: low, medium, high, or critical.
         channel: Communication channel: chat, email, phone, or social_media.
     """
-    try:
-        data = {
-            "customer_id": customer_id,
-            "subject": subject,
-            "description": description,
-            "type": ticket_type,
-            "status": "open",
-            "priority": priority,
-            "channel": channel,
-        }
-        # #review: Direct table insert bypasses the transactional outbox pattern and idempotency checks
-        # implemented in app/tools.py (execute_ticket_mutation_with_outbox).
-        response = supabase.table("tickets").insert(data).execute()
-        
-        if not response.data:
-            return json.dumps({"error": "Failed to create ticket"})
-            
-        ticket_id = response.data[0]["id"]
-        return json.dumps({
-            "status": "success",
-            "message": f"Ticket #{ticket_id} created successfully",
-            "ticket_id": ticket_id,
-        })
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    from app import tools
+
+    if not client_request_id or not client_request_id.strip():
+        return json.dumps({"error": "client_request_id is required for mutating operations"})
+    return tools.create_ticket(
+        customer_id, subject, description, ticket_type=ticket_type, priority=priority,
+        channel=channel, client_request_id=client_request_id,
+    )
 
 
 @mcp.tool()
+@staff_only
 def update_ticket(
     ticket_id: int,
     status: str = None,
     priority: str = None,
     resolution: str = None,
     assigned_agent: str = None,
+    client_request_id: str | None = None,
 ) -> str:
     """
     Update an existing support ticket's status, priority, resolution, or assigned agent.
@@ -177,27 +180,16 @@ def update_ticket(
         resolution: Resolution notes when closing a ticket.
         assigned_agent: Name of the agent to assign the ticket to.
     """
-    updates = {}
-    if status:
-        updates["status"] = status
-    if priority:
-        updates["priority"] = priority
-    if resolution:
-        updates["resolution"] = resolution
-    if assigned_agent:
-        updates["assigned_agent"] = assigned_agent
+    from app import tools
 
-    if not updates:
+    if not client_request_id or not client_request_id.strip():
+        return json.dumps({"error": "client_request_id is required for mutating operations"})
+    if not any((status, priority, resolution, assigned_agent)):
         return json.dumps({"error": "No fields to update"})
-
-    try:
-        response = supabase.table("tickets").update(updates).eq("id", ticket_id).execute()
-        if not response.data:
-            return json.dumps({"error": f"Ticket #{ticket_id} not found or update failed"})
-            
-        return json.dumps({"status": "success", "message": f"Ticket #{ticket_id} updated"})
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    return tools.update_ticket(
+        ticket_id, status=status, priority=priority, resolution=resolution,
+        assigned_agent=assigned_agent, client_request_id=client_request_id,
+    )
 
 
 # ──────────────────────────────────────────────
@@ -205,6 +197,7 @@ def update_ticket(
 # ──────────────────────────────────────────────
 
 @mcp.tool()
+@staff_only
 def track_order(order_id: int) -> str:
     """
     Track the current status and delivery information of an order.
@@ -224,29 +217,19 @@ def track_order(order_id: int) -> str:
 
 
 @mcp.tool()
-def cancel_order(order_id: int) -> str:
+@staff_only
+def cancel_order(order_id: int, client_request_id: str | None = None) -> str:
     """
     Cancel an active order. Only orders with status 'active' can be cancelled.
 
     Args:
         order_id: The numeric ID of the order to cancel.
     """
-    try:
-        # Check current status
-        response = supabase.table("orders").select("status").eq("id", order_id).execute()
-        
-        if not response.data:
-            return json.dumps({"error": f"Order #{order_id} not found"})
+    from app import tools
 
-        if response.data[0]["status"] != "active":
-            return json.dumps({
-                "error": f"Cannot cancel order #{order_id}. Current status: {response.data[0]['status']}. Only active orders can be cancelled."
-            })
-
-        update_resp = supabase.table("orders").update({"status": "cancelled"}).eq("id", order_id).execute()
-        return json.dumps({"status": "success", "message": f"Order #{order_id} has been cancelled"})
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    if not client_request_id or not client_request_id.strip():
+        return json.dumps({"error": "client_request_id is required for mutating operations"})
+    return tools.cancel_order(order_id, client_request_id=client_request_id)
 
 
 @mcp.tool()
@@ -287,6 +270,7 @@ def check_inventory(product_name: str) -> str:
 # ──────────────────────────────────────────────
 
 @mcp.tool()
+@staff_only
 def get_dashboard_stats() -> str:
     """Get aggregated statistics for the agent dashboard."""
     from app.tools import get_dashboard_stats as read_stats

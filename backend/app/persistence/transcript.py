@@ -15,6 +15,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 _TRANSIENT_CODES = {"PGRST000", "PGRST001", "PGRST002", "PGRST003", "40001", "40P01", "57014"}
 _RETRY_DELAYS = (0.25, 1.0)
+_FLUSH_INTERVAL = 30.0
 
 
 class TranscriptWriter:
@@ -42,10 +43,10 @@ class TranscriptWriter:
             return
 
         queued = self._pending.get(session_id)
-        if queued and (
-            queued["p_session_revision"] > revision
-            or (queued["p_session_revision"] == revision and not disconnected)
-        ):
+        if queued and queued["p_session_revision"] >= revision:
+            if queued["p_session_revision"] == revision and disconnected and not queued["p_ended_at"]:
+                self._pending[session_id] = {**queued, "p_ended_at": datetime.now(timezone.utc).isoformat()}
+                self._available.set()
             return
         self._pending[session_id] = {
             "p_session_id": session_id,
@@ -70,22 +71,31 @@ class TranscriptWriter:
 
     async def _run(self, write) -> None:
         while True:
-            await self._available.wait()
-            while self._pending:
-                session_id = next(iter(self._pending))
-                snapshot = self._pending.pop(session_id)
-                await self._write_with_retry(write, snapshot)
-            if self._stopping:
-                return
-            self._available.clear()
+            if self._pending:
+                try:
+                    await asyncio.wait_for(self._available.wait(), timeout=_FLUSH_INTERVAL)
+                except TimeoutError:
+                    pass
+            else:
+                await self._available.wait()
 
-    async def _write_with_retry(self, write, snapshot) -> None:
+            self._available.clear()
+            stopping = self._stopping
+            for session_id, snapshot in list(self._pending.items()):
+                if self._pending.get(session_id) is not snapshot:
+                    continue
+                if await self._write_with_retry(write, snapshot) and self._pending.get(session_id) is snapshot:
+                    del self._pending[session_id]
+            if stopping:
+                return
+
+    async def _write_with_retry(self, write, snapshot) -> bool:
         session_id = snapshot["p_session_id"]
         revision = snapshot["p_session_revision"]
         for attempt in range(len(_RETRY_DELAYS) + 1):
             try:
                 await asyncio.wait_for(write(snapshot), timeout=8.0)
-                return
+                return True
             except Exception as exc:
                 retryable = isinstance(exc, (httpx.TransportError, TimeoutError)) or (
                     isinstance(exc, APIError) and (
@@ -97,7 +107,7 @@ class TranscriptWriter:
                         "Transcript write failed for session %s revision %s (%s)",
                         session_id, revision, type(exc).__name__,
                     )
-                    return
+                    return False
                 logger.warning("Retrying transcript write for session %s revision %s", session_id, revision)
                 await asyncio.sleep(_RETRY_DELAYS[attempt])
 

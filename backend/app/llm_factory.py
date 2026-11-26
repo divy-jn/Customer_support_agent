@@ -2,13 +2,14 @@
 import os
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from langchain_google_genai import ChatGoogleGenerativeAI
 from app.config import settings
 
 logger = logging.getLogger("llm_factory")
 
 SETTINGS_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "settings.json"))
+_HEALTH_TTL = timedelta(minutes=5)
 _provider_success: dict[tuple[str, str | None, str | None], str] = {}
 
 
@@ -25,7 +26,10 @@ def model_for_telemetry(llm) -> str:
 
 
 def last_provider_success(model: str, project: str | None, location: str | None) -> str | None:
-    return _provider_success.get((model.removeprefix("models/"), project, location))
+    observed_at = _provider_success.get((model.removeprefix("models/"), project, location))
+    if observed_at and datetime.now(timezone.utc) - datetime.fromisoformat(observed_at) < _HEALTH_TTL:
+        return observed_at
+    return None
 
 
 def get_dynamic_settings() -> dict:
@@ -56,9 +60,16 @@ class _NormalizedChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
         key = (self.model.removeprefix("models/"), self.project, self.location)
         _provider_success[key] = datetime.now(timezone.utc).isoformat()
 
+    def _record_provider_failure(self) -> None:
+        _provider_success.pop((self.model.removeprefix("models/"), self.project, self.location), None)
+
     # Gemini 3+ returns content as list of typed blocks; normalize to plain str
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        res = super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        try:
+            res = super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        except Exception:
+            self._record_provider_failure()
+            raise
         self._record_provider_success()
         for gen in res.generations:
             if hasattr(gen, "message") and isinstance(gen.message.content, list):
@@ -72,7 +83,11 @@ class _NormalizedChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
         return res
 
     async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
-        res = await super()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        try:
+            res = await super()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        except Exception:
+            self._record_provider_failure()
+            raise
         self._record_provider_success()
         for gen in res.generations:
             if hasattr(gen, "message") and isinstance(gen.message.content, list):
@@ -85,21 +100,37 @@ class _NormalizedChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
                     gen.message.content = "".join(texts)
         return res
 
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        observed_response = False
+        try:
+            for chunk in super()._stream(messages, stop=stop, run_manager=run_manager, **kwargs):
+                if not observed_response:
+                    self._record_provider_success()
+                    observed_response = True
+                yield chunk
+        except Exception:
+            self._record_provider_failure()
+            raise
+
     async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
         observed_response = False
-        async for chunk in super()._astream(messages, stop=stop, run_manager=run_manager, **kwargs):
-            if not observed_response:
-                self._record_provider_success()
-                observed_response = True
-            if hasattr(chunk, "message") and isinstance(chunk.message.content, list):
-                texts = [
-                    b.get("text", "")
-                    for b in chunk.message.content
-                    if isinstance(b, dict) and b.get("type") == "text"
-                ]
-                if texts:
-                    chunk.message.content = "".join(texts)
-            yield chunk
+        try:
+            async for chunk in super()._astream(messages, stop=stop, run_manager=run_manager, **kwargs):
+                if not observed_response:
+                    self._record_provider_success()
+                    observed_response = True
+                if hasattr(chunk, "message") and isinstance(chunk.message.content, list):
+                    texts = [
+                        b.get("text", "")
+                        for b in chunk.message.content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    ]
+                    if texts:
+                        chunk.message.content = "".join(texts)
+                yield chunk
+        except Exception:
+            self._record_provider_failure()
+            raise
 
 
 def get_llm(model: str = None, **kwargs):

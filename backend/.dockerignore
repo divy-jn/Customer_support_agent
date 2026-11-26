@@ -3,7 +3,6 @@ __pycache__/
 .venv/
 venv/
 chroma_db/
-knowledge_base/
 .env
 .env.*
 !.env.example

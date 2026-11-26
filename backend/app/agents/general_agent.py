@@ -23,7 +23,9 @@ async def handle_general_request(state: dict[str, Any]) -> dict[str, Any]:
         if not cust_name and cust_id:
             try:
                 from app.tools import supabase
-                res = supabase.table("customers").select("name").eq("id", cust_id).execute()
+                res = await asyncio.to_thread(
+                    lambda: supabase.table("customers").select("name").eq("id", cust_id).execute()
+                )
                 if res.data and res.data[0].get("name"):
                     cust_name = res.data[0]["name"]
             except Exception:

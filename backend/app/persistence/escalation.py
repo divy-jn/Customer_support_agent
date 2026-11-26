@@ -5,16 +5,30 @@ Provides concurrency-safe initialization and authoritative reads for the
 per-session escalation lifecycle. Postgres is the authoritative source.
 """
 from typing import Optional
-import logging
 from app.models import EscalationLifecycleStatus
 from app.tools import supabase, _supabase_retry
 
-logger = logging.getLogger(__name__)
+
+class EscalationStateUnavailable(RuntimeError):
+    """The authoritative escalation state could not be retrieved."""
 
 
-def _is_table_missing_error(e: Exception) -> bool:
-    err_msg = str(e)
-    return "PGRST205" in err_msg or ("Could not find the table" in err_msg and "in the schema cache" in err_msg)
+def _read_state(session_id: str, customer_id: int) -> Optional[EscalationLifecycleStatus]:
+    try:
+        result = (
+            supabase.table("session_escalation_state")
+            .select("status, customer_id")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        rows = result.data
+    except Exception as exc:
+        raise EscalationStateUnavailable("Escalation state lookup failed") from exc
+    if not rows:
+        return None
+    if rows[0]["customer_id"] != customer_id:
+        raise ValueError(f"Session {session_id} belongs to a different customer.")
+    return EscalationLifecycleStatus(rows[0]["status"])
 
 
 @_supabase_retry
@@ -23,7 +37,6 @@ def ensure_durable_escalation_state(session_id: str, customer_id: int) -> Escala
     Ensures that exactly one durable state record exists for the given session.
     If it does not exist, creates it with status 'NONE' (concurrency-safe).
     Returns the authoritative current status from Postgres.
-    Gracefully degrades to NONE if the session_escalation_state table does not exist.
     """
     if not session_id or not customer_id:
         raise ValueError("session_id and customer_id are required")
@@ -37,42 +50,14 @@ def ensure_durable_escalation_state(session_id: str, customer_id: int) -> Escala
             "status": EscalationLifecycleStatus.NONE.value
         }).execute()
         return EscalationLifecycleStatus.NONE
-    except Exception as e:
-        if _is_table_missing_error(e):
-            logger.warning(f"session_escalation_state table not found in Supabase schema. Degraded to default NONE status.")
-            return EscalationLifecycleStatus.NONE
-        logger.debug(f"Insert failed for session {session_id}, likely concurrent creation or exists. Fetching existing...")
-        pass
-
-    try:
-        res = supabase.table("session_escalation_state").select("status, customer_id").eq("session_id", session_id).execute()
-        if res.data:
-            if res.data[0]["customer_id"] != customer_id:
-                raise ValueError(f"Session {session_id} belongs to a different customer.")
-            return EscalationLifecycleStatus(res.data[0]["status"])
-    except Exception as e:
-        if _is_table_missing_error(e):
-            logger.warning(f"session_escalation_state table not found in Supabase schema. Degraded to default NONE status.")
-            return EscalationLifecycleStatus.NONE
-        raise
-
-    raise RuntimeError(f"Failed to ensure durable escalation state for session {session_id}")
+    except Exception as exc:
+        state = _read_state(session_id, customer_id)
+        if state is not None:
+            return state
+        raise EscalationStateUnavailable("Escalation state initialization failed") from exc
 
 
 @_supabase_retry
 def get_durable_escalation_state(session_id: str, customer_id: int) -> Optional[EscalationLifecycleStatus]:
-    """
-    Retrieves the authoritative current status from Postgres.
-    Returns None if the record does not exist or table is absent.
-    """
-    try:
-        res = supabase.table("session_escalation_state").select("status, customer_id").eq("session_id", session_id).execute()
-        if res.data:
-            if res.data[0]["customer_id"] != customer_id:
-                raise ValueError(f"Session {session_id} belongs to a different customer.")
-            return EscalationLifecycleStatus(res.data[0]["status"])
-    except Exception as e:
-        if _is_table_missing_error(e):
-            return None
-        raise
-    return None
+    """Return the authoritative status, or None if the session has no row."""
+    return _read_state(session_id, customer_id)

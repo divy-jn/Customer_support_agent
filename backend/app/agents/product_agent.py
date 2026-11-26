@@ -13,6 +13,7 @@ Does NOT:
 """
 
 import time
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Protocol
 from pydantic import BaseModel
@@ -287,7 +288,7 @@ class ProductAgent:
                 active_ticket_id=merged_state.product_state.active_ticket_id,
                 client_request_id=context.client_request_id
             )
-            ticket_res = TicketLifecycleService.process_issue(ticket_ctx)
+            ticket_res = await asyncio.to_thread(TicketLifecycleService.process_issue, ticket_ctx)
             
             if ticket_res.action == "FAILED":
                 logger.error("ProductAgent: Ticket creation failed: %s", ticket_res.reason)
@@ -428,7 +429,8 @@ class ProductAgent:
                         
                     # Execute tool through SkillRuntime Policy Enforcer
                     # Enforces allowed tools per skill
-                    exec_result = self.skill_runtime.execute_tool(
+                    exec_result = await asyncio.to_thread(
+                        self.skill_runtime.execute_tool,
                         skill,
                         tool_name,
                         arguments,
