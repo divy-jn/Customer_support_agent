@@ -6,8 +6,7 @@ Outputs a strictly typed SemanticRouteResult.
 
 import json
 import time
-from app.config import settings
-from app.llm_factory import get_llm
+from app.llm_factory import get_llm, model_for_telemetry
 from app.middleware.tracking import track_llm_call
 from app.models import SemanticRouteResult, RouterDiagnostics, RouterFailureType
 
@@ -43,7 +42,7 @@ If you are unsure of the domain, use "unknown".
 """
 
 def get_semantic_router_llm():
-    return get_llm(model=settings.llm_model, temperature=0.1)
+    return get_llm(temperature=0.1)
 
 def parse_and_validate_semantic_output(raw_text: str, latency_ms: int) -> SemanticRouteResult:
     """Parses LLM output, enforcing the SemanticRouteResult schema and capturing failures."""
@@ -157,7 +156,7 @@ Classify this message and respond with a JSON object."""
     start_time = time.time()
     try:
         llm = get_semantic_router_llm()
-        with track_llm_call(settings.llm_model, "semantic_router", prompt) as tracker:
+        with track_llm_call(model_for_telemetry(llm), "semantic_router", prompt) as tracker:
             response = await llm.ainvoke([
                 {"role": "system", "content": SEMANTIC_ROUTER_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},

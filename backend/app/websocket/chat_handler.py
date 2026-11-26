@@ -30,6 +30,7 @@ from app.guardrails import validate_input, validate_output, get_rejection_messag
 from app.middleware.tracking import emit_workflow_turn
 
 from app.persistence.session import session_store
+from app.persistence.transcript import transcript_writer
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ async def _execute_cas(session_id: str, loader_fn, mutator_fn, retries: int) -> 
         result = await session_store.save_session_conditional(session_id, session, expected_revision)
         
         if result == SaveResult.SUCCESS:
+            transcript_writer.submit(session_id, session)
             return session, True
         elif result == SaveResult.MISSING:
             logger.error("Session missing during CAS mutation", extra={"session_id": session_id})
@@ -65,7 +67,9 @@ async def _execute_cas(session_id: str, loader_fn, mutator_fn, retries: int) -> 
     raise RuntimeError("Concurrency conflict: stale session data could not be saved safely.")
 
 
-async def _get_session(session_id: str, authenticated_customer_id: int | None = None) -> dict:
+async def _get_session(
+    session_id: str, authenticated_customer_id: int | None = None, *, persisted: dict | None = None,
+) -> dict:
     """Retrieve an existing session or initialize a new one with the authenticated customer_id."""
     session = await session_store.get_session(session_id)
     if not session:
@@ -86,6 +90,12 @@ async def _get_session(session_id: str, authenticated_customer_id: int | None = 
                 "turn_count": 0
             }
         }
+        if persisted and persisted["customer_id"] == authenticated_customer_id:
+            new_session["_session_revision"] = max(1, persisted.get("session_revision") or 0)
+            new_session["conversation_history"] = persisted.get("transcript") or []
+            new_session["escalated"] = bool(persisted.get("escalated"))
+            if persisted.get("started_at"):
+                new_session["created_at"] = persisted["started_at"]
         from app.persistence.session import SaveResult
         res = await session_store.create_session_if_absent(session_id, new_session)
         if res == SaveResult.SUCCESS:
@@ -134,11 +144,12 @@ async def _mutate_session(session_id: str, mutator_fn, allow_retry: bool = True,
 
 async def get_all_active_sessions() -> list:
     """Return sessions with a currently connected customer WebSocket."""
-    sessions = await session_store.get_all_active_sessions()
-    connected_session_ids = set(manager.active_connections.keys())
+    connected_ids = list(manager.active_connections)
+    sessions = await session_store.get_sessions(connected_ids)
     return [
-        session for session in sessions
-        if session.get("session_id") in connected_session_ids
+        {**session, "session_id": session_id}
+        for session_id, session in zip(connected_ids, sessions)
+        if session and session_id in manager.active_connections
     ]
 
 
@@ -192,6 +203,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
     # authoritative lookup is unavailable, fail closed rather than recreating
     # the session under the caller's identity. Fresh server-generated IDs do
     # not need this round-trip.
+    persisted = None
     if authenticated_customer_id is not None and caller_supplied_session_id:
         # A cached session that already has an owner is itself an authoritative
         # session-store record. Reject a mismatch immediately, even if the DB is down.
@@ -208,13 +220,14 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
             from app.tools import supabase
             res = await asyncio.to_thread(
                 supabase.table("conversations")
-                .select("customer_id")
+                .select("customer_id,session_revision,transcript,escalated,started_at")
                 .eq("session_id", session_id)
                 .execute
             )
             persisted_rows = res.data or []
             if persisted_rows:
-                persisted_owner = persisted_rows[0].get("customer_id")
+                persisted = persisted_rows[0]
+                persisted_owner = persisted.get("customer_id")
                 if persisted_owner is not None and persisted_owner != authenticated_customer_id:
                     await websocket.close(
                         code=status.WS_1008_POLICY_VIOLATION,
@@ -254,14 +267,16 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 )
                 return
 
-    await manager.connect_customer(websocket, session_id)
-
     try:
-        session = await _get_session(session_id, authenticated_customer_id)
+        if persisted and persisted.get("session_revision") is not None:
+            session = await _get_session(session_id, authenticated_customer_id, persisted=persisted)
+        else:
+            session = await _get_session(session_id, authenticated_customer_id)
     except ValueError as e:
-        # Reject connection if ownership fails
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(e))
         return
+
+    await manager.connect_customer(websocket, session_id)
 
     customer_id = authenticated_customer_id
     if customer_id is not None and not session.get("customer_name"):
@@ -1176,44 +1191,17 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
         manager.disconnect_customer(session_id, websocket)
         logger.info(f"Customer disconnected: {session_id}")
         
-        # Save conversation to database.
-        # We use local variables to avoid `await` which would raise CancelledError if the task is cancelled.
-        try:
-            # Only save if we have initialized the session earlier in the function
-            if 'session' in locals() and session and session.get("conversation_history"):
-                was_escalated = "true" if session.get("mode") == "human" or any(
-                     msg.get("escalated") for msg in session.get("conversation_history", [])
-                ) else "false"
-                
-                # #review: Defaulting customer_id to 1 assigns transcripts from unauthenticated/anonymous guests to Customer 1 in Supabase
-                data = {
-                    "session_id": session_id,
-                    "customer_id": session.get("customer_id") or 1,
-                    "transcript": session.get("conversation_history"),
-                    "escalated": True if was_escalated == "true" else False,
-                    "ended_at": datetime.now(timezone.utc).isoformat()
-                }
-                from app.tools import supabase
-                import anyio
-                
-                # Instead of asyncio.shield (which fails under anyio cancellation),
-                # we spawn a background thread natively so it survives cancellation
-                # and we don't await it here to prevent CancelledError.
-                def save_to_db(save_data):
-                    try:
-                        supabase.table("conversations").upsert(save_data, on_conflict="session_id").execute()
-                    except Exception as ex:
-                        pass
-                
-                import threading
-                t = threading.Thread(target=save_to_db, args=(data,))
-                t.start()
-                # In tests we might need it to finish, so we join with a short timeout.
-                # This safely waits for the persistence operation without raising CancelledError.
-                t.join(timeout=2.0)
-                
-        except Exception as e:
-            logger.error(f"Failed to save conversation to DB for session {session_id}: {e}")
+        if session_id not in manager.active_connections and transcript_writer.running:
+            try:
+                latest = await session_store.get_session(session_id)
+                if latest and latest.get("customer_id") == authenticated_customer_id:
+                    session = latest
+            except Exception:
+                logger.exception("Could not read the latest transcript for session %s", session_id)
+            finally:
+                if session_id not in manager.active_connections:
+                    transcript_writer.submit(session_id, session, disconnected=True)
+
 
 async def handle_agent_ws(websocket: WebSocket, session_id: str):
     """
@@ -1325,7 +1313,10 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                 if not customer_id:
                     try:
                         from app.tools import supabase
-                        row = supabase.table("session_escalation_state").select("customer_id").eq("session_id", session_id).execute()
+                        row = await asyncio.to_thread(
+                            supabase.table("session_escalation_state")
+                            .select("customer_id").eq("session_id", session_id).execute
+                        )
                         if row.data and row.data[0].get("customer_id"):
                             customer_id = row.data[0]["customer_id"]
                             def _set_cust(s):
@@ -1434,7 +1425,10 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                 if not customer_id:
                     try:
                         from app.tools import supabase
-                        row = supabase.table("session_escalation_state").select("customer_id").eq("session_id", session_id).execute()
+                        row = await asyncio.to_thread(
+                            supabase.table("session_escalation_state")
+                            .select("customer_id").eq("session_id", session_id).execute
+                        )
                         if row.data and row.data[0].get("customer_id"):
                             customer_id = row.data[0]["customer_id"]
                     except Exception:

@@ -663,15 +663,18 @@ Message: "{context.customer_message}"
 class DefaultProductLLMAdapter:
     """Default LLM adapter for ProductAgent using configured application model."""
     def __init__(self):
-        self._llm = None
+        self._cached_model = None
 
     @property
     def llm(self):
-        if self._llm is None:
-            from app.llm_factory import get_llm
-            from app.config import settings
-            self._llm = get_llm(model=settings.llm_model, temperature=0.0)
-        return self._llm
+        from app.llm_factory import get_llm, resolve_model
+
+        model = resolve_model()
+        cached = self._cached_model
+        if cached is None or cached[0] != model:
+            cached = (model, get_llm(model=model, temperature=0.0))
+            self._cached_model = cached
+        return cached[1]
 
     async def invoke(self, system_prompt: str, user_prompt: str) -> str:
         from langchain_core.messages import SystemMessage, HumanMessage
@@ -680,6 +683,7 @@ class DefaultProductLLMAdapter:
         return res.content
 
 
+_default_product_llm_adapter = DefaultProductLLMAdapter()
 _default_product_resolver = None
 
 
@@ -723,7 +727,7 @@ async def handle_product_request(
 
     runtime = SkillRuntime(bound_executor)
     resolver = get_default_product_resolver()
-    adapter = llm_adapter or DefaultProductLLMAdapter()
+    adapter = llm_adapter or _default_product_llm_adapter
     agent = ProductAgent(resolver, runtime, adapter)
 
     raw_ws = state.get("workflow_state") or {

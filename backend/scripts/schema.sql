@@ -123,6 +123,65 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.tickets TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.conversations TO service_role;
 
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
+
+ALTER TABLE public.conversations
+ADD COLUMN IF NOT EXISTS session_revision bigint NOT NULL DEFAULT 0;
+
+CREATE OR REPLACE FUNCTION public.persist_conversation(
+    p_session_id text, p_customer_id bigint, p_transcript jsonb,
+    p_session_revision bigint, p_escalated boolean,
+    p_started_at timestamptz, p_ended_at timestamptz
+) RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO public.conversations (
+        session_id, customer_id, transcript, session_revision, escalated, started_at, ended_at
+    ) VALUES (
+        p_session_id, p_customer_id, p_transcript, p_session_revision, p_escalated,
+        COALESCE(p_started_at, now()), p_ended_at
+    )
+    ON CONFLICT (session_id) DO UPDATE SET
+        transcript = EXCLUDED.transcript,
+        session_revision = EXCLUDED.session_revision,
+        escalated = EXCLUDED.escalated,
+        ended_at = EXCLUDED.ended_at
+    WHERE conversations.customer_id = EXCLUDED.customer_id
+      AND conversations.session_revision < EXCLUDED.session_revision;
+
+    -- A disconnect can close an already persisted revision, without replacing its transcript.
+    IF p_ended_at IS NOT NULL THEN
+        UPDATE public.conversations
+        SET ended_at = GREATEST(ended_at, p_ended_at)
+        WHERE session_id = p_session_id AND customer_id = p_customer_id
+          AND session_revision = p_session_revision;
+    END IF;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.persist_conversation(text, bigint, jsonb, bigint, boolean, timestamptz, timestamptz)
+    FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.persist_conversation(text, bigint, jsonb, bigint, boolean, timestamptz, timestamptz)
+    TO service_role;
+
+CREATE OR REPLACE FUNCTION public.get_ticket_statistics() RETURNS jsonb
+LANGUAGE sql STABLE
+AS $$
+    SELECT jsonb_build_object(
+        'total_tickets', count(*),
+        'open_tickets', count(*) FILTER (WHERE status = 'open'),
+        'escalated_tickets', count(*) FILTER (WHERE status = 'escalated'),
+        'avg_satisfaction', round(avg(satisfaction_rating)::numeric, 2),
+        'by_status', (SELECT coalesce(jsonb_object_agg(status, n), '{}'::jsonb)
+                      FROM (SELECT status, count(*) AS n FROM public.tickets WHERE status IS NOT NULL GROUP BY status) AS grouped),
+        'by_type', (SELECT coalesce(jsonb_object_agg(type, n), '{}'::jsonb)
+                    FROM (SELECT type, count(*) AS n FROM public.tickets WHERE type IS NOT NULL GROUP BY type) AS grouped),
+        'by_priority', (SELECT coalesce(jsonb_object_agg(priority, n), '{}'::jsonb)
+                        FROM (SELECT priority, count(*) AS n FROM public.tickets WHERE priority IS NOT NULL GROUP BY priority) AS grouped)
+    )
+    FROM public.tickets;
+$$;
+REVOKE EXECUTE ON FUNCTION public.get_ticket_statistics() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_ticket_statistics() TO service_role;
 -- Create Idempotency Table
 CREATE TABLE IF NOT EXISTS idempotency_records (
     customer_id BIGINT NOT NULL,

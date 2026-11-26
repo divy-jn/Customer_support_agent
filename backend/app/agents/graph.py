@@ -49,15 +49,18 @@ product_resolver = ProductSkillResolver(product_registry)
 
 class GraphLLMAdapter:
     def __init__(self):
-        self._llm = None
+        self._cached_model = None
         
     @property
     def llm(self):
-        if self._llm is None:
-            from app.llm_factory import get_llm
-            from app.config import settings
-            self._llm = get_llm(model=settings.llm_model, temperature=0.0)
-        return self._llm
+        from app.llm_factory import get_llm, resolve_model
+
+        model = resolve_model()
+        cached = self._cached_model
+        if cached is None or cached[0] != model:
+            cached = (model, get_llm(model=model, temperature=0.0))
+            self._cached_model = cached
+        return cached[1]
         
     async def invoke(self, system: str, user: str) -> str:
         from langchain_core.messages import SystemMessage, HumanMessage

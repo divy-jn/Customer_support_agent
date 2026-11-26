@@ -5,7 +5,10 @@ to interact with tickets, customers, and dashboard data.
 
 from fastapi import APIRouter, HTTPException, Depends, Header
 import json
+import os
 import uuid
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 import asyncio
 
 from app.dependencies import (
@@ -18,7 +21,7 @@ from app.supabase_auth import exchange_supabase_token
 # ──────────────────────────────────────────────
 #  Development Authentication
 # ──────────────────────────────────────────────
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime, timedelta, timezone
 import jwt
 
@@ -46,7 +49,7 @@ auth_router.add_api_route("/auth/supabase/exchange", exchange_supabase_token, me
 #  Development Authentication Endpoints
 # ──────────────────────────────────────────────
 @router.post("/auth/agent/dev-login")
-async def dev_agent_login():
+def dev_agent_login():
     """
     Local-development agent login. Disabled unless DEBUG_MODE is explicitly enabled.
     Production deployments must use a real agent identity provider.
@@ -64,7 +67,7 @@ async def dev_agent_login():
 
 
 @router.post("/auth/dev-login")
-async def dev_login(email: str):
+def dev_login(email: str):
     """
     DEVELOPMENT ONLY endpoint.
     Generates a JWT token for the specified email without password verification.
@@ -96,7 +99,7 @@ async def dev_login(email: str):
 # ──────────────────────────────────────────────
 
 @router.get("/customers/search")
-async def search_customer(q: str, _: dict = Depends(verify_staff_directory)):
+def search_customer(q: str, _: dict = Depends(verify_staff_directory)):
     """Search for a customer by name or email."""
     if not q or not q.strip():
         raise HTTPException(status_code=400, detail="Search query cannot be empty")
@@ -107,7 +110,7 @@ async def search_customer(q: str, _: dict = Depends(verify_staff_directory)):
 
 
 @router.get("/customers")
-async def list_customers(limit: int = 50, offset: int = 0, _: dict = Depends(verify_staff_directory)):
+def list_customers(limit: int = 50, offset: int = 0, _: dict = Depends(verify_staff_directory)):
     """Get all customers with pagination."""
     if limit <= 0 or offset < 0:
         raise HTTPException(status_code=400, detail="Invalid pagination parameters")
@@ -118,7 +121,7 @@ async def list_customers(limit: int = 50, offset: int = 0, _: dict = Depends(ver
 
 
 @router.get("/customers/{customer_id}/history")
-async def customer_history(customer_id: int, auth_user: dict = Depends(verify_any_token)):
+def customer_history(customer_id: int, auth_user: dict = Depends(verify_any_token)):
     """Allow staff to read customer history and customers to read their own."""
     if auth_user["role"] == "customer" and auth_user["id"] != customer_id:
         raise HTTPException(status_code=403, detail="Access denied")
@@ -135,7 +138,7 @@ async def customer_history(customer_id: int, auth_user: dict = Depends(verify_an
 # ──────────────────────────────────────────────
 
 @router.get("/tickets")
-async def list_tickets(limit: int = 50, offset: int = 0, status: TicketStatus = None, _: bool = Depends(verify_agent_token)):
+def list_tickets(limit: int = 50, offset: int = 0, status: TicketStatus = None, _: bool = Depends(verify_agent_token)):
     """Get all tickets with optional status filter."""
     if limit <= 0 or offset < 0:
         raise HTTPException(status_code=400, detail="Invalid pagination parameters")
@@ -144,7 +147,7 @@ async def list_tickets(limit: int = 50, offset: int = 0, status: TicketStatus = 
 
 
 @router.get("/tickets/{ticket_id}")
-async def get_ticket_detail(ticket_id: int, auth_user: dict = Depends(verify_any_token)):
+def get_ticket_detail(ticket_id: int, auth_user: dict = Depends(verify_any_token)):
     """Get details of a specific ticket."""
     result = get_ticket(ticket_id)
     data = json.loads(result)
@@ -159,7 +162,7 @@ async def get_ticket_detail(ticket_id: int, auth_user: dict = Depends(verify_any
 
 
 @router.post("/tickets", status_code=201)
-async def create_new_ticket(
+def create_new_ticket(
     ticket: TicketCreate, 
     _: bool = Depends(verify_agent_token),
     client_request_id: uuid.UUID = Header(..., alias="X-Client-Request-Id")
@@ -183,7 +186,7 @@ async def create_new_ticket(
 
 @router.patch("/tickets/{ticket_id}")
 @router.put("/tickets/{ticket_id}")
-async def update_existing_ticket(
+def update_existing_ticket(
     ticket_id: int, 
     update: TicketUpdate, 
     _: bool = Depends(verify_agent_token),
@@ -211,7 +214,7 @@ async def update_existing_ticket(
 # ──────────────────────────────────────────────
 
 @router.get("/orders/{order_id}/track")
-async def track_order_status(order_id: int, authenticated_customer_id: int = Depends(verify_customer_token)):
+def track_order_status(order_id: int, authenticated_customer_id: int = Depends(verify_customer_token)):
     """Track the status of a specific order."""
     result = track_order(order_id)
     data = json.loads(result)
@@ -226,7 +229,7 @@ async def track_order_status(order_id: int, authenticated_customer_id: int = Dep
 
 
 @router.post("/orders/{order_id}/cancel")
-async def cancel_order_endpoint(
+def cancel_order_endpoint(
     order_id: int, 
     _: bool = Depends(verify_agent_token),
     client_request_id: uuid.UUID = Header(..., alias="X-Client-Request-Id")
@@ -240,7 +243,7 @@ async def cancel_order_endpoint(
 
 
 @router.post("/orders/{order_id}/refund")
-async def refund_order_endpoint(
+def refund_order_endpoint(
     order_id: int, 
     _: bool = Depends(verify_agent_token),
     client_request_id: uuid.UUID = Header(..., alias="X-Client-Request-Id")
@@ -259,7 +262,7 @@ async def refund_order_endpoint(
 
 @router.get("/products/search")
 @router.get("/products/inventory")
-async def search_products(q: str):
+def search_products(q: str):
     """Search for products by name."""
     if not q or not q.strip():
         raise HTTPException(status_code=400, detail="Search query cannot be empty")
@@ -275,10 +278,12 @@ async def search_products(q: str):
 # ──────────────────────────────────────────────
 
 @router.get("/dashboard/stats")
-async def dashboard_stats(_: bool = Depends(verify_agent_token)):
+def dashboard_stats(_: bool = Depends(verify_agent_token)):
     """Get aggregated dashboard statistics."""
-    result = get_dashboard_stats()
-    return json.loads(result)
+    data = json.loads(get_dashboard_stats())
+    if "error" in data:
+        raise HTTPException(status_code=503, detail="Dashboard statistics are unavailable")
+    return data
 
 
 @router.get("/dashboard/sessions")
@@ -318,7 +323,7 @@ async def active_sessions(_: bool = Depends(verify_agent_token)):
 # ──────────────────────────────────────────────
 
 @router.get("/admin/health")
-async def admin_health_check(_: bool = Depends(verify_operator_access)):
+def admin_health_check(_: bool = Depends(verify_operator_access)):
     """Aggregated health check for all services."""
     llm = check_llm_health()
     vectordb = check_vectordb_health()
@@ -341,21 +346,21 @@ async def admin_health_check(_: bool = Depends(verify_operator_access)):
 
 
 @router.get("/admin/system-info")
-async def admin_system_info(_: bool = Depends(verify_operator_access)):
+def admin_system_info(_: bool = Depends(verify_operator_access)):
     """Get system configuration and version info."""
     return get_system_info()
 
 
 @router.get("/admin/knowledge-base")
 @router.get("/admin/knowledge")
-async def admin_list_kb(_: bool = Depends(verify_admin_key)):
+def admin_list_kb(_: bool = Depends(verify_admin_key)):
     """List all knowledge base documents."""
     docs = list_knowledge_base_docs()
     return {"documents": docs, "total": len(docs)}
 
 
 @router.get("/admin/knowledge-base/{filename}")
-async def admin_get_kb_doc(filename: str, _: bool = Depends(verify_admin_key)):
+def admin_get_kb_doc(filename: str, _: bool = Depends(verify_admin_key)):
     """Read a specific knowledge base document."""
     content = get_knowledge_base_doc(filename)
     if content is None:
@@ -367,30 +372,34 @@ async def admin_get_kb_doc(filename: str, _: bool = Depends(verify_admin_key)):
 async def admin_reingest_kb(_: bool = Depends(verify_admin_key)):
     """Trigger re-ingestion of knowledge base into Pinecone/Chroma."""
     try:
-        # #review: Synchronous ingestion or blocking subprocess call freezes the FastAPI event loop for up to 120s!
-        # Should be offloaded to a background task (e.g. BackgroundTasks or Celery/Worker).
         from app.rag.retriever import ingest_knowledge_base
-        result = await asyncio.to_thread(ingest_knowledge_base)
-        return {"status": "success", "message": "Knowledge base re-ingested", "details": result}
-    except (ImportError, AttributeError):
-        # Fallback: run the script in a separate thread so event loop remains responsive
+    except ImportError:
         import subprocess
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["python", "-m", "scripts.ingest_knowledge"],
-            capture_output=True, text=True, timeout=120,
-        )
-        return {
-            "status": "success" if result.returncode == 0 else "error",
-            "stdout": result.stdout[-500:] if result.stdout else "",
-            "stderr": result.stderr[-500:] if result.stderr else "",
-        }
+        import sys
 
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                [sys.executable, "-m", "scripts.ingest_knowledge"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                cwd=Path(__file__).resolve().parents[1],
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise HTTPException(status_code=503, detail="Knowledge base ingestion failed") from exc
+        if result.returncode != 0:
+            raise HTTPException(status_code=503, detail="Knowledge base ingestion failed. Check the knowledge directory and backend logs.")
+        return {"status": "success", "stdout": (result.stdout or "")[-500:], "stderr": (result.stderr or "")[-500:]}
 
-from app.logger import get_recent_logs
+    try:
+        result = await asyncio.to_thread(ingest_knowledge_base)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=422, detail="No ingestible knowledge base documents were found") from exc
+    return {"status": "success", "message": "Knowledge base re-ingested", "details": result}
+
 
 @router.get("/admin/logs")
-async def admin_get_logs(level: str = None, search: str = None, limit: int = 100, _: bool = Depends(verify_admin_key)):
+def admin_get_logs(level: str = None, search: str = None, limit: int = 100, _: bool = Depends(verify_admin_key)):
     """Get recent activity from the production JSON log file with optional filtering."""
     if limit <= 0:
         raise HTTPException(status_code=400, detail="Limit must be a positive integer")
@@ -413,26 +422,33 @@ async def admin_get_connection_metrics(_: bool = Depends(verify_operator_access)
     """Get WebSocket connection metrics."""
     return get_connection_metrics()
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.llm_factory import get_dynamic_settings, SETTINGS_FILE
 
 class LLMSettingsUpdate(BaseModel):
-    model: str = "gemini-3.8-flash"
+    model_config = {"str_strip_whitespace": True}
+    model: str = Field(default="gemini-3.8-flash", min_length=1)
 
 @router.get("/admin/llm-settings")
 @router.get("/admin/settings")
-async def admin_get_llm_settings(_: bool = Depends(verify_admin_key)):
+def admin_get_llm_settings(_: bool = Depends(verify_admin_key)):
     """Get the current dynamic LLM settings."""
     return get_dynamic_settings()
 
 @router.post("/admin/llm-settings")
-async def admin_update_llm_settings(settings_update: LLMSettingsUpdate, _: bool = Depends(verify_admin_key)):
+def admin_update_llm_settings(settings_update: LLMSettingsUpdate, _: bool = Depends(verify_admin_key)):
     """Update the dynamic LLM settings."""
     new_settings = settings_update.model_dump()
+    temp_path = None
     try:
-        with open(SETTINGS_FILE, "w") as f:
-            json.dump(new_settings, f, indent=4)
+        with NamedTemporaryFile(mode="w", encoding="utf-8", dir=Path(SETTINGS_FILE).parent, delete=False) as file:
+            temp_path = Path(file.name)
+            json.dump(new_settings, file, indent=4)
+        os.replace(temp_path, SETTINGS_FILE)
         return {"status": "success", "settings": new_settings}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Failed to save settings") from exc
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 

@@ -12,7 +12,6 @@ Usage:
 
 import os
 import sys
-import glob
 
 from pinecone import Pinecone
 
@@ -29,6 +28,8 @@ CHUNK_OVERLAP = 100       # overlap between chunks
 
 def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
     """Split text into overlapping chunks by character count, respecting paragraph boundaries."""
+    if not 0 <= overlap < chunk_size:
+        raise ValueError("Require 0 <= overlap < chunk_size")
     paragraphs = text.split("\n\n")
     chunks = []
     current_chunk = ""
@@ -51,11 +52,11 @@ def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
                         current_chunk += (" " + word) if current_chunk else word
                     else:
                         chunks.append(current_chunk)
-                        overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
+                        overlap_text = current_chunk[-overlap:] if overlap else ""
                         current_chunk = overlap_text + " " + word
             else:
                 if chunks:
-                    overlap_text = chunks[-1][-overlap:] if len(chunks[-1]) > overlap else chunks[-1]
+                    overlap_text = chunks[-1][-overlap:] if overlap else ""
                     current_chunk = overlap_text + "\n\n" + para
                 else:
                     current_chunk = para
@@ -63,27 +64,24 @@ def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     if current_chunk.strip():
         chunks.append(current_chunk)
 
-    return chunks
+    bounded = []
+    for chunk in chunks:
+        chunk = chunk.strip()
+        start = 0
+        while start < len(chunk):
+            part = chunk[start:start + chunk_size].strip()
+            if part:
+                bounded.append(part)
+            if start + chunk_size >= len(chunk):
+                break
+            start += chunk_size - overlap
+    return bounded
 
 
 def ingest():
     """Main ingestion function."""
-    kb_dir = os.path.join(os.path.dirname(__file__), "..", "knowledge_base")
-    kb_dir = os.path.abspath(kb_dir)
-
-    md_files = glob.glob(os.path.join(kb_dir, "*.md"))
-    if not md_files:
-        print(f"❌ No .md files found in {kb_dir}")
-        return
-
-    print(f"📚 Found {len(md_files)} knowledge base documents:")
-    for f in md_files:
-        print(f"   - {os.path.basename(f)}")
-
-    print(f"\n🔧 Connecting to Pinecone...")
-    pc = Pinecone(api_key=settings.pinecone_api_key)
-    index = pc.Index(settings.pinecone_index_name)
-    print(f"   ✅ Connected to index: {settings.pinecone_index_name}")
+    kb_dir = settings.knowledge_base_path
+    md_files = sorted(path for path in kb_dir.glob("*.md") if path.is_file())
 
     # Process each document
     total_chunks = 0
@@ -117,6 +115,12 @@ def ingest():
                 "metadata": metadata
             })
             total_chunks += 1
+
+    if not all_records:
+        raise FileNotFoundError(f"No ingestible markdown documents in {kb_dir}")
+
+    pc = Pinecone(api_key=settings.pinecone_api_key)
+    index = pc.Index(settings.pinecone_index_name)
 
     # Batch embed and insert into Pinecone
     print(f"\n⬆️  Embedding and inserting {total_chunks} chunks into Pinecone...")

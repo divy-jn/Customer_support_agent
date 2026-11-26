@@ -6,8 +6,7 @@ Uses the small/fast LLM model for quick classification.
 """
 
 import json
-from app.config import settings
-from app.llm_factory import get_llm
+from app.llm_factory import get_llm, model_for_telemetry
 from app.middleware.tracking import track_llm_call
 
 
@@ -20,7 +19,7 @@ ROUTER_SYSTEM_PROMPT = GLOBAL_SYSTEM_POLICY + "\n\n" + render_skill_prompt(Inten
 
 def get_router_llm():
     """Get the LLM for fast routing decisions."""
-    return get_llm(model=settings.llm_model, temperature=0.1)
+    return get_llm(temperature=0.1)
 
 
 def parse_and_validate_router_output(raw_text: str) -> dict:
@@ -133,7 +132,7 @@ async def classify_intent(message: str, conversation_history: list[dict] = None)
 Classify this message and respond with a JSON object."""
 
     try:
-        with track_llm_call(settings.llm_model, "intent_router", prompt) as tracker:
+        with track_llm_call(model_for_telemetry(llm), "intent_router", prompt) as tracker:
             response = await llm.ainvoke([
                 {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},

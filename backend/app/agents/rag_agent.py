@@ -7,9 +7,8 @@ explicitly says it doesn't have the information.
 """
 
 import asyncio
-from app.config import settings
 from app.rag.retriever import retrieve_as_context
-from app.llm_factory import get_llm
+from app.llm_factory import get_llm, model_for_telemetry
 from app.middleware.tracking import track_llm_call
 
 
@@ -23,7 +22,7 @@ RAG_SYSTEM_PROMPT += "\n\nCONTEXT:\n{context}"
 
 def get_rag_llm():
     """Get the LLM for generating RAG responses."""
-    return get_llm(model=settings.llm_model, temperature=0.3)
+    return get_llm(temperature=0.3)
 
 
 async def generate_response(
@@ -77,7 +76,7 @@ async def generate_response(
     llm = get_rag_llm()
 
     try:
-        with track_llm_call(settings.llm_model, "rag_node", user_prompt) as tracker:
+        with track_llm_call(model_for_telemetry(llm), "rag_node", user_prompt) as tracker:
             response = await llm.ainvoke([
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     # --- Redis ---
     upstash_redis_url: str = Field(default="", alias="UPSTASH_REDIS_URL")
     upstash_redis_token: str = Field(default="", alias="UPSTASH_REDIS_TOKEN")
+    http_rate_limit_storage_uri: str = Field(default="memory://", alias="HTTP_RATE_LIMIT_STORAGE_URI")
 
     # --- MCP Servers ---
     mcp_db_port: int = 8001

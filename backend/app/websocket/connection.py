@@ -41,9 +41,8 @@ def get_connection_metrics() -> dict:
 class ConnectionManager:
     """
     Manages active customer and agent WebSocket connections.
-    #review: In-memory connection management assumes a single backend process.
-    # In a multi-worker / multi-instance deployment, agent broadcasting across workers
-    # requires a pub/sub backbone (e.g. Redis Pub/Sub).
+    Run one API worker and replica. Redis stores session data, while socket
+    presence and delivery stay in this process until shared pub/sub is added.
     """
     def __init__(self):
         # Maps session_id -> WebSocket

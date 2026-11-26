@@ -808,38 +808,12 @@ def check_warranty_status(customer_id: int, product_name: str = None, order_id: 
 @track_tool_call("get_dashboard_stats")
 @_supabase_retry
 def get_dashboard_stats() -> str:
-    """Get aggregated dashboard statistics."""
+    """Get aggregated dashboard statistics from the database."""
     try:
-        all_tickets = supabase.table("tickets").select("id, status, priority, type, satisfaction_rating").execute()
-        data = all_tickets.data
-
-        total = len(data)
-        open_count = sum(1 for t in data if t["status"] == "open")
-        escalated = sum(1 for t in data if t["status"] == "escalated")
-
-        by_priority = {}
-        by_type = {}
-        by_status = {}
-        sat_scores = []
-
-        for t in data:
-            by_priority[t["priority"]] = by_priority.get(t["priority"], 0) + 1
-            by_type[t["type"]] = by_type.get(t["type"], 0) + 1
-            by_status[t["status"]] = by_status.get(t["status"], 0) + 1
-            if t.get("satisfaction_rating"):
-                sat_scores.append(t["satisfaction_rating"])
-
-        avg_sat = sum(sat_scores) / len(sat_scores) if sat_scores else None
-
-        return json.dumps({
-            "total_tickets": total,
-            "open_tickets": open_count,
-            "escalated_tickets": escalated,
-            "avg_satisfaction": round(avg_sat, 2) if avg_sat else None,
-            "by_priority": by_priority,
-            "by_type": by_type,
-            "by_status": by_status,
-        }, indent=2)
+        data = supabase.rpc("get_ticket_statistics", {}).execute().data
+        if not isinstance(data, dict) or "total_tickets" not in data:
+            raise ValueError("Missing ticket statistics")
+        return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -972,21 +946,25 @@ def get_all_tickets(limit: int = 50, offset: int = 0, status: str = None) -> str
 # ──────────────────────────────────────────────
 
 def check_llm_health() -> dict:
-    """Check if Vertex AI Gemini is configured and reachable."""
-    from app.llm_factory import get_dynamic_settings
-    try:
-        # #review: Only checks local settings file without performing a lightweight ping to Vertex AI API
-        dyn = get_dynamic_settings()
-        current_model = dyn.get("model", settings.llm_model)
+    """Report local configuration and the last observed provider success."""
+    from app.llm_factory import last_provider_success, resolve_model
+
+    current_model = resolve_model()
+    if not settings.vertex_project_id or not settings.vertex_location:
         return {
-            "status": "healthy",
+            "status": "unhealthy",
+            "error": "Vertex AI configuration missing (VERTEX_PROJECT_ID or VERTEX_LOCATION not set)",
             "provider": "vertex",
-            "model": current_model,
-            "project_id": settings.vertex_project_id,
-            "location": settings.vertex_location,
         }
-    except Exception as e:
-        return {"status": "unhealthy", "error": str(e), "provider": "vertex"}
+    checked_at = last_provider_success(current_model, settings.vertex_project_id, settings.vertex_location)
+    return {
+        "status": "healthy" if checked_at else "configured",
+        "provider": "vertex",
+        "model": current_model,
+        "project_id": settings.vertex_project_id,
+        "location": settings.vertex_location,
+        **({"checked_at": checked_at} if checked_at else {}),
+    }
 
 
 def check_vectordb_health() -> dict:
@@ -1021,14 +999,14 @@ def check_supabase_health() -> dict:
 
 def get_system_info() -> dict:
     """Get system information for the admin dashboard."""
-    from app.llm_factory import get_dynamic_settings
-    dyn = get_dynamic_settings()
+    from app.llm_factory import resolve_model
+
     return {
         "app_version": "1.0.0",
         "python_version": platform.python_version(),
         "platform": platform.platform(),
         "llm_provider": "vertex",
-        "llm_model": dyn.get("model", settings.llm_model),
+        "llm_model": resolve_model(),
         "vertex_project_id": settings.vertex_project_id,
         "vertex_location": settings.vertex_location,
         "supabase_url": settings.supabase_url,
@@ -1044,8 +1022,7 @@ def get_system_info() -> dict:
 
 def list_knowledge_base_docs() -> list[dict]:
     """List all knowledge base documents."""
-    from pathlib import Path
-    kb_path = Path(settings.knowledge_base_dir)
+    kb_path = settings.knowledge_base_path
     docs = []
     if kb_path.exists():
         for f in sorted(kb_path.iterdir()):
@@ -1061,8 +1038,7 @@ def list_knowledge_base_docs() -> list[dict]:
 
 def get_knowledge_base_doc(filename: str) -> str | None:
     """Read a knowledge base document's content."""
-    from pathlib import Path
-    kb_path = Path(settings.knowledge_base_dir) / filename
+    kb_path = settings.knowledge_base_path / filename
     if kb_path.exists() and kb_path.suffix == ".md":
         return kb_path.read_text(encoding="utf-8")
     return None

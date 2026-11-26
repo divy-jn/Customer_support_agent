@@ -41,6 +41,7 @@ python-multipart>=0.0.20
 # === Production Hardening ===
 tenacity>=9.0.0
 slowapi>=0.1.9
+redis>=5,<8
 ragas>=0.2.0
 datasets>=3.0.0
 pytest>=8.0.0

@@ -8,7 +8,9 @@ Serves:
 - Health check on /health
 """
 
+import asyncio
 import logging
+import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -21,6 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import settings
 from app.routes import auth_router, router as api_router
 from app.websocket.chat_handler import handle_customer_ws, handle_agent_ws
+from app.persistence.transcript import transcript_persistence
 
 from app.logger import setup_logger, set_trace_id
 from app.dependencies import verify_agent_ws_token
@@ -73,14 +76,8 @@ def _run_startup_checks():
 
     checks = {}
 
-    # Check LLM (Vertex AI) connectivity
-    try:
-        from app.llm_factory import get_llm
-        llm = get_llm()
-        checks["llm"] = f"OK (Vertex AI: {settings.llm_model})"
-    except Exception as e:
-        checks["llm"] = f"CONFIG_ERROR ({e})"
-        logger.warning(f"Vertex AI initialization check failed at startup: {e}")
+    from app.tools import check_llm_health
+    checks["llm"] = check_llm_health()["status"]
 
     # Check Supabase DB connectivity
     try:
@@ -112,18 +109,23 @@ def _run_startup_checks():
 # ──────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.llm_factory import resolve_model
+
     logger.info("=== Customer Support AI Server Starting ===")
     logger.info(f"LLM Provider  : Vertex AI")
-    logger.info(f"LLM Model     : {settings.llm_model}")
+    logger.info(f"LLM Model     : {resolve_model()}")
     logger.info(f"GCP Project   : {settings.vertex_project_id}")
     logger.info(f"GCP Location  : {settings.vertex_location}")
     logger.info(f"Supabase URL  : {settings.supabase_url}")
     logger.info(f"Log Level     : {settings.log_level}")
     logger.info(f"CORS Origins  : {settings.cors_origins_list}")
 
-    # Run startup health checks (non-blocking)
+    workers = os.getenv("WEB_CONCURRENCY", "1")
+    if workers.isdecimal() and int(workers) > 1:
+        logger.critical("WEB_CONCURRENCY=%s: WebSocket presence and delivery require one API worker and replica", workers)
+
     try:
-        _run_startup_checks()
+        await asyncio.to_thread(_run_startup_checks)
     except Exception as e:
         logger.error(f"Startup checks failed: {e}")
 
@@ -135,17 +137,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Outbox worker failed to start: {e}")
 
-    yield
-
-    # Stop the outbox worker
     try:
-        from app.outbox.lifecycle import stop_outbox_worker, stop_reconciliation_scheduler
-        await stop_reconciliation_scheduler()
-        await stop_outbox_worker()
-    except Exception as e:
-        logger.error(f"Outbox worker failed to stop cleanly: {e}")
+        async with transcript_persistence():
+            yield
+    finally:
+        try:
+            from app.outbox.lifecycle import stop_outbox_worker, stop_reconciliation_scheduler
+            await stop_reconciliation_scheduler()
+            await stop_outbox_worker()
+        except Exception as e:
+            logger.error(f"Outbox worker failed to stop cleanly: {e}")
 
-    logger.info("=== Customer Support AI Server Stopped ===")
+        logger.info("=== Customer Support AI Server Stopped ===")
 
 
 # ──────────────────────────────────────────────
@@ -161,7 +164,21 @@ app = FastAPI(
 # Request ID middleware (must come before CORS)
 app.add_middleware(RequestIDMiddleware)
 
-# CORS — use explicit origins (allow_origins=["*"] + allow_credentials=True is invalid per spec)
+# Rate limiting must run inside CORS so browsers can read 429 responses.
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["300/minute"],
+    storage_uri=settings.http_rate_limit_storage_uri or "memory://",
+)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -170,19 +187,6 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-Request-ID"],
 )
-
-# Rate Limiting — 300 req/min per IP (optional, requires `slowapi`)
-try:
-    from slowapi import Limiter, _rate_limit_exceeded_handler
-    from slowapi.util import get_remote_address
-    from slowapi.errors import RateLimitExceeded
-
-    limiter = Limiter(key_func=get_remote_address, default_limits=["300/minute"])
-    app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-    logger.info("Rate limiting enabled: 300 req/min per IP")
-except ImportError:
-    logger.warning("slowapi not installed — rate limiting disabled. Run: pip install slowapi")
 
 
 # ──────────────────────────────────────────────
@@ -245,8 +249,9 @@ async def ws_agent(websocket: WebSocket, session_id: str, _: bool = Depends(veri
 #  Health Check
 # ──────────────────────────────────────────────
 @app.get("/health", tags=["system"])
-async def health_check():
+def health_check():
     # Only checks Supabase; Pinecone & LLM are NOT checked here
+    from app.llm_factory import resolve_model
     from app.tools import check_supabase_health
     db_health = check_supabase_health()
     status = "healthy" if db_health.get("status") == "healthy" else "unhealthy"
@@ -257,7 +262,7 @@ async def health_check():
         "version": "1.0.0",  #review: hard-coded — should match app.version (2.0.0)
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "llm_provider": "vertex",
-        "llm_model": settings.llm_model,
+        "llm_model": resolve_model(),
         "supabase_connected": status == "healthy",
         "details": db_health
     }

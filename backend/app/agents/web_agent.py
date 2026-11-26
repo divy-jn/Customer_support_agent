@@ -3,8 +3,7 @@ Web Search Agent — handles questions that fall outside the knowledge base
 by searching the internet using the Web Search MCP tools.
 """
 
-from app.config import settings
-from app.llm_factory import get_llm
+from app.llm_factory import get_llm, model_for_telemetry
 from app.middleware.tracking import track_llm_call
 
 from app.skills.base import render_skill_prompt
@@ -16,7 +15,7 @@ WEB_AGENT_SYSTEM_PROMPT += "\n\nTOOL RESULTS from web search:\n{tool_results}"
 
 def get_web_llm():
     """Get the LLM for generating web search-based responses."""
-    return get_llm(model=settings.llm_model, temperature=0.3)
+    return get_llm(temperature=0.3)
 
 def determine_search_query(message: str) -> dict:
     """
@@ -54,7 +53,7 @@ Provide a helpful response to the customer based on the web search results."""
 
     try:
         # Wrap in telemetry tracker for latency and token monitoring
-        with track_llm_call(settings.llm_model, "web_node", user_prompt) as tracker:
+        with track_llm_call(model_for_telemetry(llm), "web_node", user_prompt) as tracker:
             response = await llm.ainvoke([
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

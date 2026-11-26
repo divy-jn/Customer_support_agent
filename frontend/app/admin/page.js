@@ -15,6 +15,9 @@ function StatusIndicator({ status }) {
       </span>
     );
   }
+  if (status === "configured") {
+    return <span className="text-xs font-medium text-amber-400">Configured · Awaiting provider response</span>;
+  }
   return (
     <span className="flex items-center gap-1.5 text-xs font-medium text-red-400 bg-red-400/10 px-2.5 py-1 rounded-full">
       <span className="w-1.5 h-1.5 rounded-full bg-red-400"></span>
@@ -42,10 +45,12 @@ export default function SystemHealthPage() {
         agentFetch(`${API_BASE}/api/v1/admin/metrics`).catch(() => null),
         agentFetch(`${API_BASE}/api/v1/admin/connections`).catch(() => null),
       ]);
-      setHealth(await healthRes.json());
+      const latestHealth = await healthRes.json();
+      setHealth(latestHealth);
       if (metricsRes?.ok) setMetrics(await metricsRes.json());
       if (connRes?.ok) setConnMetrics(await connRes.json());
       setLastRefreshed(new Date());
+      return latestHealth;
     } catch (err) {
       console.error("Failed to fetch health data:", err);
     } finally {
@@ -65,12 +70,14 @@ export default function SystemHealthPage() {
 
   // Test a specific service on demand
   const testService = async (service) => {
-    toast(`Testing ${service} connection...`, "info");
+    toast(`Checking ${service} status…`, "info");
     try {
-      await fetchData(true);
-      const status = health?.services?.[service]?.status;
+      const latestHealth = await fetchData(true);
+      const status = latestHealth?.services?.[service]?.status;
       if (status === "healthy") {
         toast(`${service} is healthy ✓`, "success");
+      } else if (status === "configured") {
+        toast("Vertex AI is configured and has yet to return a successful response.", "info");
       } else {
         toast(`${service} is unreachable ✕`, "error");
       }
@@ -132,7 +139,7 @@ export default function SystemHealthPage() {
           <div className="flex justify-between items-start mb-4">
             <div>
               <h3 className="text-lg font-semibold flex items-center gap-2">LLM Provider</h3>
-              <p className="text-xs text-[var(--text-muted)] font-mono mt-1">Google Cloud Vertex AI ({services?.llm?.project_id || "bytebazaar-dj"})</p>
+              <p className="text-xs text-[var(--text-muted)] font-mono mt-1">Google Cloud Vertex AI {services?.llm?.project_id && `(${services.llm.project_id})`}</p>
             </div>
             <StatusIndicator status={services?.llm?.status} />
           </div>
@@ -141,12 +148,16 @@ export default function SystemHealthPage() {
               <p className="text-xs text-[var(--text-secondary)] uppercase tracking-wider mb-2">Primary Model</p>
               <div className="flex items-center justify-between text-sm bg-[var(--bg-input)] p-3 rounded-lg">
                 <span>Vertex AI Gemini</span>
-                <span className="font-mono text-[var(--accent)]">{services?.llm?.model || "gemini-3.8-flash"}</span>
-                <span className="text-emerald-400 text-xs">Active ✓</span>
+                <span className="font-mono text-[var(--accent)]">{services?.llm?.model || "Unavailable"}</span>
               </div>
             </div>
+            {services?.llm?.checked_at && (
+              <p className="text-xs text-[var(--text-muted)]">
+                Last successful provider response {new Date(services.llm.checked_at).toLocaleString()}
+              </p>
+            )}
             <button onClick={() => testService("llm")} className="btn-secondary w-full py-2 text-xs">
-              Test Connection
+              Check Status
             </button>
             {services?.llm?.error && (
               <div className="bg-red-900/20 border border-red-500/30 text-red-300 text-xs p-3 rounded-lg font-mono">{services.llm.error}</div>

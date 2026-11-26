@@ -3,8 +3,7 @@ Escalation Agent — handles angry customers or explicit human handoff requests.
 Prepares the session for live agent takeover.
 """
 
-from app.llm_factory import get_llm
-from app.config import settings
+from app.llm_factory import get_llm, model_for_telemetry
 from app.middleware.tracking import track_llm_call
 
 from app.skills.base import render_skill_prompt
@@ -16,7 +15,7 @@ ESCALATION_PROMPT = GLOBAL_SYSTEM_POLICY + "\n\n" + render_skill_prompt(Escalati
 # Low temperature (0.1) ensures empathetic, predictable handover messaging
 def get_escalation_llm():
     """Get the LLM for fast escalation processing."""
-    return get_llm(model=settings.llm_model, temperature=0.1)
+    return get_llm(temperature=0.1)
 
 async def generate_escalation_response(message: str) -> dict:
     """
@@ -30,7 +29,7 @@ async def generate_escalation_response(message: str) -> dict:
 
     try:
         # #review: track_llm_call is imported above but not used here for telemetry
-        with track_llm_call(settings.llm_model, "escalation_node", user_prompt) as tracker:
+        with track_llm_call(model_for_telemetry(llm), "escalation_node", user_prompt) as tracker:
             response = await llm.ainvoke([
                 {"role": "system", "content": ESCALATION_PROMPT},
                 {"role": "user", "content": user_prompt},

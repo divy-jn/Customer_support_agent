@@ -10,7 +10,7 @@ import json
 from typing import Literal
 from pydantic import BaseModel, Field
 from app.config import settings
-from app.llm_factory import get_llm
+from app.llm_factory import get_llm, model_for_telemetry
 from app.middleware.tracking import track_llm_call
 
 
@@ -23,7 +23,7 @@ DB_AGENT_SYSTEM_PROMPT = GLOBAL_SYSTEM_POLICY + "\n\n" + render_skill_prompt(Dat
 
 def get_db_llm():
     """Get the large LLM for generating database-informed responses."""
-    return get_llm(model=settings.llm_model, temperature=0.3, request_timeout=min(settings.llm_timeout, 30))
+    return get_llm(temperature=0.3, request_timeout=min(settings.llm_timeout, 30))
 
 
 # Pydantic schema for structured DB action planning
@@ -64,7 +64,7 @@ Do NOT invent IDs.
 
     try:
         # Track LLM latency and token telemetry
-        with track_llm_call(settings.llm_model, "db_plan", prompt) as tracker:
+        with track_llm_call(model_for_telemetry(llm), "db_plan", prompt) as tracker:
             result = structured_llm.invoke([
                 {"role": "system", "content": DB_AGENT_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
@@ -157,7 +157,7 @@ Based on the tool results above, provide a helpful response to the customer."""
 
     try:
         # LLM call with system prompt containing DB skills policy
-        with track_llm_call(settings.llm_model, "db_node", user_prompt) as tracker:
+        with track_llm_call(model_for_telemetry(llm), "db_node", user_prompt) as tracker:
             response = await llm.ainvoke([
                 {"role": "system", "content": DB_AGENT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},

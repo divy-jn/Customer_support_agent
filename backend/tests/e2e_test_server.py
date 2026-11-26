@@ -48,7 +48,14 @@ session_module.redis_client = None
 session_store = session_module.session_store
 session_store.clear()
 import app.main as main_module
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def offline_transcript_persistence():
+    yield
+
 main_module._run_startup_checks = lambda: None
+main_module.transcript_persistence = offline_transcript_persistence
 from app.main import app
 from app.models import ApprovalStatus
 from app.agents.approval_service import (

@@ -13,7 +13,7 @@ import json
 import os
 import sys
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from supabase import create_client, Client
 
 # Add backend to path
@@ -26,7 +26,7 @@ from app.config import settings
 # ──────────────────────────────────────────────
 mcp = FastMCP(
     "CustomerSupportDB",
-    description="MCP server providing secure access to the customer support Supabase database.",
+    instructions="MCP server providing secure access to the customer support Supabase database.",
 )
 
 # Initialize Supabase client
@@ -288,48 +288,10 @@ def check_inventory(product_name: str) -> str:
 
 @mcp.tool()
 def get_dashboard_stats() -> str:
-    """
-    Get aggregated statistics for the agent dashboard: total tickets,
-    open tickets, escalated count, and breakdowns by priority, type, and status.
-    """
-    try:
-        # Note: Supabase REST API doesn't support complex aggregations directly out of the box 
-        # as easily as raw SQL, so we fetch the data and aggregate in Python for simplicity, 
-        # or use exact counts. For a real dashboard, we'd use a Supabase RPC (stored procedure).
-        # We will fetch a simple summary for now.
-        
-        all_tickets = supabase.table("tickets").select("id, status, priority, type, satisfaction_rating").execute()
-        data = all_tickets.data
-        
-        total = len(data)
-        open_count = sum(1 for t in data if t["status"] == "open")
-        escalated = sum(1 for t in data if t["status"] == "escalated")
-        
-        by_priority = {}
-        by_type = {}
-        by_status = {}
-        sat_scores = []
-        
-        for t in data:
-            by_priority[t["priority"]] = by_priority.get(t["priority"], 0) + 1
-            by_type[t["type"]] = by_type.get(t["type"], 0) + 1
-            by_status[t["status"]] = by_status.get(t["status"], 0) + 1
-            if t.get("satisfaction_rating"):
-                sat_scores.append(t["satisfaction_rating"])
-                
-        avg_sat = sum(sat_scores) / len(sat_scores) if sat_scores else None
+    """Get aggregated statistics for the agent dashboard."""
+    from app.tools import get_dashboard_stats as read_stats
 
-        return json.dumps({
-            "total_tickets": total,
-            "open_tickets": open_count,
-            "escalated_tickets": escalated,
-            "avg_satisfaction": round(avg_sat, 2) if avg_sat else None,
-            "by_priority": by_priority,
-            "by_type": by_type,
-            "by_status": by_status,
-        }, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    return read_stats()
 
 
 # ──────────────────────────────────────────────

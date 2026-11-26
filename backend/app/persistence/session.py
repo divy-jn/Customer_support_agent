@@ -1,10 +1,5 @@
-"""
-Live session persistence boundary.
-
-Current save is still unconditional.
-Two concurrent writers can still overwrite one another.
-F.2.8.2 will introduce atomic conditional persistence.
-"""
+"""Live session cache with conditional revision updates."""
+from copy import deepcopy
 import json
 import logging
 import asyncio
@@ -74,9 +69,18 @@ class SessionStore(dict):
             return None
         else:
             async with self._lock:
-                import copy
                 data = self.get(session_id)
-                return copy.deepcopy(data) if data else None
+                return deepcopy(data) if data else None
+
+    async def get_sessions(self, session_ids: list[str]) -> list[dict | None]:
+        """Load values for a known set of live IDs in the same order."""
+        if not session_ids:
+            return []
+        if redis_client:
+            values = await redis_client.mget(*(f"session:{session_id}" for session_id in session_ids))
+            return [json.loads(value) if isinstance(value, str) else value for value in values]
+        async with self._lock:
+            return [deepcopy(self.get(session_id)) for session_id in session_ids]
 
     async def save_session(self, session_id: str, session: dict) -> None:
         """Unconditional save. Overwrites any existing session."""
@@ -137,27 +141,6 @@ class SessionStore(dict):
                 self[session_id] = copy.deepcopy(session)
                 return SaveResult.SUCCESS
 
-    async def get_all_active_sessions(self) -> list:
-        """Retrieve all active sessions from Redis or memory."""
-        if redis_client:
-            try:
-                # #review: KEYS command blocks Redis if thousands of keys exist; SCAN is recommended for production
-                keys = await redis_client.keys("session:*")
-                sessions = []
-                if keys:
-                    values = await redis_client.mget(*keys)
-                    for val in values:
-                        if val:
-                            s = json.loads(val) if isinstance(val, str) else val
-                            sessions.append(s)
-                return sessions
-            except Exception as e:
-                logger.error(f"Failed to fetch sessions from Redis: {e}")
-                return []
-        else:
-            async with self._lock:
-                import copy
-                return [copy.deepcopy(v) for v in self.values()]
 
 session_store = SessionStore()
 
