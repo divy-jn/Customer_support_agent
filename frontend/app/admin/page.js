@@ -77,7 +77,7 @@ export default function SystemHealthPage() {
       if (status === "healthy") {
         toast(`${service} is healthy ✓`, "success");
       } else if (status === "configured") {
-        toast("Vertex AI is configured and has yet to return a successful response.", "info");
+        toast("The LLM provider is configured and has yet to return a successful response.", "info");
       } else {
         toast(`${service} is unreachable ✕`, "error");
       }
@@ -139,7 +139,7 @@ export default function SystemHealthPage() {
           <div className="flex justify-between items-start mb-4">
             <div>
               <h3 className="text-lg font-semibold flex items-center gap-2">LLM Provider</h3>
-              <p className="text-xs text-[var(--text-muted)] font-mono mt-1">Google Cloud Vertex AI {services?.llm?.project_id && `(${services.llm.project_id})`}</p>
+              <p className="text-xs text-[var(--text-muted)] font-mono mt-1">{services?.llm?.provider === "vertex" ? "Google Cloud Vertex AI" : "AWS Bedrock"} {services?.llm?.region || services?.llm?.project_id}</p>
             </div>
             <StatusIndicator status={services?.llm?.status} />
           </div>
@@ -147,7 +147,7 @@ export default function SystemHealthPage() {
             <div>
               <p className="text-xs text-[var(--text-secondary)] uppercase tracking-wider mb-2">Primary Model</p>
               <div className="flex items-center justify-between text-sm bg-[var(--bg-input)] p-3 rounded-lg">
-                <span>Vertex AI Gemini</span>
+                <span>{services?.llm?.provider === "vertex" ? "Vertex AI" : "Bedrock"}</span>
                 <span className="font-mono text-[var(--accent)]">{services?.llm?.model || "Unavailable"}</span>
               </div>
             </div>

@@ -46,7 +46,7 @@ def _build_dsn() -> str:
     test_url = os.environ.get("TEST_POSTGRES_URL")
     if test_url:
         return test_url
-    url = settings.database_url_sync
+    url = settings.database_dsn or settings.database_url_sync
     return url.replace("postgresql+psycopg2://", "postgresql://")
 
 
@@ -75,8 +75,8 @@ async def start_outbox_worker(sender: Optional[EmailSender] = None) -> Optional[
         logger.warning("Outbox worker already started; skipping duplicate start.")
         return _worker_instance
 
-    if not settings.database_password and not os.environ.get("TEST_POSTGRES_URL"):
-        logger.info("Outbox worker disabled: DATABASE_PASSWORD not configured")
+    if not (settings.database_dsn or settings.database_password or os.environ.get("TEST_POSTGRES_URL")):
+        logger.info("Outbox worker disabled: DATABASE_URL or DATABASE_PASSWORD not configured")
         return None
 
     dsn = _build_dsn()
@@ -225,20 +225,20 @@ async def _reconciliation_loop() -> None:
             periodic_last_event_id = None
 
 
-async def start_reconciliation_scheduler() -> None:
+async def start_reconciliation_scheduler(*, standalone: bool = False) -> None:
     """Start the periodic reconciliation background task."""
     global _reconciliation_task, _reconciliation_cancel_event, _reconciliation_lock
     
     mode = (os.environ.get("OUTBOX_WORKER_MODE") or settings.outbox_worker_mode).lower().strip()
-    if mode == "standalone":
+    if mode == "standalone" and not standalone:
         logger.info(
             "Outbox reconciliation is configured for standalone mode (OUTBOX_WORKER_MODE='standalone'); "
             "skipping in-process reconciliation in FastAPI lifespan."
         )
         return
 
-    if not settings.database_password or not settings.reconciliation_enabled:
-        logger.info("Outbox reconciliation is disabled (DATABASE_PASSWORD not set or disabled via config).")
+    if not (settings.database_dsn or settings.database_password) or not settings.reconciliation_enabled:
+        logger.info("Outbox reconciliation is disabled (database credentials missing or disabled via config).")
         return
 
     if os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("RECONCILIATION_ENABLED", "").lower() != "true":

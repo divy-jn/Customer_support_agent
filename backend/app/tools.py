@@ -966,9 +966,18 @@ def get_all_tickets(limit: int = 50, offset: int = 0, status: str = None) -> str
 
 def check_llm_health() -> dict:
     """Report local configuration and the last observed provider success."""
-    from app.llm_factory import last_provider_success, resolve_model
+    from app.llm_factory import last_bedrock_success, last_provider_success, resolve_model
 
     current_model = resolve_model()
+    if settings.llm_provider == "bedrock":
+        info = {"provider": "bedrock", "model": current_model, "region": settings.aws_region}
+        if not current_model.strip() or not settings.aws_region.strip():
+            return {**info, "status": "unhealthy", "error": "Bedrock requires AWS_REGION and LLM_MODEL"}
+        checked_at = last_bedrock_success(current_model, settings.aws_region)
+        if checked_at:
+            return {**info, "status": "healthy", "checked_at": checked_at}
+        return {**info, "status": "configured"}
+
     if not settings.vertex_project_id or not settings.vertex_location:
         return {
             "status": "unhealthy",
@@ -1024,7 +1033,8 @@ def get_system_info() -> dict:
         "app_version": "1.0.0",
         "python_version": platform.python_version(),
         "platform": platform.platform(),
-        "llm_provider": "vertex",
+        "llm_provider": settings.llm_provider,
+        "aws_region": settings.aws_region if settings.llm_provider == "bedrock" else None,
         "llm_model": resolve_model(),
         "vertex_project_id": settings.vertex_project_id,
         "vertex_location": settings.vertex_location,

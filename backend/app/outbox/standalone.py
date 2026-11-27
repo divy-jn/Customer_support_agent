@@ -192,9 +192,9 @@ async def run_standalone_worker(
         )
 
     # 2. Database readiness check
-    if not settings.database_password and not os.environ.get("TEST_POSTGRES_URL") and not dsn:
+    if not (dsn or settings.database_dsn or settings.database_password or os.environ.get("TEST_POSTGRES_URL")):
         logger.error(
-            "Cannot start standalone outbox worker: DATABASE_PASSWORD or TEST_POSTGRES_URL is not set."
+            "Cannot start standalone outbox worker: DATABASE_URL, DATABASE_PASSWORD, and TEST_POSTGRES_URL are unset."
         )
         return 1
 
@@ -259,12 +259,12 @@ async def run_standalone_worker(
     include_reconciliation = (
         not (args and args.no_reconciliation)
         and settings.reconciliation_enabled
-        and bool(settings.database_password or os.environ.get("TEST_POSTGRES_URL"))
+        and bool(settings.database_dsn or settings.database_password or os.environ.get("TEST_POSTGRES_URL"))
     )
 
     if include_reconciliation:
         try:
-            await start_reconciliation_scheduler()
+            await start_reconciliation_scheduler(standalone=True)
             logger.info("Standalone process started background reconciliation scheduler.")
         except Exception as ex:
             logger.error(f"Failed to start reconciliation scheduler in standalone worker: {ex}")

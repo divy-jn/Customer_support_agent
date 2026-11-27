@@ -1,5 +1,9 @@
 # Environments
 .env
+.env.prod
+.env.prod.*
+!.env.prod.example
+*.pem
 .venv
 venv/
 env/

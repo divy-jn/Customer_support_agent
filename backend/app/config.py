@@ -3,6 +3,7 @@ Application configuration loaded from environment variables.
 """
 import os
 import re
+from typing import Literal
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator, model_validator
 from pathlib import Path
@@ -20,10 +21,14 @@ class Settings(BaseSettings):
     supabase_url: str = Field(..., alias="SUPABASE_URL")       # required, validated below
     supabase_key: str = Field(..., alias="SUPABASE_KEY")       # server-only database credential
     supabase_anon_key: str = Field(default="", alias="SUPABASE_ANON_KEY")
-    database_password: str = Field(default="", alias="DATABASE_PASSWORD")  # falls back to supabase_key
+    database_password: str = Field(default="", alias="DATABASE_PASSWORD")
+    database_dsn: str = Field(default="", alias="DATABASE_URL", repr=False)
 
-    # --- LLM (Vertex AI) ---
-    llm_model: str = Field(default="gemini-2.5-flash", alias="LLM_MODEL")
+    # --- LLM ---
+    llm_provider: Literal["bedrock", "vertex"] = Field(default="bedrock", alias="LLM_PROVIDER")
+    aws_region: str = Field(default="us-east-1", alias="AWS_REGION")
+    llm_model: str = Field(default="deepseek.v3.2", alias="LLM_MODEL")
+    llm_settings_path: Path = Field(default=_BACKEND_ROOT / "settings.json", alias="LLM_SETTINGS_PATH")
     llm_timeout: int = Field(default=120, alias="LLM_TIMEOUT")  # seconds
     vertex_project_id: str = Field(default="bytebazaar-dj", alias="VERTEX_PROJECT_ID")
     vertex_location: str = Field(default="global", alias="VERTEX_LOCATION")
@@ -210,8 +215,11 @@ class Settings(BaseSettings):
         if self.app_environment in {"staging", "production"} and self.debug_mode:
             raise ValueError("DEBUG_MODE must be false when APP_ENVIRONMENT is staging or production")
 
-        if self.app_environment == "production" and not self.database_password:
-            raise ValueError("DATABASE_PASSWORD must be configured when APP_ENVIRONMENT=production")
+        if self.app_environment == "production" and not (self.database_password or self.database_dsn):
+            raise ValueError("DATABASE_PASSWORD must be configured when APP_ENVIRONMENT=production unless DATABASE_URL is supplied")
+
+        if self.llm_provider == "vertex" and "llm_model" not in self.model_fields_set:
+            self.llm_model = "gemini-2.5-flash"
 
         if not self.jwt_secret:
             if self.debug_mode:

@@ -105,7 +105,7 @@ def test_admin_write_roles(admin_client, role, expected):
     response = client.post("/api/v1/admin/knowledge-base/reingest", headers=headers)
     assert response.status_code == expected
     if expected == 200:
-        assert json.loads(routes.SETTINGS_FILE.read_text()) == {"model": "test-model"}
+        assert json.loads(routes.SETTINGS_FILE.read_text()) == {"model": "test-model", "provider": routes.settings.llm_provider}
         ingestion.assert_called_once_with()
     else:
         assert not routes.SETTINGS_FILE.exists()

@@ -8,6 +8,7 @@ chroma_db/
 !.env.example
 token.json
 credentials.json
+**/*.pem
 **/token.json
 **/credentials.json
 logs/

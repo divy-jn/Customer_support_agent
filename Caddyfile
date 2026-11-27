@@ -1,0 +1,12 @@
+{$APP_DOMAIN::80} {
+	encode zstd gzip
+
+	@backend path /api /api/* /ws /ws/* /mcp /mcp/* /health /docs /openapi.json
+	handle @backend {
+		reverse_proxy backend:8002
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

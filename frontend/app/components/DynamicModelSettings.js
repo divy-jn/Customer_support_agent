@@ -3,18 +3,12 @@ import { useState, useEffect } from "react";
 import { API_BASE } from "../lib/api";
 import { adminFetch } from "../lib/agent-auth";
 
-const PREDEFINED_MODELS = [
-  "gemini-3.8-flash",
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-  "gemini-1.5-pro",
-];
-
 export function DynamicModelSettings() {
   const [settings, setSettings] = useState({
-    model: "gemini-3.8-flash",
+    model: "deepseek.v3.2",
   });
+  const [provider, setProvider] = useState("bedrock");
+  const [models, setModels] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null);
@@ -28,6 +22,8 @@ export function DynamicModelSettings() {
       .then((data) => {
         if (data && data.model) {
           setSettings({ model: data.model });
+          setProvider(data.provider);
+          setModels(data.available_models || []);
         }
         setIsLoading(false);
       })
@@ -81,13 +77,10 @@ export function DynamicModelSettings() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--text-secondary)] flex items-center gap-2">
-            Vertex AI Model Selection
-            <span className="bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full text-[10px] font-bold">
-              LIVE
-            </span>
+            {provider === "vertex" ? "Vertex AI" : "AWS Bedrock"} Model
           </h2>
           <p className="text-xs text-[var(--text-muted)] mt-1">
-            Configure the primary model on Google Cloud Vertex AI. Takes effect immediately.
+            The selection takes effect on the next turn.
           </p>
         </div>
         <button
@@ -111,13 +104,13 @@ export function DynamicModelSettings() {
               className="w-full bg-[var(--bg-input)] border border-[var(--border)] rounded p-2.5 text-sm font-mono focus:border-[var(--accent)] focus:outline-none transition-colors"
               value={settings.model}
               onChange={(e) => handleChange("model", e.target.value)}
-              placeholder="gemini-3.8-flash"
+              placeholder={models[0]}
             />
           </div>
         </div>
 
         <datalist id="models-list">
-          {PREDEFINED_MODELS.map((model) => (
+          {models.map((model) => (
             <option key={model} value={model} />
           ))}
         </datalist>

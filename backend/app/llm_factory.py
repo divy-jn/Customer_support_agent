@@ -1,16 +1,23 @@
-"""LLM Factory — creates Vertex AI Gemini LLM instances with content normalization."""
+"""Build provider-specific chat models and track observed provider health."""
 import os
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from botocore.config import Config
+from langchain_aws import ChatBedrockConverse
 from langchain_google_genai import ChatGoogleGenerativeAI
 from app.config import settings
 
 logger = logging.getLogger("llm_factory")
 
-SETTINGS_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "settings.json"))
+SETTINGS_FILE = settings.llm_settings_path
 _HEALTH_TTL = timedelta(minutes=5)
 _provider_success: dict[tuple[str, str | None, str | None], str] = {}
+_bedrock_success: dict[tuple[str, str | None], str] = {}
+MODEL_CHOICES = {
+    "bedrock": ("deepseek.v3.2", "qwen.qwen3-next-80b-a3b", "mistral.ministral-3-14b-instruct"),
+    "vertex": ("gemini-2.5-flash", "gemini-3.8-flash"),
+}
 
 
 def resolve_model(model: str | None = None) -> str:
@@ -21,12 +28,20 @@ def resolve_model(model: str | None = None) -> str:
 
 
 def model_for_telemetry(llm) -> str:
-    model = getattr(llm, "model", None)
+    model = getattr(llm, "model_id", None) or getattr(llm, "model", None)
     return model.removeprefix("models/") if isinstance(model, str) else resolve_model()
 
 
 def last_provider_success(model: str, project: str | None, location: str | None) -> str | None:
     observed_at = _provider_success.get((model.removeprefix("models/"), project, location))
+    return _recent_success(observed_at)
+
+
+def last_bedrock_success(model: str, region: str) -> str | None:
+    return _recent_success(_bedrock_success.get((model, region)))
+
+
+def _recent_success(observed_at: str | None) -> str | None:
     if observed_at and datetime.now(timezone.utc) - datetime.fromisoformat(observed_at) < _HEALTH_TTL:
         return observed_at
     return None
@@ -38,8 +53,17 @@ def get_dynamic_settings() -> dict:
         try:
             with open(SETTINGS_FILE, "r") as f:
                 data = json.load(f)
-                if isinstance(data, dict):
-                    return data
+                if isinstance(data, dict) and data.get("provider", settings.llm_provider) == settings.llm_provider:
+                    model = data.get("model")
+                    # Gemini-only files predate provider-scoped overrides.
+                    legacy_gemini = (
+                        settings.llm_provider == "bedrock"
+                        and "provider" not in data
+                        and isinstance(model, str)
+                        and model.strip().startswith("gemini-")
+                    )
+                    if not legacy_gemini:
+                        return data
         except Exception:
             pass  #review: silently swallows JSON parse errors — consider logging
     return {
@@ -133,22 +157,64 @@ class _NormalizedChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
             raise
 
 
-def get_llm(model: str = None, **kwargs):
-    """Returns a Vertex AI Gemini LLM instance via ``langchain-google-genai``.
+def _normalize_bedrock_text(message) -> None:
+    if isinstance(message.content, list):
+        message.content = "".join(
+            block if isinstance(block, str) else block.get("text", "")
+            for block in message.content
+            if isinstance(block, str) or (isinstance(block, dict) and block.get("type") == "text")
+        )
 
-    Uses Application Default Credentials (ADC) — no API keys needed.
-    """
-    # Resolve model: explicit arg > settings.json > env config
+
+class _ObservedBedrockConverse(ChatBedrockConverse):
+    """Observe network calls and keep text responses compatible with the agents."""
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        key = (self.model_id, self.region_name)
+        try:
+            result = super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        except Exception:
+            _bedrock_success.pop(key, None)
+            raise
+        _bedrock_success[key] = datetime.now(timezone.utc).isoformat()
+        for generation in result.generations:
+            _normalize_bedrock_text(generation.message)
+        return result
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        key = (self.model_id, self.region_name)
+        observed = False
+        try:
+            for chunk in super()._stream(messages, stop=stop, run_manager=run_manager, **kwargs):
+                if not observed:
+                    _bedrock_success[key] = datetime.now(timezone.utc).isoformat()
+                    observed = True
+                yield chunk
+        except Exception:
+            _bedrock_success.pop(key, None)
+            raise
+
+
+def get_llm(model: str | None = None, **kwargs):
+    """Build the selected provider with its effective model and request timeout."""
     actual_model = resolve_model(model)
+    if settings.llm_provider == "bedrock":
+        timeout = kwargs.pop("timeout", None)
+        timeout = kwargs.pop("request_timeout", None) or timeout or settings.llm_timeout
+        kwargs.setdefault("config", Config(
+            connect_timeout=min(timeout, 10),
+            read_timeout=timeout,
+            retries={"total_max_attempts": 1},
+        ))
+        return _ObservedBedrockConverse(
+            model=actual_model,
+            region_name=settings.aws_region,
+            **kwargs,
+        )
 
-    # Apply timeout from settings if not explicitly provided
     if "request_timeout" not in kwargs and "timeout" not in kwargs:
         kwargs["request_timeout"] = settings.llm_timeout
 
-    logger.debug(
-        f"Creating Vertex AI LLM: model={actual_model}, "
-        f"project={settings.vertex_project_id}, location={settings.vertex_location}"
-    )
     return _NormalizedChatGoogleGenerativeAI(
         model=actual_model,
         vertexai=True,

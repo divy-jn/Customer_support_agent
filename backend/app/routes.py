@@ -423,22 +423,26 @@ async def admin_get_connection_metrics(_: bool = Depends(verify_operator_access)
     return get_connection_metrics()
 
 from pydantic import BaseModel, Field
-from app.llm_factory import get_dynamic_settings, SETTINGS_FILE
+from app.llm_factory import MODEL_CHOICES, SETTINGS_FILE, resolve_model
 
 class LLMSettingsUpdate(BaseModel):
     model_config = {"str_strip_whitespace": True}
-    model: str = Field(default="gemini-3.8-flash", min_length=1)
+    model: str = Field(min_length=1)
 
 @router.get("/admin/llm-settings")
 @router.get("/admin/settings")
 def admin_get_llm_settings(_: bool = Depends(verify_admin_key)):
     """Get the current dynamic LLM settings."""
-    return get_dynamic_settings()
+    return {
+        "model": resolve_model(),
+        "provider": settings.llm_provider,
+        "available_models": MODEL_CHOICES[settings.llm_provider],
+    }
 
 @router.post("/admin/llm-settings")
 def admin_update_llm_settings(settings_update: LLMSettingsUpdate, _: bool = Depends(verify_admin_key)):
     """Update the dynamic LLM settings."""
-    new_settings = settings_update.model_dump()
+    new_settings = {**settings_update.model_dump(), "provider": settings.llm_provider}
     temp_path = None
     try:
         with NamedTemporaryFile(mode="w", encoding="utf-8", dir=Path(SETTINGS_FILE).parent, delete=False) as file:

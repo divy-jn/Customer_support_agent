@@ -114,10 +114,13 @@ async def lifespan(app: FastAPI):
     from app.llm_factory import resolve_model
 
     logger.info("=== Customer Support AI Server Starting ===")
-    logger.info(f"LLM Provider  : Vertex AI")
+    logger.info("LLM Provider  : %s", settings.llm_provider)
     logger.info(f"LLM Model     : {resolve_model()}")
-    logger.info(f"GCP Project   : {settings.vertex_project_id}")
-    logger.info(f"GCP Location  : {settings.vertex_location}")
+    if settings.llm_provider == "bedrock":
+        logger.info("AWS Region    : %s", settings.aws_region)
+    else:
+        logger.info("GCP Project   : %s", settings.vertex_project_id)
+        logger.info("GCP Location  : %s", settings.vertex_location)
     logger.info(f"Supabase URL  : {settings.supabase_url}")
     logger.info(f"Log Level     : {settings.log_level}")
     logger.info(f"CORS Origins  : {settings.cors_origins_list}")
@@ -265,7 +268,7 @@ def health_check():
         "service": "customer-support-ai",
         "version": "1.0.0",  #review: hard-coded — should match app.version (2.0.0)
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "llm_provider": "vertex",
+        "llm_provider": settings.llm_provider,
         "llm_model": resolve_model(),
         "supabase_connected": status == "healthy",
         "details": db_health

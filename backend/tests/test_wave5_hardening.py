@@ -287,6 +287,7 @@ async def test_model_change_applies_on_next_turn_and_reuses_adapter(monkeypatch,
 async def test_llm_health_requires_observed_success_for_current_model(monkeypatch, tmp_path):
     monkeypatch.setattr(llm_factory, "_provider_success", {})
     monkeypatch.setattr(llm_factory, "SETTINGS_FILE", str(tmp_path / "unused.json"))
+    monkeypatch.setattr(settings, "llm_provider", "vertex")
     monkeypatch.setattr(settings, "llm_model", "health-model")
     monkeypatch.setattr(settings, "vertex_project_id", "test-project")
     provider = AsyncMock(side_effect=[RuntimeError("provider offline"), SimpleNamespace(generations=[])])
