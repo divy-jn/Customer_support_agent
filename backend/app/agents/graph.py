@@ -403,6 +403,8 @@ def _execute_tool(action: str, params: dict, authenticated_customer_id: int | No
             pname = params.get("product_name") or params.get("product") or ""
             return check_inventory(product_name=pname)
         elif action == "create_ticket":
+            # Only Guardian can attach an authoritative handoff obligation.
+            params = {key: value for key, value in params.items() if key != "pending_handoff"}
             return create_ticket(**params)
         elif action == "update_ticket":
             return update_ticket(**params)

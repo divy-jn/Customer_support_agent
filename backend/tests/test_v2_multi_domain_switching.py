@@ -1242,3 +1242,10 @@ class TestExactMatrixScenariosAndApprovalHardening:
             agent_msgs = [m for m in sent_messages if m.get("type") == "agent_response"]
             assert len(agent_msgs) == 1
             assert "signature mismatch or tampering" in agent_msgs[0]["message"].lower()
+
+
+@pytest.fixture(autouse=True)
+def no_pending_handoff_in_socket_fixtures(monkeypatch):
+    """These socket fixtures simulate turns without a committed handoff obligation."""
+    monkeypatch.setattr("app.websocket.chat_handler.get_pending_handoff", lambda *_: None)
+    monkeypatch.setattr("app.websocket.chat_handler.complete_pending_handoff", lambda *_: None)

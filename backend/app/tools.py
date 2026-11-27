@@ -204,6 +204,21 @@ def get_ticket(ticket_id: int, customer_id: int | None = None) -> str:
         return json.dumps({"error": str(e)})
 
 
+def get_pending_handoff(customer_id: int, client_request_id: str) -> dict | None:
+    """Read the outstanding handoff for an authenticated customer's turn."""
+    response = supabase.rpc("get_pending_handoff", {
+        "p_customer_id": customer_id, "p_client_request_id": client_request_id,
+    }).execute()
+    return response.data
+
+
+def complete_pending_handoff(customer_id: int, client_request_id: str) -> None:
+    """Acknowledge a confirmed handoff in the ticket transaction's recovery record."""
+    supabase.rpc("complete_pending_handoff", {
+        "p_customer_id": customer_id, "p_client_request_id": client_request_id,
+    }).execute()
+
+
 @track_tool_call("create_ticket")
 @_supabase_retry
 def create_ticket(
@@ -215,6 +230,7 @@ def create_ticket(
     channel: str = "chat",
     order_id: int | None = None,
     client_request_id: str | None = None,
+    pending_handoff: dict | None = None,
 ) -> str:
     """Create a new support ticket for a customer."""
     try:
@@ -245,6 +261,9 @@ def create_ticket(
         if not client_request_id:
             return json.dumps({"error": "client_request_id is required for mutating operations"})
             
+        if pending_handoff is not None:
+            data["pending_handoff"] = pending_handoff
+
         import hashlib
         payload_hash = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
         

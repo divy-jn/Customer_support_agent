@@ -198,6 +198,44 @@ ALTER TABLE public.idempotency_records ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.idempotency_records FROM anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.idempotency_records TO service_role;
 
+-- A ticket and its required human handoff commit in the same transaction.
+CREATE TABLE IF NOT EXISTS public.pending_handoffs (
+    customer_id BIGINT NOT NULL REFERENCES public.customers(id) ON DELETE CASCADE,
+    client_request_id UUID NOT NULL,
+    session_id TEXT NOT NULL CHECK (length(btrim(session_id)) > 0),
+    ticket_id BIGINT NOT NULL REFERENCES public.tickets(id) ON DELETE CASCADE,
+    handoff_request_id UUID NOT NULL,
+    escalation_reason TEXT,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ,
+    PRIMARY KEY (customer_id, client_request_id)
+);
+ALTER TABLE public.pending_handoffs ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.pending_handoffs FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.pending_handoffs TO service_role;
+
+CREATE OR REPLACE FUNCTION public.get_pending_handoff(
+    p_customer_id BIGINT, p_client_request_id UUID
+) RETURNS JSONB LANGUAGE sql STABLE AS $$
+    SELECT to_jsonb(h) FROM public.pending_handoffs h
+    WHERE h.customer_id = p_customer_id AND h.client_request_id = p_client_request_id
+        AND h.completed_at IS NULL;
+$$;
+
+CREATE OR REPLACE FUNCTION public.complete_pending_handoff(
+    p_customer_id BIGINT, p_client_request_id UUID
+) RETURNS VOID LANGUAGE sql AS $$
+    UPDATE public.pending_handoffs SET completed_at = now()
+    WHERE customer_id = p_customer_id AND client_request_id = p_client_request_id
+        AND completed_at IS NULL;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.get_pending_handoff(BIGINT, UUID) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.complete_pending_handoff(BIGINT, UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_pending_handoff(BIGINT, UUID) TO service_role;
+GRANT EXECUTE ON FUNCTION public.complete_pending_handoff(BIGINT, UUID) TO service_role;
+
 -- Generic RPC to execute idempotent operations
 CREATE OR REPLACE FUNCTION execute_idempotent_operation(
     p_customer_id BIGINT,
@@ -284,6 +322,17 @@ BEGIN
             p_payload->>'channel',
             (p_payload->>'order_id')::BIGINT
         ) RETURNING id INTO v_ticket_id;
+
+        IF p_payload ? 'pending_handoff' THEN
+            INSERT INTO public.pending_handoffs (
+                customer_id, client_request_id, session_id, ticket_id,
+                handoff_request_id, escalation_reason, payload
+            ) VALUES (
+                p_customer_id, p_client_request_id, p_payload->'pending_handoff'->>'session_id',
+                v_ticket_id, (p_payload->'pending_handoff'->>'handoff_request_id')::uuid,
+                p_payload->'pending_handoff'->>'escalation_reason', p_payload->'pending_handoff'
+            ) ON CONFLICT (customer_id, client_request_id) DO NOTHING;
+        END IF;
         
         v_result := jsonb_build_object(
             'status', 'success',
@@ -549,6 +598,17 @@ BEGIN
             p_payload->>'channel',
             (p_payload->>'order_id')::BIGINT
         ) RETURNING id INTO v_ticket_id;
+
+        IF p_payload ? 'pending_handoff' THEN
+            INSERT INTO public.pending_handoffs (
+                customer_id, client_request_id, session_id, ticket_id,
+                handoff_request_id, escalation_reason, payload
+            ) VALUES (
+                v_actual_customer_id, p_client_request_id, p_payload->'pending_handoff'->>'session_id',
+                v_ticket_id, (p_payload->'pending_handoff'->>'handoff_request_id')::uuid,
+                p_payload->'pending_handoff'->>'escalation_reason', p_payload->'pending_handoff'
+            ) ON CONFLICT (customer_id, client_request_id) DO NOTHING;
+        END IF;
         
         v_result := jsonb_build_object(
             'status', 'success',

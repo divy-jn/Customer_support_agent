@@ -15,7 +15,7 @@ import urllib.request
 import urllib.parse
 import json
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 # ──────────────────────────────────────────────
 mcp = FastMCP(
     "WebSearch",
-    description="MCP server for searching the live web when knowledge base is insufficient.",
+    instructions="MCP server for searching the live web when knowledge base is insufficient.",
 )
 
 

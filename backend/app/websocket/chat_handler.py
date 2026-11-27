@@ -25,7 +25,7 @@ from app.agents.approval_service import (
 )
 from app.models import ApprovalStatus, PendingApproval
 from app.email_service import send_escalation_email
-from app.tools import lookup_customer
+from app.tools import complete_pending_handoff, get_pending_handoff, lookup_customer
 from app.guardrails import validate_input, validate_output, get_rejection_message
 from app.middleware.tracking import emit_workflow_turn
 
@@ -398,9 +398,34 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
             # Use sanitized message (PII redacted for logging)
             sanitized_message = guard_result.sanitized_text
 
+            pending_handoff = None
+            request_uuid = None
+            if customer_id and isinstance(client_request_id, str):
+                try:
+                    request_uuid = str(uuid.UUID(client_request_id))
+                except ValueError:
+                    pass
+            if request_uuid:
+                try:
+                    pending_handoff = await asyncio.to_thread(get_pending_handoff, customer_id, request_uuid)
+                except Exception:
+                    logger.exception("Pending handoff lookup failed for session %s", session_id)
+                    await manager.send_personal_message({
+                        "type": "error",
+                        "message": "I couldn't verify your request right now. Please try again.",
+                    }, session_id)
+                    continue
+
+            if pending_handoff and (
+                pending_handoff["session_id"] != session_id or pending_handoff["payload"]["message"] != message
+            ):
+                await manager.send_personal_message({
+                    "type": "error",
+                    "message": "This request ID is already associated with another turn.",
+                }, session_id)
+                continue
+
             def _append_customer(s):
-                if client_request_id in s.get("pending_handoffs", {}):
-                    return False
                 s["conversation_history"].append({
                     "role": "customer",
                     "content": message,
@@ -409,14 +434,10 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     "pii_detected": guard_result.pii_detected,
                 })
                 return True
-            session, _ = await _mutate_session(session_id, _append_customer, allow_retry=True, customer_id=customer_id)
-            pending_handoff = session.get("pending_handoffs", {}).get(client_request_id)
-            if pending_handoff and pending_handoff["message"] != message:
-                await manager.send_personal_message({
-                    "type": "error",
-                    "message": "This request ID is already associated with another message.",
-                }, session_id)
-                continue
+            if not pending_handoff:
+                session, _ = await _mutate_session(
+                    session_id, _append_customer, allow_retry=True, customer_id=customer_id,
+                )
 
             # Broadcast to monitoring agents
             await manager.broadcast_to_agents({
@@ -989,7 +1010,15 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         else customer_support_graph
                     )
                     if pending_handoff:
-                        result = pending_handoff["result"]
+                        ticket_id = pending_handoff["ticket_id"]
+                        result = {
+                            **pending_handoff["payload"],
+                            "response": f"Ticket #{ticket_id} was created. I’m connecting you with a human agent.",
+                            "escalated": True,
+                            "guardian_action": "create_ticket",
+                            "guardian_ticket_id": ticket_id,
+                            "guardian_reason": pending_handoff["escalation_reason"],
+                        }
                     else:
                         result = await asyncio.wait_for(
                             active_graph.ainvoke(initial_state),
@@ -1021,36 +1050,15 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 handoff_requested = bool(result.get("escalated"))
                 is_escalated = False
                 if handoff_requested:
-                    if (
-                        not pending_handoff
-                        and result.get("guardian_action") == "create_ticket"
-                        and result.get("guardian_ticket_id")
-                    ):
-                        child_id = uuid.uuid5(uuid.UUID(client_request_id), f"escalate_session:{session_id}")
-                        snapshot = {
-                            "message": message,
-                            "handoff_id": str(child_id),
-                            "result": {key: result[key] for key in (
-                                "response", "escalated", "guardian_action", "guardian_reason", "guardian_ticket_id",
-                                "semantic_domain", "intent", "sentiment", "urgency", "workflow_state",
-                            ) if key in result},
-                        }
-
-                        def _remember_handoff(s):
-                            pending = s.setdefault("pending_handoffs", {})
-                            if client_request_id in pending:
-                                return False
-                            pending[client_request_id] = snapshot
-                            return True
-
-                        session, _ = await _mutate_session(
-                            session_id, _remember_handoff, customer_id=customer_id,
-                        )
-                        pending_handoff = session["pending_handoffs"][client_request_id]
-                    handoff_options = {"handoff_id": uuid.UUID(pending_handoff["handoff_id"])} if pending_handoff else {}
+                    handoff_id = uuid.UUID(pending_handoff["handoff_request_id"]) if pending_handoff else None
                     is_escalated, handoff_failure = await _confirm_graph_handoff(
-                        result, session_id, customer_id, client_request_id, message, **handoff_options,
+                        result, session_id, customer_id, client_request_id, message, handoff_id=handoff_id,
                     )
+                    if is_escalated and request_uuid and result.get("guardian_action") == "create_ticket":
+                        try:
+                            await asyncio.to_thread(complete_pending_handoff, customer_id, request_uuid)
+                        except Exception:
+                            logger.exception("Pending handoff acknowledgement failed for session %s", session_id)
                     if handoff_failure:
                         raw_response = handoff_failure
                         workflow = result.get("workflow_state")
@@ -1108,8 +1116,6 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                         return False
                     if is_escalated:
                         s["mode"] = "human"
-                        if pending_handoff:
-                            s.get("pending_handoffs", {}).pop(client_request_id, None)
                     
                     if p:
                         s["pending_approval"] = p

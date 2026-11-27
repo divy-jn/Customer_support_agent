@@ -1,10 +1,14 @@
 """Ordered, coalescing transcript writes owned by the API lifespan."""
 
 import asyncio
+import json
+import os
 import logging
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import httpx
 from postgrest.exceptions import APIError
@@ -19,8 +23,10 @@ _FLUSH_INTERVAL = 30.0
 
 
 class TranscriptWriter:
-    def __init__(self):
+    def __init__(self, spool_path: Path | None = None):
         self._pending = {}
+        self._spooled = {}
+        self._spool_path = spool_path
         self._task = None
         self._stopping = False
 
@@ -69,7 +75,56 @@ class TranscriptWriter:
             finally:
                 self._task = None
 
+    def _load_spool(self) -> dict:
+        if not self._spool_path:
+            return {}
+        try:
+            return json.loads(self._spool_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+
+    def _save_spool(self, snapshots: dict) -> None:
+        path = self._spool_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as file:
+            temporary = Path(file.name)
+            try:
+                json.dump(snapshots, file)
+                file.flush()
+                os.fsync(file.fileno())
+            except BaseException:
+                file.close()
+                temporary.unlink(missing_ok=True)
+                raise
+        try:
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    async def _update_spool(self, session_id, snapshot) -> None:
+        if not self._spool_path or (snapshot is None and session_id not in self._spooled):
+            return
+        snapshots = dict(self._spooled)
+        if snapshot is None:
+            snapshots.pop(session_id, None)
+        else:
+            snapshots[session_id] = snapshot
+        try:
+            await asyncio.to_thread(self._save_spool, snapshots)
+        except (OSError, ValueError):
+            logger.exception("Could not update transcript spool")
+        else:
+            self._spooled = snapshots
+
     async def _run(self, write) -> None:
+        self._spooled = await asyncio.to_thread(self._load_spool) if self._spool_path else {}
+        for session_id, snapshot in self._spooled.items():
+            pending = self._pending.get(session_id)
+            if not pending or pending["p_session_revision"] < snapshot["p_session_revision"]:
+                self._pending[session_id] = snapshot
+        if self._pending:
+            self._available.set()
+
         while True:
             if self._pending:
                 try:
@@ -84,8 +139,12 @@ class TranscriptWriter:
             for session_id, snapshot in list(self._pending.items()):
                 if self._pending.get(session_id) is not snapshot:
                     continue
-                if await self._write_with_retry(write, snapshot) and self._pending.get(session_id) is snapshot:
-                    del self._pending[session_id]
+                if await self._write_with_retry(write, snapshot):
+                    if self._pending.get(session_id) is snapshot:
+                        del self._pending[session_id]
+                    await self._update_spool(session_id, None)
+                else:
+                    await self._update_spool(session_id, self._pending[session_id])
             if stopping:
                 return
 
@@ -112,7 +171,7 @@ class TranscriptWriter:
                 await asyncio.sleep(_RETRY_DELAYS[attempt])
 
 
-transcript_writer = TranscriptWriter()
+transcript_writer = TranscriptWriter(settings.transcript_spool_path)
 
 
 @asynccontextmanager

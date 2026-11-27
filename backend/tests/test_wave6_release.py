@@ -30,6 +30,8 @@ def customer_socket(monkeypatch, local_sessions):
     db.table.return_value.select.return_value.eq.return_value.execute.return_value.data = []
     monkeypatch.setattr(tools, "supabase", db)
     monkeypatch.setattr(settings, "agent_architecture_mode", "v2_all")
+    monkeypatch.setattr(chat_handler, "get_pending_handoff", Mock(return_value=None))
+    monkeypatch.setattr(chat_handler, "complete_pending_handoff", Mock())
     monkeypatch.setattr(rate_limiter, "consume_customer_message", AsyncMock(return_value=True))
     sent = AsyncMock()
     monkeypatch.setattr(chat_handler.manager, "send_personal_message", sent)
@@ -37,35 +39,50 @@ def customer_socket(monkeypatch, local_sessions):
 
 
 @pytest.mark.asyncio
-async def test_replay_resumes_committed_ticket_handoff(monkeypatch, local_sessions, customer_socket):
+async def test_replay_recovers_postgres_handoff_after_session_write_failure(monkeypatch, local_sessions, customer_socket):
+    from app.persistence.session import SessionStore
+
     socket, sent = customer_socket
     await local_sessions.save_session("handoff", snapshot(1))
     monkeypatch.setattr(escalation, "ensure_durable_escalation_state", lambda *_: EscalationLifecycleStatus.NONE)
-    plan = AsyncMock(side_effect=[
-        {"response": "Connecting you about ticket #42.", "escalated": True,
-         "guardian_action": "create_ticket", "guardian_ticket_id": 42},
-        {"response": "Updated ticket #42.", "guardian_action": "update_existing_ticket"},
-    ])
+    turn_id = uuid4()
+    handoff_id = uuid5(turn_id, "escalate_session:handoff")
+    message = "I have a billing issue"
+    committed = {}
+
+    async def run_guardian(_):
+        committed.update({
+            "session_id": "handoff", "ticket_id": 42, "handoff_request_id": str(handoff_id),
+            "escalation_reason": "billing", "payload": {"message": message},
+        })
+        local_sessions.save_session_conditional = AsyncMock(side_effect=RuntimeError("session write failed"))
+        return {"response": "Connecting you about ticket #42.", "escalated": True,
+                "guardian_action": "create_ticket", "guardian_ticket_id": 42}
+
+    plan = AsyncMock(side_effect=run_guardian)
     monkeypatch.setattr(chat_handler, "domain_support_graph", SimpleNamespace(ainvoke=plan))
+    monkeypatch.setattr(chat_handler, "get_pending_handoff", lambda *_: committed or None)
     execute = Mock(side_effect=[TimeoutError("transition unavailable"), SimpleNamespace(is_success=True)])
     monkeypatch.setattr(EscalationService, "escalate_session", execute)
-    turn_id = uuid4()
-    raw = json.dumps({"message": "I have a billing issue", "client_request_id": str(turn_id)})
+
+    raw = json.dumps({"message": message, "client_request_id": str(turn_id)})
     socket.receive_text.side_effect = [raw, WebSocketDisconnect()]
     await chat_handler.handle_customer_ws(socket, "handoff", 17)
-    pending = (await local_sessions.get_session("handoff"))["pending_handoffs"][str(turn_id)]
-    assert pending["result"]["guardian_ticket_id"] == 42
-    assert "couldn" in [call.args[0]["message"] for call in sent.await_args_list
-                        if call.args[0]["type"] == "agent_response"][-1]
+    local_sessions.save_session_conditional.assert_awaited_once()
+    chat_handler.complete_pending_handoff.assert_not_called()
+
+    fresh_store = SessionStore()
+    monkeypatch.setattr(chat_handler, "session_store", fresh_store)
+    tools.supabase.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {"customer_id": 17, "session_revision": 0},
+    ]
     socket.receive_text.side_effect = [raw, WebSocketDisconnect()]
     await chat_handler.handle_customer_ws(socket, "handoff", 17)
+
     plan.assert_awaited_once()
-    assert [call.args[0].client_request_id for call in execute.call_args_list] == [
-        uuid5(turn_id, "escalate_session:handoff"),
-    ] * 2
-    current = await local_sessions.get_session("handoff")
-    assert not current["pending_handoffs"]
-    assert current["mode"] == "human"
+    assert [call.args[0].client_request_id for call in execute.call_args_list] == [handoff_id, handoff_id]
+    chat_handler.complete_pending_handoff.assert_called_once_with(17, str(turn_id))
+    assert (await fresh_store.get_session("handoff"))["mode"] == "human"
     assert any(call.args[0].get("escalated") is True for call in sent.await_args_list)
 
 

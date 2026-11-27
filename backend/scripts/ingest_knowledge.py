@@ -10,6 +10,7 @@ Usage:
     python -m scripts.ingest_knowledge
 """
 
+import codecs
 import os
 import sys
 
@@ -24,6 +25,7 @@ from app.config import settings
 EMBEDDING_MODEL = "llama-text-embed-v2"
 CHUNK_SIZE = 500          # characters per chunk
 CHUNK_OVERLAP = 100       # overlap between chunks
+BATCH_SIZE = 50
 
 
 def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
@@ -78,83 +80,83 @@ def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     return bounded
 
 
+def iter_file_chunks(path, byte_limit: int):
+    """Read bounded UTF-8 blocks and yield overlapping, bounded text chunks."""
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    buffer = ""
+    bytes_read = 0
+    with path.open("rb") as stream:
+        while block := stream.read(min(4096, byte_limit - bytes_read + 1)):
+            bytes_read += len(block)
+            if bytes_read > byte_limit:
+                raise ValueError(f"{path.name} exceeds MAX_KB_FILE_BYTES ({byte_limit} bytes)")
+            buffer += decoder.decode(block)
+            while len(buffer) > CHUNK_SIZE:
+                split = buffer.rfind("\n\n", CHUNK_SIZE // 2, CHUNK_SIZE)
+                if split < 0:
+                    split = buffer.rfind(" ", CHUNK_SIZE // 2, CHUNK_SIZE)
+                end = split if split >= 0 else CHUNK_SIZE
+                if chunk := buffer[:end].strip():
+                    yield chunk
+                buffer = buffer[end - CHUNK_OVERLAP:]
+    buffer += decoder.decode(b"", final=True)
+    if chunk := buffer.strip():
+        yield chunk
+
+
 def ingest():
-    """Main ingestion function."""
+    """Embed and upsert one bounded batch at a time."""
     kb_dir = settings.knowledge_base_path
     md_files = sorted(path for path in kb_dir.glob("*.md") if path.is_file())
+    byte_limit = settings.max_kb_file_bytes
+    for path in md_files:
+        if path.stat().st_size > byte_limit:
+            raise ValueError(f"{path.name} exceeds MAX_KB_FILE_BYTES ({byte_limit} bytes)")
 
-    # Process each document
+    pc = index = None
     total_chunks = 0
-    all_records = []
+    batch = []
 
-    for filepath in md_files:
-        filename = os.path.basename(filepath)
-        doc_name = filename.replace(".md", "").replace("_", " ").title()
-
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        chunks = split_text(content)
-        print(f"\n📄 {filename}: {len(chunks)} chunks")
-
-        for i, chunk in enumerate(chunks):
-            chunk_id = f"{filename}__chunk_{i:03d}"
-            
-            # Store raw text and metadata
-            metadata = {
-                "text": chunk,
-                "source": filename,
-                "document_name": doc_name,
-                "chunk_index": i,
-                "total_chunks": len(chunks),
-            }
-            
-            all_records.append({
-                "id": chunk_id,
-                "text": chunk,
-                "metadata": metadata
-            })
-            total_chunks += 1
-
-    if not all_records:
-        raise FileNotFoundError(f"No ingestible markdown documents in {kb_dir}")
-
-    pc = Pinecone(api_key=settings.pinecone_api_key)
-    index = pc.Index(settings.pinecone_index_name)
-
-    # Batch embed and insert into Pinecone
-    print(f"\n⬆️  Embedding and inserting {total_chunks} chunks into Pinecone...")
-    batch_size = 50
-    for i in range(0, len(all_records), batch_size):
-        end = min(i + batch_size, len(all_records))
-        batch = all_records[i:end]
-        texts = [record["text"] for record in batch]
-        
-        # Get embeddings
-        embedding_response = pc.inference.embed(
+    def flush():
+        nonlocal pc, index, total_chunks
+        if pc is None:
+            pc = Pinecone(api_key=settings.pinecone_api_key)
+            index = pc.Index(settings.pinecone_index_name)
+        embeddings = pc.inference.embed(
             model=EMBEDDING_MODEL,
-            inputs=texts,
-            parameters={"input_type": "passage", "truncate": "END"}
+            inputs=[entry["text"] for entry in batch],
+            parameters={"input_type": "passage", "truncate": "END"},
         )
-        
-        # Upsert
-        vectors = []
-        for record, embed_data in zip(batch, embedding_response):
-            vectors.append({
-                "id": record["id"],
-                "values": embed_data.values,
-                "metadata": record["metadata"]
-            })
-            
-        index.upsert(vectors=vectors)
-        print(f"   ✅ Upserted batch {i} to {end}")
+        index.upsert(vectors=[
+            {"id": entry["id"], "values": embedding.values, "metadata": entry["metadata"]}
+            for entry, embedding in zip(batch, embeddings, strict=True)
+        ])
+        total_chunks += len(batch)
+        batch.clear()
 
-    print(f"\n{'=' * 50}")
-    print(f"🎉 KNOWLEDGE BASE INGESTION COMPLETE!")
-    print(f"   Documents processed: {len(md_files)}")
-    print(f"   Total chunks:       {total_chunks}")
-    print(f"   Embedding model:    {EMBEDDING_MODEL}")
-    print(f"{'=' * 50}")
+    for path in md_files:
+        # Count this file without retaining its chunks, preserving vector metadata.
+        count = sum(1 for _ in iter_file_chunks(path, byte_limit))
+        for i, chunk in enumerate(iter_file_chunks(path, byte_limit)):
+            batch.append({
+                "id": f"{path.name}__chunk_{i:03d}",
+                "text": chunk,
+                "metadata": {
+                    "text": chunk,
+                    "source": path.name,
+                    "document_name": path.stem.replace("_", " ").title(),
+                    "chunk_index": i,
+                    "total_chunks": count,
+                },
+            })
+            if len(batch) == BATCH_SIZE:
+                flush()
+
+    if batch:
+        flush()
+    if not total_chunks:
+        raise FileNotFoundError(f"No ingestible markdown documents in {kb_dir}")
+    print(f"Ingested {total_chunks} knowledge base chunks.")
 
 
 if __name__ == "__main__":

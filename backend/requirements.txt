@@ -27,8 +27,8 @@ supabase>=2.4.00
 alembic>=1.15.0
 
 # === MCP (Model Context Protocol) ===
-mcp[cli]>=1.9.0
-fastmcp>=0.1.0
+mcp>=2.0,<3
+fastmcp>=4.0.10,<5
 
 # === Data Processing ===
 pandas>=2.2.0

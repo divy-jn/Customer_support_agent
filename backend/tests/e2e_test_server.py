@@ -359,6 +359,8 @@ async def mock_graph_ainvoke(inputs: dict, *args, **kwargs) -> dict:
     }
 
 chat_handler_module.domain_support_graph.ainvoke = mock_graph_ainvoke
+chat_handler_module.get_pending_handoff = lambda *_: None
+chat_handler_module.complete_pending_handoff = lambda *_: None
 
 
 # ──────────────────────────────────────────────

@@ -19,8 +19,10 @@ from fastapi import FastAPI, WebSocket, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.routing import Route
 
 from app.config import settings
+from app.mcp.http_server import StaffMCP, mcp_http
 from app.routes import auth_router, router as api_router
 from app.websocket.chat_handler import handle_customer_ws, handle_agent_ws
 from app.persistence.transcript import transcript_persistence
@@ -138,7 +140,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"Outbox worker failed to start: {e}")
 
     try:
-        async with transcript_persistence():
+        async with mcp_http.lifespan(mcp_http), transcript_persistence():
             yield
     finally:
         try:
@@ -218,6 +220,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ──────────────────────────────────────────────
 #  REST API Routes
 # ──────────────────────────────────────────────
+app.router.routes.append(Route("/mcp", StaffMCP(), methods=["GET", "POST", "DELETE"]))
+
 app.include_router(auth_router, prefix="/api", tags=["auth"])
 app.include_router(api_router, prefix="/api/v1", tags=["api"])
 

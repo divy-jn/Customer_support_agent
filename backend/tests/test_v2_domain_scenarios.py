@@ -247,7 +247,7 @@ class TestV2BusinessDomains:
             "customer_id": 77,
             "message": "Why was I charged twice for order #4002?",
             "conversation_history": [],
-            "client_request_id": "req-pay-bill",
+            "client_request_id": "189d3c3b-85a4-4c98-9dd1-73b644b209bb",
             "workflow_state": {"session_id": "sess-pay-2", "customer_id": 77},
         }
 

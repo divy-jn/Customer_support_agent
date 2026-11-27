@@ -13,7 +13,7 @@ import os
 import sys
 import glob
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from app.config import settings
@@ -23,7 +23,7 @@ from app.config import settings
 # ──────────────────────────────────────────────
 mcp = FastMCP(
     "KnowledgeBaseFS",
-    description="MCP server for reading and searching knowledge base documents.",
+    instructions="MCP server for reading and searching knowledge base documents.",
 )
 
 KB_DIR = os.path.abspath(

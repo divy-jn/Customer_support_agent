@@ -14,3 +14,4 @@ logs/
 scratch/
 .pytest_cache/
 .DS_Store
+runtime/

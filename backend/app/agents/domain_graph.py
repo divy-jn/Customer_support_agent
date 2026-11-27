@@ -6,6 +6,7 @@ Partial rollout modes retain the legacy fallback. Full V2 asks for clarification
 through Guardian when it cannot dispatch a supported intent.
 """
 
+import uuid
 import asyncio
 import json
 import logging
@@ -393,6 +394,23 @@ async def _apply_guardian_ticket_decision(
             payload = json.loads(raw)
             return decision.ticket_id, bool(payload.get("error"))
 
+        handoff = {}
+        if session_id := state.get("session_id"):
+            try:
+                handoff_id = uuid.uuid5(uuid.UUID(request_id), f"escalate_session:{session_id}")
+            except ValueError:
+                logger.warning("Guardian ticket action skipped: invalid request ID")
+                return None, True
+            handoff["pending_handoff"] = {
+                "session_id": session_id,
+                "handoff_request_id": str(handoff_id),
+                "escalation_reason": decision.reason,
+                "message": state["message"],
+                "sentiment": state.get("sentiment", "negative"),
+                "urgency": state.get("urgency", "high"),
+                "intent": state.get("intent"),
+                "semantic_domain": state.get("semantic_domain"),
+            }
         raw = await asyncio.to_thread(
             create_ticket,
             customer_id=customer_id,
@@ -405,6 +423,7 @@ async def _apply_guardian_ticket_decision(
             priority="high" if state.get("urgency") in {"high", "critical"} else "medium",
             channel="chat",
             client_request_id=request_id,
+            **handoff,
         )
         payload = json.loads(raw)
         return payload.get("ticket_id"), bool(payload.get("error") or not payload.get("ticket_id"))

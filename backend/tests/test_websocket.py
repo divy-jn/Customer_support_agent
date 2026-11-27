@@ -674,3 +674,10 @@ async def test_v2_pending_approval_executes_with_confirmation_request_id(monkeyp
     assert call_kwargs["authenticated_customer_id"] == 7
     assert call_kwargs["session_id"] == session_id
     assert "pending_approval" not in session
+
+
+@pytest.fixture(autouse=True)
+def no_pending_handoff_in_socket_fixtures(monkeypatch):
+    """These socket fixtures simulate turns without a committed handoff obligation."""
+    monkeypatch.setattr("app.websocket.chat_handler.get_pending_handoff", lambda *_: None)
+    monkeypatch.setattr("app.websocket.chat_handler.complete_pending_handoff", lambda *_: None)

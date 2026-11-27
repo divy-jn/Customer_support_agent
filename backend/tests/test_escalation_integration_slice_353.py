@@ -511,3 +511,13 @@ async def test_chat_handler_release_missing_request_id_fails_closed():
     session = await session_store.get_session(session_id)
     assert session["mode"] == "human"
 
+
+
+@pytest.fixture(autouse=True)
+def no_pending_handoff_in_socket_fixtures(monkeypatch):
+    """Exercise the legacy graph mocks without a committed handoff obligation."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "agent_architecture_mode", "legacy")
+    monkeypatch.setattr("app.websocket.chat_handler.get_pending_handoff", lambda *_: None)
+    monkeypatch.setattr("app.websocket.chat_handler.complete_pending_handoff", lambda *_: None)

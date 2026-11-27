@@ -62,6 +62,10 @@ class Settings(BaseSettings):
 
     # --- Knowledge Base ---
     knowledge_base_dir: str = "./knowledge_base"
+    max_kb_file_bytes: int = Field(default=5 * 1024 * 1024, gt=0, alias="MAX_KB_FILE_BYTES")
+    transcript_spool_path: Path = Field(
+        default=_BACKEND_ROOT / "runtime" / "transcript-spool.json", alias="TRANSCRIPT_SPOOL_PATH",
+    )
 
     # --- Outbox Worker (Slice 3.3 / Prompt 12) ---
     outbox_worker_enabled: bool = Field(default=True, alias="OUTBOX_WORKER_ENABLED")

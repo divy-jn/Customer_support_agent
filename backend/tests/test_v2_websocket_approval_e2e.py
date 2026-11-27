@@ -857,3 +857,10 @@ def test_scenario_8_explicit_rejection_cancellation(mock_ensure_state, mock_canc
         # Pending approval cleared from session
         saved = asyncio.run(session_store.get_session(session_id))
         assert saved.get("pending_approval") is None
+
+
+@pytest.fixture(autouse=True)
+def no_pending_handoff_in_socket_fixtures(monkeypatch):
+    """These socket fixtures simulate turns without a committed handoff obligation."""
+    monkeypatch.setattr("app.websocket.chat_handler.get_pending_handoff", lambda *_: None)
+    monkeypatch.setattr("app.websocket.chat_handler.complete_pending_handoff", lambda *_: None)

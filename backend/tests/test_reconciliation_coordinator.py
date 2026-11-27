@@ -181,9 +181,16 @@ def test_concurrent_coordinator_invocations(coordinator, test_customer, cleanup_
     # Extract statuses for ESCALATION_TEAM
     statuses = [res[0].status for res in results_list if len(res) > 0]
     
-    # One should be REPAIRED, the other ALREADY_PRESENT or PRESENT
-    # Actually, the RepairService ON CONFLICT DO NOTHING will make the second one ALREADY_PRESENT.
-    assert set(statuses) == {CoordinatorResultStatus.REPAIRED, CoordinatorResultStatus.ALREADY_PRESENT}
+    assert statuses.count(CoordinatorResultStatus.REPAIRED) == 1
+    assert any(status in {CoordinatorResultStatus.ALREADY_PRESENT, CoordinatorResultStatus.PRESENT}
+               for status in statuses)
+    with psycopg2.connect(conn_string) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM outbox_events WHERE source_event_id = %s AND notification_type = %s",
+            (SourceEventIdentity.from_escalation(event_id).source_event_id, NotificationType.ESCALATION_TEAM.value),
+        )
+        assert cur.fetchone() == (1,)
+
 
 def test_batch_behavior_and_isolation(coordinator, test_customer, cleanup_db, monkeypatch):
     """
