@@ -139,3 +139,17 @@ async def test_order_history_takes_precedence_over_remembered_order(monkeypatch)
     assert "any past orders on file" in result["response"]
     history.assert_called_once_with(7)
     tracking.assert_not_called()
+
+
+
+async def test_answered_ticket_lookup_keeps_status_when_account_has_recent_cases(monkeypatch, offline_graph):
+    offline_graph.return_value = json.dumps({
+        "recent_count": 3,
+        "cases": [{"id": 42, "subject": "Delivery inquiry", "status": "open",
+                   "updated_at": "2026-11-28T05:32:00Z"}],
+    })
+    result = await run_turn(monkeypatch, "general", "ticket_status", "Check my ticket status")
+    assert "#42" in result["response"]
+    assert result["guardian_action"] == "resolve"
+    assert not result["escalated"]
+    offline_graph.assert_called_once()

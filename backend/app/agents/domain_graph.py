@@ -360,7 +360,8 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
             and state.get("supervisor_action") != SupervisorAction.ESCALATE.value
         )
     )
-    attempts_for_decision = prior_attempts + int(domain_failed)
+    answered_ticket_status = ticket_status and not ticket_history_lookup_failed
+    attempts_for_decision = 0 if answered_ticket_status else prior_attempts + int(domain_failed)
     decision = Guardian.decide(GuardianInput(
         domain=domain,
         intent=state.get("intent", ""),
@@ -372,7 +373,7 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         domain_can_resolve=state.get("response") is not None,
         unresolved_attempts=attempts_for_decision,
         active_cases=active_cases,
-        recent_ticket_count=recent_count,
+        recent_ticket_count=0 if answered_ticket_status else recent_count,
         allow_ticket_mutation=not (clarification_only or payment_methods or ticket_status),
         history_lookup_failed=ticket_history_lookup_failed,
         sentiment=state.get("sentiment", "neutral"),
