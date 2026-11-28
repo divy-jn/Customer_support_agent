@@ -39,7 +39,7 @@ htmlcov/
 .DS_Store
 
 # Logs
-logs/
+/backend/logs/
 *.log
 
 # Next.js

@@ -81,3 +81,30 @@ test("staff authenticates directory, search and history and sees the admin role 
   await page.goto("/admin/settings");
   await expect(page.getByRole("alert").filter({ hasText: "403" })).toBeVisible();
 });
+
+
+test("admin loads and filters authenticated activity logs", async ({ page }) => {
+  const { token } = await mockSignIn(page, { role: "admin", email }, "staff");
+  const requests = [];
+  await page.route("**/api/v1/admin/logs?**", async (route) => {
+    expect(route.request().headers().authorization).toBe(`Bearer ${token}`);
+    const url = new URL(route.request().url());
+    requests.push(Object.fromEntries(url.searchParams));
+    const logs = url.searchParams.has("search") ? [] : [{
+      timestamp: "2026-11-28T03:00:00Z", level: "INFO",
+      logger: "tracking", message: "workflow_turn", trace_id: "synthetic-trace",
+    }];
+    await route.fulfill({ json: { logs, total: logs.length } });
+  });
+
+  await page.goto("/admin/logs");
+  await expect(page.getByRole("heading", { name: "Administrator sign-in" })).toBeVisible();
+  expect(requests).toEqual([]);
+  await submitSignIn(page);
+  await expect(page.getByRole("table").getByText("workflow_turn")).toBeVisible();
+  await page.getByLabel("Level", { exact: true }).selectOption("WARNING");
+  await page.getByLabel("Search logs").fill("missing");
+  await page.getByRole("button", { name: "Apply filters" }).click();
+  await expect(page.getByText("No matching log entries.")).toBeVisible();
+  expect(requests.at(-1)).toEqual({ limit: "100", level: "WARNING", search: "missing" });
+});
