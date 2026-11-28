@@ -1,6 +1,23 @@
 """Small deterministic boundary for turning workflow outcomes into customer text."""
 
+import re
+
 from app.agents.guardian import GuardianAction, GuardianDecision
+
+
+_HANDOFF_CLAIM = re.compile(
+    r"\b(?:(?:let me|i(?:['’](?:m|ll|ve)\b|\s+(?:am|will|have)\b))\s+(?:now\s+)?"
+    r"(?:connect(?:ing|ed)?|transfer(?:ring|red)?|escalat(?:e|ing|ed)|"
+    r"hand(?:ing|ed)?\s+off|pass(?:ing|ed)?)\s+(?:you|this|your)\b"
+    r"|(?:a\s+)?(?:human\s+)?(?:agent|representative|specialist)\s+"
+    r"(?:has been notified|is being notified|will be with you)\b)[^.!?\n]*[.!?]?",
+    re.IGNORECASE,
+)
+
+
+def remove_unconfirmed_handoff_claims(response: str) -> str:
+    """Keep ordinary answers and suppress transfer claims before durable confirmation."""
+    return _HANDOFF_CLAIM.sub("You can ask for a human agent if you need more help.", response)
 
 
 def compose_response(agent_response: str, decision: GuardianDecision) -> str:

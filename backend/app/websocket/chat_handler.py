@@ -27,6 +27,7 @@ from app.models import ApprovalStatus, PendingApproval
 from app.email_service import send_escalation_email
 from app.tools import complete_pending_handoff, get_pending_handoff, lookup_customer
 from app.guardrails import validate_input, validate_output, get_rejection_message
+from app.agents.response_composer import remove_unconfirmed_handoff_claims
 from app.middleware.tracking import emit_workflow_turn
 
 from app.persistence.session import session_store
@@ -1036,7 +1037,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                     })
                     await manager.send_personal_message({
                         "type": "agent_response",
-                        "message": "I'm taking longer than expected to process your request. Please try again or let me connect you with a human agent.",
+                        "message": "I'm taking longer than expected to process your request. Please try again or ask for a human agent.",
                         "agent_name": "Adi",
                         "escalated": False,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1097,6 +1098,8 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 })
 
                 # ── Output Guardrails ──
+                if not is_escalated:
+                    raw_response = remove_unconfirmed_handoff_claims(raw_response)
                 output_guard = validate_output(raw_response)
                 response_text = output_guard.sanitized_text
                 if output_guard.violations:
@@ -1228,7 +1231,7 @@ async def handle_customer_ws(websocket: WebSocket, session_id: str | None = None
                 })
                 await manager.send_personal_message({
                     "type": "error",
-                    "message": "I'm experiencing a technical issue. Let me connect you with a human agent.",
+                    "message": "I'm experiencing a technical issue. Please try again or ask for a human agent.",
                     "agent_name": "Adi",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }, session_id)

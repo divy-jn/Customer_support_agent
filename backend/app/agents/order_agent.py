@@ -180,7 +180,7 @@ async def handle_order_request(state: dict[str, Any]) -> dict[str, Any]:
         return {
             "response": (
                 f"I’m sorry there is an issue with order #{order_id}. "
-                "I’ll have a support specialist review the delivery details and help resolve it."
+                "The delivery details need review by a support specialist."
             ),
             # There is no claim/returns tool yet.  Explicitly require Guardian
             # to create or update a customer-scoped support case instead of

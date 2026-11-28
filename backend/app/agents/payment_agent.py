@@ -84,7 +84,7 @@ async def handle_payment_request(state: dict[str, Any]) -> dict[str, Any]:
         return {
             "response": (
                 f"I verified that the payment record for order #{order_id} is {status}. "
-                "I’ll have a payment support specialist review the billing issue before making any account changes."
+                "This billing issue needs specialist review before any account changes."
             ),
             "tool_results": raw,
             "workflow_state": ws_with_tool,
@@ -94,7 +94,7 @@ async def handle_payment_request(state: dict[str, Any]) -> dict[str, Any]:
 
     if intent not in _REFUND_INTENTS:
         return {
-            "response": "I’ll connect you with the payment support flow for that billing request.",
+            "response": "Could you share more detail about the payment or billing issue?",
             "workflow_state": ws_updated,
             "escalated": False,
         }

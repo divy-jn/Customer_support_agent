@@ -101,6 +101,8 @@ def test_compound_handoff_confirms_only_after_rpc(monkeypatch, rpc_succeeds):
             raise TimeoutError("Escalation RPC outcome unknown")
         return MagicMock(data={"status": "success"})
 
+    monkeypatch.setattr(chat_handler, "get_pending_handoff", lambda *_: None)
+    monkeypatch.setattr(chat_handler, "complete_pending_handoff", lambda *_: None)
     db.rpc.return_value.execute.side_effect = finish_transition
     monkeypatch.setattr(service, "supabase", db)
     graph = AsyncMock(return_value={
@@ -129,12 +131,42 @@ def test_compound_handoff_confirms_only_after_rpc(monkeypatch, rpc_succeeds):
         if not rpc_succeeds:
             assert "Ticket #786 was created" in response["message"]
             assert "couldn’t confirm" in response["message"]
+            assert "connecting you" not in response["message"].lower()
+        else:
+            assert "connecting you" in response["message"].lower()
 
     args = db.rpc.call_args.args[1]
     assert args["p_client_request_id"] == str(uuid.uuid5(turn_id, f"escalate_session:{session_id}"))
     assert args["p_payload"]["ticket_id"] == 786
     db.table.assert_not_called()
     assert alerts.await_count == int(rpc_succeeds)
+
+
+
+def test_unconfirmed_generated_handoff_claim_is_removed(monkeypatch):
+    from app.websocket import chat_handler
+
+    graph = AsyncMock(return_value={
+        "response": "I couldn’t find that in the knowledge base. Let me connect you with a human agent who can help.",
+        "escalated": False,
+    })
+    confirm = AsyncMock()
+    monkeypatch.setattr(chat_handler, "get_pending_handoff", lambda *_: None)
+    monkeypatch.setattr(chat_handler.domain_support_graph, "ainvoke", graph)
+    monkeypatch.setattr(chat_handler, "_confirm_graph_handoff", confirm)
+
+    session_id = str(uuid.uuid4())
+    with TestClient(app).websocket_connect(
+        f"/ws/chat/{session_id}?token={generate_customer_token()}"
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "system"
+        websocket.send_json({"message": "What is your policy?", "client_request_id": str(uuid.uuid4())})
+        response = read_next_agent_response(websocket)
+
+    assert not response["escalated"]
+    assert "I couldn’t find that in the knowledge base." in response["message"]
+    assert "connect you" not in response["message"].lower()
+    confirm.assert_not_awaited()
 
 
 # ══════════════════════════════════════════════════════════════════

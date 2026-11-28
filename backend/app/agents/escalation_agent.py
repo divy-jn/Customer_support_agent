@@ -42,7 +42,7 @@ async def generate_escalation_response(message: str) -> dict:
     except Exception as e:
         # Safe fallback handoff message in case LLM is unreachable
         return {
-            "response": "I understand you need more help. I am transferring you to a human agent right now. Please hold on.",
+            "response": "I understand that you need more help with this request.",
             "escalated": True,
             "error": str(e)
         }

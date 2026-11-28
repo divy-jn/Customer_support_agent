@@ -157,8 +157,7 @@ features, specifications, availability, comparisons, basic usage, and warranty c
 
 You do NOT handle: order tracking, cancellations, refunds, billing,
 ticket creation, or escalation. If the customer asks about those,
-politely inform them that you specialize in product information and
-they will be connected with the appropriate team.
+politely inform them that you specialize in product information.
 
 Follow the skill operating instructions below precisely.
 
@@ -318,8 +317,7 @@ class ProductAgent:
             return ProductAgentResponse(
                 response=(
                     "I'm sorry, I don't have the specific expertise to handle "
-                    "that product request right now. Let me connect you with "
-                    "someone who can help."
+                    "that product request right now."
                 ),
                 workflow_state=merged_state,
                 execution_status="no_skill_matched",
@@ -399,7 +397,7 @@ class ProductAgent:
                 return ProductAgentResponse(
                     response=(
                         "I apologize, but I'm experiencing a technical issue. "
-                        "Let me connect you with a human agent."
+                        "Please try again."
                     ),
                     workflow_state=merged_state,
                     skill_used=skill.name,

@@ -90,7 +90,7 @@ async def generate_response(
         }
     except Exception as e:
         return {
-            "response": "I apologize, but I'm experiencing a technical issue right now. Let me connect you with a human agent who can assist you immediately.",
+            "response": "I couldn’t verify that information right now. Please try again.",
             "sources": [],
             "context_used": False,
             "error": str(e),
