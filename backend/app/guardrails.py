@@ -17,6 +17,7 @@ import re
 import logging
 from dataclasses import dataclass, field
 
+from app.logging_security import PII_PATTERNS
 from app.middleware.tracking import record_guardrail_input, record_guardrail_output
 
 logger = logging.getLogger("guardrails")
@@ -61,16 +62,6 @@ INJECTION_PATTERNS: list[tuple[str, str]] = [
     (r"DAN\s+mode", "jailbreak_keyword"),
     (r"developer\s+mode", "jailbreak_keyword"),
 ]
-
-# PII patterns (expanded) — matches common formats; may produce false positives on order IDs
-PII_PATTERNS: dict[str, str] = {
-    "credit_card": r"\b(?:\d{4}[-\s]?){3}\d{4}\b",  #review: also matches 16-digit order/tracking numbers
-    "ssn": r"\b\d{3}-\d{2}-\d{4}\b",
-    "phone_us": r"\b(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
-    "phone_intl": r"\b\+\d{1,3}[-.\s]?\d{6,14}\b",
-    "email": r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b",
-    "ip_address": r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
-}
 
 # Off-topic patterns — things a customer support bot should NOT do
 OFF_TOPIC_PATTERNS: list[tuple[str, str]] = [

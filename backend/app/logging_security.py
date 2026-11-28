@@ -16,6 +16,35 @@ def redact_sensitive_query(value: str) -> str:
     return _SENSITIVE_QUERY_VALUE.sub(r"\1[REDACTED]", value)
 
 
+# PII patterns (expanded) — matches common formats; may produce false positives on order IDs
+PII_PATTERNS: dict[str, str] = {
+    "credit_card": r"\b(?:\d{4}[-\s]?){3}\d{4}\b",  #review: also matches 16-digit order/tracking numbers
+    "ssn": r"\b\d{3}-\d{2}-\d{4}\b",
+    "phone_us": r"\b(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
+    "phone_intl": r"\b\+\d{1,3}[-.\s]?\d{6,14}\b",
+    "email": r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b",
+    "ip_address": r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
+}
+
+_TELEMETRY_PRIVATE_TEXT = re.compile(
+    "|".join(f"(?:{pattern})" for pattern in PII_PATTERNS.values()),
+    re.IGNORECASE,
+)
+_OTP_OR_SECRET = re.compile(
+    r"(?i)\b(?:authorization\s*[:=]\s*bearer\s+|(?:api[_ -]?key|password|secret|(?:access[_ -]?)?token)\s*[:=]\s*)[^\s,;]+"
+)
+
+
+def redact_telemetry_text(value: str, *, limit: int = 200) -> str:
+    """Redact complete matches before clipping a diagnostic preview."""
+    if len(value) > 4096:
+        return "[REDACTED: oversized text]"
+    redacted = redact_sensitive_query(value)
+    redacted = _OTP_OR_SECRET.sub("[REDACTED]", redacted)
+    redacted = _TELEMETRY_PRIVATE_TEXT.sub("[REDACTED]", redacted)
+    return " ".join(redacted.split())[:limit]
+
+
 def _redact_nested(value: Any) -> Any:
     if isinstance(value, str):
         return redact_sensitive_query(value)

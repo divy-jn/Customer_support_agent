@@ -8,8 +8,10 @@ Also collects aggregate metrics for the admin dashboard.
 """
 
 import time
+import inspect
 
 from app.agents.routing_policy import telemetry_entity_keys, telemetry_intent
+from app.logging_security import redact_telemetry_text
 import logging
 import functools
 import threading
@@ -34,6 +36,9 @@ def emit_workflow_turn(event: dict) -> None:
         "approval_id", "approval_action", "approval_status",
     }
     record = {key: value for key, value in event.items() if key in allowed}
+    for field in ("supervisor_reason", "guardian_reason"):
+        if isinstance(record.get(field), str):
+            record[field] = redact_telemetry_text(record[field])
     for field in ("intent", "raw_classifier_intent"):
         if isinstance(event.get(field), str):
             record[field] = telemetry_intent(event[field]) if event[field] else ""
@@ -202,7 +207,7 @@ def track_llm_call(model: str, node: str, prompt_text: str = ""):
     try:
         yield tracker
     except Exception as e:
-        tracker["error"] = str(e)
+        tracker["error"] = type(e).__name__
         raise
     finally:
         elapsed_ms = round((time.perf_counter() - start_time) * 1000, 1)
@@ -269,6 +274,8 @@ def track_tool_call(tool_name: str):
             ...
     """
     def decorator(func):
+        parameter_names = tuple(inspect.signature(func).parameters)
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             start = time.perf_counter()
@@ -277,17 +284,19 @@ def track_tool_call(tool_name: str):
                 result = func(*args, **kwargs)
                 return result
             except Exception as e:
-                error = str(e)
+                error = type(e).__name__
                 raise
             finally:
                 elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+                names = ", ".join(name for name in parameter_names if name in kwargs)
+                args_preview = f"positional={len(args)}, named={names or 'none'}, values=[REDACTED]"
                 logger.info(
                     f"Tool call: {tool_name}",
                     extra={
                         "tool": tool_name,
                         "latency_ms": elapsed_ms,
                         "error": error,
-                        "args_preview": str(kwargs)[:200] if kwargs else str(args)[:200],
+                        "args_preview": args_preview[:200],
                     },
                 )
 
