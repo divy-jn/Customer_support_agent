@@ -59,7 +59,7 @@ class TestResolve:
 class TestDuplicatePrevention:
     def test_active_ticket_matching_domain_and_intent_is_updated(self):
         decision = Guardian.decide(GuardianInput(
-            domain="product", intent="warranty_claim",
+            domain="product", intent="warranty_claim", requires_human=True,
             active_cases=[SupportCase(id=786, status="open", domain="product", intent="warranty_claim")],
         ))
         assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET
@@ -103,7 +103,7 @@ class TestDuplicatePrevention:
     def test_multiple_tickets_uses_newest_active(self):
         """Repository returns newest first; Guardian should select the first active match."""
         decision = Guardian.decide(GuardianInput(
-            domain="product", intent="technical_support",
+            domain="product", intent="technical_support", requires_human=True,
             active_cases=[
                 SupportCase(id=500, status="open", domain="product", intent="technical_support"),
                 SupportCase(id=400, status="closed", domain="product", intent="technical_support"),
@@ -127,7 +127,7 @@ class TestDuplicatePrevention:
     def test_all_active_statuses_are_recognized(self):
         for status in ("open", "in_progress", "pending_customer", "escalated"):
             decision = Guardian.decide(GuardianInput(
-                domain="order", intent="cancel_order",
+                domain="order", intent="cancel_order", requires_human=True,
                 active_cases=[SupportCase(id=1, status=status, domain="order", intent="cancel_order")],
             ))
             assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET, f"Failed for status={status}"
@@ -389,7 +389,7 @@ class TestDecisionInvariants:
 
     def test_update_always_has_ticket_id(self):
         decision = Guardian.decide(GuardianInput(
-            domain="product", intent="tech",
+            domain="product", intent="tech", requires_human=True,
             active_cases=[SupportCase(id=42, status="open", domain="product", intent="tech")],
         ))
         assert decision.action is GuardianAction.UPDATE_EXISTING_TICKET

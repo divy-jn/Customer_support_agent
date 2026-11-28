@@ -139,8 +139,8 @@ async def test_guardian_reuses_older_active_ticket_across_pages(monkeypatch, tur
         case(42, age=72), case(43, age=75, subject="Issue: Other"),
         case(44, age=80, subject="Issue: Other"), case(45, age=72, owner=8),
     ])
-    monkeypatch.setattr(domain_graph, "product_node", AsyncMock(return_value={"response": "I can check the warranty."}))
-    result = await run_turn(monkeypatch, "product", "warranty_claim", "Can you check my warranty?")
+    monkeypatch.setattr(domain_graph, "product_node", AsyncMock(return_value={"response": "Your claim needs review.", "requires_human": True}))
+    result = await run_turn(monkeypatch, "product", "warranty_claim", "My warranty claim is still unresolved.")
     assert_outcome(result, turn, action="update_existing_ticket", ticket=42, updates=1, text="Ticket #42")
     assert turn[1].call_args.kwargs["ticket_id"] == 42
     assert all(filters["customer_id"] == 7 for _, filters in queries)
@@ -206,3 +206,14 @@ async def test_full_v2_router_initialization_failure_still_crosses_guardian(monk
     assert_outcome(result, turn, action="resolve", ticket=None, text="clarify your request")
     decide.assert_called_once()
     get_llm.assert_called_once()
+
+
+
+@pytest.mark.asyncio
+async def test_failed_read_only_warranty_lookup_does_not_append_to_an_existing_case(monkeypatch, turn):
+    fake_ticket_db(monkeypatch, [case(42, age=72, subject="Issue: Warranty Status")])
+    monkeypatch.setattr(domain_graph, "product_node", AsyncMock(return_value={
+        "response": "Warranty status is temporarily unavailable.", "requires_human": True,
+    }))
+    result = await run_turn(monkeypatch, "product", "warranty_status", "Check my warranty status.")
+    assert_outcome(result, turn, action="resolve", ticket=None, text="temporarily unavailable")

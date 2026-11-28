@@ -317,6 +317,20 @@ async def v2_ticket_status_node(state: DomainAgentState) -> dict[str, Any]:
     return {"response": response, "ticket_snapshot": snapshot}
 
 
+_READ_ONLY_INTENTS = {
+    "order": frozenset({
+        "view_order_history", "track_order", "tracking", "order_tracking",
+        "order_status", "order_details", "check_order",
+    }),
+    "payment": frozenset({"payment_method"}),
+    "product": frozenset({
+        "product_inquiry", "product_information", "product_features", "product_specs", "product_details",
+        "product_availability", "product_comparison", "product_question", "product_stock", "product_warranty",
+        "warranty", "warranty_status", "warranty_inquiry", "check_inventory", "inventory", "stock_check",
+    }),
+}
+
+
 async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
     """Apply deterministic policy after the domain result and compose output."""
     raw_workflow = state.get("workflow_state") or {}
@@ -330,9 +344,8 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
     domain = state.get("supervisor_target_domain") or state.get("semantic_domain", "general")
     prior_attempts = max(0, int(new_workflow.get("unresolved_attempts", 0)))
     clarification_only = bool(state.get("clarification_only"))
-    payment_methods = domain == "payment" and state.get("intent") == "payment_method" and (
-        state.get("architecture_mode") or settings.agent_architecture_mode
-    ) == "v2_all"
+    intent = normalize_intent(domain, state.get("intent", ""))
+    read_only = domain == "general" or intent in _READ_ONLY_INTENTS.get(domain, ())
     ticket_status = "ticket_snapshot" in state
     customer_id = state.get("customer_id")
     snapshot = state["ticket_snapshot"] if ticket_status else (
@@ -374,23 +387,12 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         unresolved_attempts=attempts_for_decision,
         active_cases=active_cases,
         recent_ticket_count=0 if answered_ticket_status else recent_count,
-        allow_ticket_mutation=not (clarification_only or payment_methods or ticket_status),
+        allow_ticket_mutation=not (clarification_only or read_only or ticket_status),
         history_lookup_failed=ticket_history_lookup_failed,
         sentiment=state.get("sentiment", "neutral"),
         urgency=state.get("urgency", "low"),
         customer_repeats_human_request=previously_requested_human,
     ))
-    if ticket_history_lookup_failed and decision.action in {
-        GuardianAction.CREATE_TICKET, GuardianAction.UPDATE_EXISTING_TICKET,
-    }:
-        # Route to human review without mutating ticket state on incomplete history.
-        decision = GuardianDecision(
-            action=GuardianAction.ESCALATE,
-            reason=(
-                "Ticket history could not be verified; hand off for human review "
-                "without creating a potentially duplicate ticket."
-            ),
-        )
     ticket_id, mutation_error = await _apply_guardian_ticket_decision(
         {**state, "history_lookup_failed": ticket_history_lookup_failed}, decision
     )

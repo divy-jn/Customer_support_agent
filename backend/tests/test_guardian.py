@@ -18,7 +18,7 @@ def test_safety_or_legal_issue_preempts_existing_ticket():
 
 def test_matching_active_case_is_updated_without_an_escalation_trigger():
     decision = Guardian.decide(GuardianInput(
-        domain="product", intent="warranty_claim", domain_can_resolve=True,
+        domain="product", intent="warranty_claim", domain_can_resolve=True, requires_human=True,
         active_cases=[_ACTIVE_PRODUCT_CASE],
     ))
 
@@ -90,3 +90,22 @@ def test_non_escalation_requests_remain_automated():
     decision = Guardian.decide(GuardianInput(domain="product", intent="product_information", domain_can_resolve=True))
 
     assert decision.action is GuardianAction.RESOLVE
+
+
+
+def test_informational_turn_leaves_matching_ticket_untouched():
+    decision = Guardian.decide(GuardianInput(
+        domain="product", intent="warranty_claim", domain_can_resolve=True,
+        active_cases=[_ACTIVE_PRODUCT_CASE],
+    ))
+    assert decision.action is GuardianAction.RESOLVE
+    assert decision.ticket_id is None
+
+
+def test_explicit_human_request_with_unavailable_history_does_not_mutate():
+    decision = Guardian.decide(GuardianInput(
+        domain="general", intent="faq", customer_requests_human=True,
+        history_lookup_failed=True, allow_ticket_mutation=False,
+    ))
+    assert decision.action is GuardianAction.ESCALATE
+    assert decision.ticket_id is None

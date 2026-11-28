@@ -115,18 +115,19 @@ class Guardian:
                 reason="The customer repeated a request for human assistance.",
             )
 
-        if existing and facts.allow_ticket_mutation:
+        needs_ticket = facts.requires_human and facts.allow_ticket_mutation
+        if facts.history_lookup_failed and (facts.customer_requests_human or needs_ticket):
             return GuardianDecision(
-                action=GuardianAction.UPDATE_EXISTING_TICKET,
-                ticket_id=existing.id,
-                reason="An active ticket already covers this domain and intent; do not create a duplicate.",
+                action=GuardianAction.ESCALATE,
+                reason="Ticket history could not be verified; escalating to human review to prevent duplicate ticket operations.",
             )
 
-        if facts.requires_human and facts.allow_ticket_mutation:
-            if facts.history_lookup_failed:
+        if needs_ticket:
+            if existing:
                 return GuardianDecision(
-                    action=GuardianAction.ESCALATE,
-                    reason="Ticket history could not be verified; escalating to human review to prevent duplicate ticket operations.",
+                    action=GuardianAction.UPDATE_EXISTING_TICKET,
+                    ticket_id=existing.id,
+                    reason="An active ticket already covers this domain and intent; do not create a duplicate.",
                 )
             return GuardianDecision(
                 action=GuardianAction.CREATE_TICKET,
@@ -140,12 +141,6 @@ class Guardian:
                     "A single human-assistance request is not an escalation trigger by itself; "
                     "continue triage or ask a clarifying question."
                 ),
-            )
-
-        if facts.customer_requests_human and facts.history_lookup_failed:
-            return GuardianDecision(
-                action=GuardianAction.ESCALATE,
-                reason="Ticket history could not be verified; escalating to human review to prevent duplicate ticket operations.",
             )
 
         return GuardianDecision(

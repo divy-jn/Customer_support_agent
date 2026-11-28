@@ -15,7 +15,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agents.domain_graph import (
-    _ticket_history,
+    _guardian_ticket_history,
+    _load_ticket_snapshot,
     _requests_human,
     _safety_or_legal_issue,
     guardian_response_node,
@@ -84,7 +85,7 @@ class TestRecentCasesResilience:
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_db_error_returns_empty_list_and_failed_flag(self, mock_cases):
         mock_cases.return_value = '{"error": "connection timeout"}'
-        cases, count, failed = _ticket_history(7)
+        cases, count, failed = _guardian_ticket_history(_load_ticket_snapshot(7))
         assert cases == []
         assert count == 0
         assert failed is True
@@ -92,7 +93,7 @@ class TestRecentCasesResilience:
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_invalid_json_returns_empty_list_and_failed_flag(self, mock_cases):
         mock_cases.return_value = "not valid json at all"
-        cases, count, failed = _ticket_history(7)
+        cases, count, failed = _guardian_ticket_history(_load_ticket_snapshot(7))
         assert cases == []
         assert count == 0
         assert failed is True
@@ -100,7 +101,7 @@ class TestRecentCasesResilience:
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_exception_returns_empty_list_and_failed_flag(self, mock_cases):
         mock_cases.side_effect = RuntimeError("DB down")
-        cases, count, failed = _ticket_history(7)
+        cases, count, failed = _guardian_ticket_history(_load_ticket_snapshot(7))
         assert cases == []
         assert count == 0
         assert failed is True
@@ -108,7 +109,7 @@ class TestRecentCasesResilience:
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_malformed_cases_payload_returns_failed_flag(self, mock_cases):
         mock_cases.return_value = '{"recent_count": 0, "cases": "not a list"}'
-        cases, count, failed = _ticket_history(7)
+        cases, count, failed = _guardian_ticket_history(_load_ticket_snapshot(7))
         assert cases == []
         assert count == 0
         assert failed is True
@@ -116,7 +117,7 @@ class TestRecentCasesResilience:
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_malformed_case_object_returns_failed_flag(self, mock_cases):
         mock_cases.return_value = '{"recent_count": 0, "cases": [{"malformed": True}]}'
-        cases, count, failed = _ticket_history(7)
+        cases, count, failed = _guardian_ticket_history(_load_ticket_snapshot(7))
         assert cases == []
         assert count == 0
         assert failed is True
@@ -124,22 +125,16 @@ class TestRecentCasesResilience:
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_legitimate_empty_result_returns_false_flag(self, mock_cases):
         mock_cases.return_value = '{"customer_id": 7, "recent_count": 0, "cases": []}'
-        cases, count, failed = _ticket_history(7)
+        cases, count, failed = _guardian_ticket_history(_load_ticket_snapshot(7))
         assert cases == []
         assert count == 0
         assert failed is False
 
-    def test_none_customer_id_returns_empty_list_and_false_flag(self):
-        cases, count, failed = _ticket_history(None)
-        assert cases == []
-        assert count == 0
-        assert failed is False
-
-    def test_zero_customer_id_returns_empty_list_and_false_flag(self):
-        cases, count, failed = _ticket_history(0)
-        assert cases == []
-        assert count == 0
-        assert failed is False
+    @pytest.mark.parametrize("customer_id", [None, 0])
+    @patch("app.agents.domain_graph.find_customer_support_cases")
+    def test_invalid_customer_identity_does_not_query_cases(self, mock_cases, customer_id):
+        assert _load_ticket_snapshot(customer_id) == (None, 0)
+        mock_cases.assert_not_called()
 
     @patch("app.agents.domain_graph.find_customer_support_cases")
     def test_valid_cases_are_parsed(self, mock_cases):
@@ -149,7 +144,7 @@ class TestRecentCasesResilience:
                 {"id": 2, "status": "open", "type": "billing", "subject": "Issue: Refund", "priority": "medium"},
             ]
         })
-        cases, count, failed = _ticket_history(7)
+        cases, count, failed = _guardian_ticket_history(_load_ticket_snapshot(7))
         assert len(cases) == 2
         assert failed is False
         assert cases[0].id == 1
@@ -242,14 +237,15 @@ class TestGuardianResponseNode:
     async def test_mutation_error_on_ticket_update_appends_honest_failure_message(self, mock_cases, mock_update):
         """When the ticket update fails, an honest error message is appended without claiming success."""
         mock_cases.return_value = json.dumps({
-            "recent_count": 0, "cases": [{"id": 100, "status": "open", "type": "technical_issue", "subject": "Issue: Warranty"}]
+            "recent_count": 0, "cases": [{"id": 100, "status": "open", "type": "technical_issue", "subject": "Issue: Warranty Claim"}]
         })
         mock_update.return_value = '{"error": "DB write failed"}'
         result = await guardian_response_node({
             "message": "I still have the warranty issue",
-            "response": "Your warranty is active.",
+            "response": "Your claim needs further review.",
+            "requires_human": True,
             "semantic_domain": "product",
-            "intent": "warranty",
+            "intent": "warranty_claim",
             "customer_id": 7,
             "client_request_id": "req-123",
             "workflow_state": {"turn_count": 2},

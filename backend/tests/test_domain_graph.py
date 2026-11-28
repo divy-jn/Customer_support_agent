@@ -60,11 +60,11 @@ async def test_v2_product_node_delegates_to_hardened_product_agent(mock_product)
 @patch("app.agents.domain_graph.update_ticket")
 @patch("app.agents.domain_graph.find_customer_support_cases")
 async def test_guardian_updates_existing_ticket_instead_of_creating_duplicate(mock_cases, mock_update):
-    mock_cases.return_value = '{"recent_count": 0, "cases": [{"id": 786, "status": "open", "type": "technical_issue", "subject": "Issue: Product Warranty"}]}'
+    mock_cases.return_value = '{"recent_count": 0, "cases": [{"id": 786, "status": "open", "type": "technical_issue", "subject": "Issue: Warranty Claim"}]}'
     mock_update.return_value = '{"status": "success"}'
     result = await guardian_response_node({
-        "message": "I need a manager about the warranty", "response": "Your warranty is active.",
-        "semantic_domain": "product", "intent": "product_warranty", "customer_id": 7,
+        "message": "My warranty claim is still unresolved", "response": "Your claim needs further review.",
+        "requires_human": True, "semantic_domain": "product", "intent": "warranty_claim", "customer_id": 7,
         "client_request_id": "request-1", "workflow_state": {"turn_count": 1},
     })
 
@@ -157,7 +157,7 @@ async def test_guardian_escalates_without_mutation_when_ticket_history_is_unavai
         "message": "The device still does not turn on after troubleshooting.",
         "response": None,
         "semantic_domain": "product",
-        "intent": "product_warranty",
+        "intent": "technical_support",
         "customer_id": 7,
         "client_request_id": "history-outage-request",
         "workflow_state": {"turn_count": 1},
