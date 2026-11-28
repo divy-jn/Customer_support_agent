@@ -5,7 +5,7 @@ Pydantic schemas for API request/response validation.
 from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 
 # ──────────────────────────────────────────────
@@ -398,6 +398,17 @@ class PaymentState(BaseModel):
     last_tool_result: ToolResultEnvelope | None = None
 
 
+class LookupContext(BaseModel):
+    kind: Literal["ticket", "active_tickets", "order", "order_history"]
+    record_id: int | None = Field(default=None, gt=0, strict=True)
+
+    @model_validator(mode="after")
+    def validate_record_id(self) -> "LookupContext":
+        if (self.kind in {"ticket", "order"}) != (self.record_id is not None):
+            raise ValueError("Single-record lookup context requires exactly one record ID")
+        return self
+
+
 class WorkflowState(BaseModel):
     """
     Explicit, strongly typed multi-turn workflow orchestration state.
@@ -414,6 +425,7 @@ class WorkflowState(BaseModel):
     active_domain: str | None = None
     suspended_domains: list[OrchestrationDomain] = Field(default_factory=list, max_length=3)  # max 3 concurrent suspended domains
     resumed_domain: OrchestrationDomain | None = None
+    lookup_context: LookupContext | None = None
     
     # ─── F.2 Domain States ───
     product_state: ProductState | None = None
@@ -615,6 +627,7 @@ class WorkflowState(BaseModel):
             global_status=cls._map_legacy_global_status(legacy_dict.get("workflow_status", WorkflowStatus.IDLE), bool(domain_enum)),
             turn_count=legacy_dict.get("turn_count", 0),
             unresolved_attempts=legacy_dict.get("unresolved_attempts") or 0,
+            lookup_context=legacy_dict.get("lookup_context"),
             updated_at=legacy_dict.get("updated_at")
         )
 

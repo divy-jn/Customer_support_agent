@@ -174,7 +174,8 @@ async def _confirm_graph_handoff(result, session_id, customer_id, client_request
     ticket_id = result.get("guardian_ticket_id")
     workflow = result.get("workflow_state") or {}
     domain_state = workflow.get(f"{workflow.get('active_domain')}_state") or {}
-    ticket_id = ticket_id or domain_state.get("active_ticket_id")
+    if not result.get("explicit_lookup_escalation"):
+        ticket_id = ticket_id or domain_state.get("active_ticket_id")
     try:
         turn_id = uuid.UUID(client_request_id)
         request = EscalationRequest(

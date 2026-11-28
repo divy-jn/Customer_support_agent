@@ -48,6 +48,8 @@ class GuardianInput(BaseModel):
     sentiment: str = "neutral"
     urgency: str = "low"
     customer_repeats_human_request: bool = False
+    explicit_lookup_escalation: bool = False
+    verified_lookup_ticket_id: int | None = Field(default=None, gt=0)
 
 
 class GuardianDecision(BaseModel):
@@ -75,12 +77,16 @@ class Guardian:
     @classmethod
     def decide(cls, facts: GuardianInput) -> GuardianDecision:
         existing = cls._matching_active_case(facts)
+        escalation_ticket_id = (
+            facts.verified_lookup_ticket_id if facts.explicit_lookup_escalation
+            else existing.id if existing else None
+        )
 
         # Safety/legal and severe distress always outrank duplicate prevention.
         if facts.safety_or_legal_issue:
             return GuardianDecision(
                 action=GuardianAction.ESCALATE,
-                ticket_id=existing.id if existing else None,
+                ticket_id=escalation_ticket_id,
                 reason="Safety or legal issues require immediate human escalation.",
             )
 
@@ -90,22 +96,29 @@ class Guardian:
         ):
             return GuardianDecision(
                 action=GuardianAction.ESCALATE,
-                ticket_id=existing.id if existing else None,
+                ticket_id=escalation_ticket_id,
                 reason="High-severity or critical customer concerns require human escalation.",
             )
 
         if facts.unresolved_attempts >= 3:
             return GuardianDecision(
                 action=GuardianAction.ESCALATE,
-                ticket_id=existing.id if existing else None,
+                ticket_id=escalation_ticket_id,
                 reason="Three or more unresolved attempts require human escalation.",
             )
 
         if facts.recent_ticket_count >= 2:
             return GuardianDecision(
                 action=GuardianAction.ESCALATE,
-                ticket_id=existing.id if existing else None,
+                ticket_id=escalation_ticket_id,
                 reason="Multiple recent support tickets require human review.",
+            )
+
+        if facts.explicit_lookup_escalation:
+            return GuardianDecision(
+                action=GuardianAction.ESCALATE,
+                ticket_id=escalation_ticket_id,
+                reason="The customer explicitly requested escalation of the active lookup.",
             )
 
         if facts.customer_requests_human and facts.customer_repeats_human_request:

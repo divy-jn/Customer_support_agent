@@ -19,16 +19,18 @@ from langgraph.graph import END, StateGraph
 from app.agents import semantic_router
 from app.agents.graph import AgentState, customer_support_graph, product_node
 from app.agents.supervisor import Supervisor, SupervisorAction
+from app.agents.grounded_response import synthesize_lookup_reply
 from app.agents.guardian import Guardian, GuardianAction, GuardianDecision, GuardianInput, SupportCase
 from app.agents.response_composer import compose_response, format_support_timestamp
 from app.agents.order_agent import handle_order_request
 from app.agents.payment_agent import handle_payment_request
 from app.agents.general_agent import handle_general_request
 from app.agents.routing_policy import (
-    extract_ticket_id, is_ticket_status_query, normalize_intent, telemetry_entity_keys, telemetry_intent,
+    asks_to_escalate_lookup, extract_ticket_id, is_lookup_followup, is_ticket_status_query,
+    normalize_intent, telemetry_entity_keys, telemetry_intent,
 )
 from app.config import settings
-from app.models import OrchestrationDomain, RouterFailureType, WorkflowState
+from app.models import LookupContext, OrchestrationDomain, RouterFailureType, WorkflowState
 from app.tools import create_ticket, find_customer_support_cases, get_ticket, update_ticket
 
 logger = logging.getLogger(__name__)
@@ -47,7 +49,10 @@ class DomainAgentState(AgentState):
     supervisor_target_domain: str | None
     ticket_snapshot: tuple[list[dict] | None, int]
     lookup_ticket_id: int | None
+    lookup_order_id: int | None
     ticket_lookup_failed: bool
+    lookup_context: dict[str, Any]
+    explicit_lookup_escalation: bool
     supervisor_reason: str | None
     architecture_mode: str | None
     guardian_action: str | None
@@ -93,22 +98,45 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
     domain = semantic.domain
     intent = normalize_intent(domain, semantic.intent)
     classified = semantic.diagnostics.failure_type == RouterFailureType.SUCCESS
-    ticket_query = False
-    lookup_ticket_id = None
-    if current_mode == "v2_all":
-        message = state["message"]
-        ticket_query = is_ticket_status_query(message)
-        lookup_ticket_id = extract_ticket_id(
-            message,
-            semantic.entities if classified else {},
-            ticket_context=ticket_query or (domain == "general" and intent == "ticket_status"),
-        )
-        if ticket_query or lookup_ticket_id is not None:
-            domain, intent = "general", "ticket_status"
-
+    message = state["message"]
     try:
         workflow = WorkflowState.from_legacy(base_workflow)
-        if ticket_query or lookup_ticket_id is not None or classified:
+        context = workflow.lookup_context if workflow.customer_id == state.get("customer_id") else None
+        if context and current_mode != "v2_all" and (
+            not context.kind.startswith("order") or current_mode not in {"v2_product_order", "v2_core"}
+        ):
+            context = None
+
+        explicit_escalation = context is not None and asks_to_escalate_lookup(message)
+        contextual_lookup = context is not None and is_lookup_followup(message) and not _requests_human(message)
+        ticket_query = current_mode == "v2_all" and is_ticket_status_query(message)
+        lookup_ticket_id = None
+        lookup_order_id = None
+        if current_mode == "v2_all":
+            bare_reference = re.fullmatch(r"\s*#\s*[0-9]+[?.!]?\s*", message)
+            lookup_ticket_id = extract_ticket_id(
+                message,
+                semantic.entities if classified else {},
+                ticket_context=ticket_query or (domain == "general" and intent == "ticket_status")
+                or bool(bare_reference and context and context.kind in {"ticket", "active_tickets"}),
+            )
+
+        if explicit_escalation:
+            domain, intent = "escalation", "escalation"
+            lookup_ticket_id = context.record_id if context.kind == "ticket" else None
+        elif ticket_query or lookup_ticket_id is not None:
+            domain, intent = "general", "ticket_status"
+        elif contextual_lookup:
+            if context.kind in {"ticket", "active_tickets"}:
+                domain, intent = "general", "ticket_status"
+                lookup_ticket_id = context.record_id
+            else:
+                domain = "order"
+                intent = "view_order_history" if context.kind == "order_history" else "track_order"
+                lookup_order_id = context.record_id
+        if ticket_query or lookup_ticket_id is not None or classified or contextual_lookup or explicit_escalation:
+            if not explicit_escalation:
+                workflow.lookup_context = None
             decision = Supervisor.decide(
                 domain,
                 intent,
@@ -133,6 +161,8 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
                 "urgency": semantic.urgency,
                 "semantic_domain": domain,
                 "lookup_ticket_id": lookup_ticket_id,
+                "lookup_order_id": lookup_order_id,
+                "explicit_lookup_escalation": explicit_escalation,
                 "supervisor_action": decision.action.value,
                 "supervisor_target_domain": decision.target_domain.value,
                 "supervisor_reason": decision.transition_reason,
@@ -321,24 +351,30 @@ def _format_ticket_reply(ticket: dict, *, include_priority: bool = True) -> str:
     return f"{response} Last updated: {updated}."
 
 
-async def _exact_ticket_reply(ticket_id: int, customer_id: int | None) -> dict[str, Any]:
-    unavailable = {
-        "response": f"I couldn’t verify ticket #{ticket_id} right now. Please try again.",
-        "ticket_lookup_failed": True,
+def _ticket_facts(ticket: dict) -> dict[str, Any]:
+    facts = {
+        "id": ticket["id"],
+        "subject": " ".join(str(ticket.get("subject") or "Support request").split())[:120],
+        "status": ticket["status"].replace("_", " ").capitalize(),
+        "last_updated": format_support_timestamp(ticket.get("updated_at")),
     }
+    if isinstance(ticket.get("priority"), str):
+        facts["priority"] = ticket["priority"].replace("_", " ").capitalize()
+    if isinstance(resolution := ticket.get("resolution"), str) and resolution.strip():
+        facts["recorded_resolution"] = resolution.strip()[:500]
+    return facts
+
+
+async def _load_exact_ticket(ticket_id: int, customer_id: int | None) -> tuple[str, dict | None]:
     if type(customer_id) is not int or customer_id <= 0:
-        return unavailable
+        return "lookup_failed", None
 
     try:
         payload = json.loads(await asyncio.to_thread(get_ticket, ticket_id, customer_id=customer_id))
     except Exception:
-        return unavailable
+        return "lookup_failed", None
     if not isinstance(payload, dict):
-        return unavailable
-    not_found = {
-        "response": f"I couldn’t find ticket #{ticket_id} on your account.",
-        "ticket_lookup_failed": False,
-    }
+        return "lookup_failed", None
     if payload.get("error"):
         if payload.get("error_code") == "not_found" or (
             "error_code" not in payload and payload["error"] in (
@@ -346,33 +382,69 @@ async def _exact_ticket_reply(ticket_id: int, customer_id: int | None) -> dict[s
                 f"Ticket #{ticket_id} not found or does not belong to you",
             )
         ):
-            return not_found
-        return unavailable
+            return "not_found", None
+        return "lookup_failed", None
     if payload.get("customer_id", customer_id) != customer_id:
-        return not_found
+        return "not_found", None
     if payload.get("id") != ticket_id or not isinstance(payload.get("status"), str):
-        return unavailable
+        return "lookup_failed", None
+    return "found", payload
 
-    return {"response": _format_ticket_reply(payload), "ticket_lookup_failed": False}
+
+async def _exact_ticket_reply(state: DomainAgentState, ticket_id: int) -> dict[str, Any]:
+    outcome, ticket = await _load_exact_ticket(ticket_id, state.get("customer_id"))
+    if outcome == "not_found":
+        return {
+            "response": f"I couldn’t find ticket #{ticket_id} on your account.",
+            "ticket_lookup_failed": False,
+        }
+    if ticket is None:
+        return {
+            "response": f"I couldn’t verify ticket #{ticket_id} right now. Please try again.",
+            "ticket_lookup_failed": True,
+        }
+
+    response = await synthesize_lookup_reply(
+        message=state["message"], history=state.get("conversation_history", []),
+        facts={"kind": "ticket", "records": [_ticket_facts(ticket)]},
+        fallback=_format_ticket_reply(ticket),
+    )
+    return {
+        "response": response, "ticket_lookup_failed": False,
+        "lookup_context": LookupContext(kind="ticket", record_id=ticket_id).model_dump(),
+    }
 
 
 async def v2_ticket_status_node(state: DomainAgentState) -> dict[str, Any]:
     if ticket_id := state.get("lookup_ticket_id"):
-        return await _exact_ticket_reply(ticket_id, state.get("customer_id"))
+        return await _exact_ticket_reply(state, ticket_id)
 
     snapshot = await asyncio.to_thread(_load_ticket_snapshot, state.get("customer_id"))
     cases, _ = snapshot
     if cases is None:
-        response = "I couldn’t verify your active support tickets right now. Please try again."
-    elif not cases:
-        response = "You have no active support tickets on your account."
+        return {
+            "response": "I couldn’t verify your active support tickets right now. Please try again.",
+            "ticket_snapshot": snapshot,
+        }
+    if not cases:
+        fallback = "You have no active support tickets on your account."
     else:
         lines = ["Here are your active support tickets:", ""]
         lines.extend(f"- {_format_ticket_reply(case, include_priority=False)}" for case in cases[:10])
         if len(cases) > 10:
             lines.extend(("", f"Showing 10 of {len(cases)} active tickets."))
-        response = "\n".join(lines)
-    return {"response": response, "ticket_snapshot": snapshot}
+        fallback = "\n".join(lines)
+
+    response = await synthesize_lookup_reply(
+        message=state["message"], history=state.get("conversation_history", []),
+        facts={"kind": "active_tickets", "records": [_ticket_facts(case) for case in cases[:10]],
+               "total_active_tickets": len(cases)},
+        fallback=fallback,
+    )
+    return {
+        "response": response, "ticket_snapshot": snapshot,
+        "lookup_context": LookupContext(kind="active_tickets").model_dump(),
+    }
 
 
 _READ_ONLY_INTENTS = {
@@ -407,7 +479,15 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
     exact_ticket = "ticket_lookup_failed" in state
     ticket_status = exact_ticket or "ticket_snapshot" in state
     customer_id = state.get("customer_id")
-    if exact_ticket:
+    explicit_escalation = bool(state.get("explicit_lookup_escalation"))
+    verified_ticket_id = None
+    if explicit_escalation:
+        active_cases, recent_count, ticket_history_lookup_failed = [], 0, False
+        if ticket_id := state.get("lookup_ticket_id"):
+            _, ticket = await _load_exact_ticket(ticket_id, customer_id)
+            if ticket is not None:
+                verified_ticket_id = ticket_id
+    elif exact_ticket:
         active_cases, recent_count, ticket_history_lookup_failed = [], 0, state["ticket_lookup_failed"]
     else:
         snapshot = state.get("ticket_snapshot")
@@ -454,6 +534,8 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         sentiment=state.get("sentiment", "neutral"),
         urgency=state.get("urgency", "low"),
         customer_repeats_human_request=previously_requested_human,
+        explicit_lookup_escalation=explicit_escalation,
+        verified_lookup_ticket_id=verified_ticket_id,
     ))
     ticket_id, mutation_error = await _apply_guardian_ticket_decision(
         {**state, "history_lookup_failed": ticket_history_lookup_failed}, decision
@@ -474,6 +556,9 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
 
     new_workflow["unresolved_attempts"] = min(next_unresolved_attempts, 100)
     new_workflow["turn_count"] = int(new_workflow.get("turn_count", 0)) + 1
+    if lookup_context := state.get("lookup_context"):
+        new_workflow["lookup_context"] = lookup_context
+        new_workflow["customer_id"] = customer_id
     new_workflow["updated_at"] = datetime.now(timezone.utc).isoformat()
     if decision.action == GuardianAction.ESCALATE:
         new_workflow["global_status"] = "escalated"

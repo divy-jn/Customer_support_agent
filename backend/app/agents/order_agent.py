@@ -11,8 +11,10 @@ import re
 from typing import Any
 
 from app.agents.approval_service import create_pending_approval
+from app.agents.grounded_response import synthesize_lookup_reply
 from app.agents.response_composer import format_support_timestamp
 from app.agents.routing_policy import normalize_intent
+from app.models import LookupContext
 from app.tools import track_order, get_customer_history
 
 
@@ -65,14 +67,32 @@ def _update_order_state(ws: Any, oid: int, tool_name: str | None = None, tool_re
     return ws_dict
 
 
+def _order_facts(order: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": order["id"],
+        "product": (order.get("products") or {}).get("name"),
+        "status": order.get("status"),
+        "tracking_number": order.get("tracking_number"),
+        "placed_at": format_support_timestamp(order.get("order_date")),
+    }
+
+
 async def _order_history(state: dict[str, Any]) -> dict[str, Any]:
     customer_id = state.get("customer_id")
     try:
-        raw = await asyncio.to_thread(get_customer_history, customer_id) if customer_id else "{}"
+        raw = await asyncio.to_thread(get_customer_history, customer_id) if type(customer_id) is int and customer_id > 0 else "{}"
         payload = json.loads(raw)
-        orders = payload.get("recent_orders") if isinstance(payload, dict) and not payload.get("error") else None
+        if (
+            not isinstance(payload, dict) or payload.get("error")
+            or payload.get("customer_id", customer_id) != customer_id
+        ):
+            raise ValueError("Invalid order history result")
+        orders = payload.get("recent_orders")
         if not isinstance(orders, list):
             raise ValueError("Invalid order history result")
+        if any(order.get("customer_id", customer_id) != customer_id for order in orders):
+            raise ValueError("Unexpected order owner")
+        records = [_order_facts(order) for order in orders]
         if orders:
             lines = ["Here is your recent order history:", ""]
             for order in orders:
@@ -89,12 +109,21 @@ async def _order_history(state: dict[str, Any]) -> dict[str, Any]:
         else:
             response = "You don't have any past orders on file with us yet."
     except (AttributeError, KeyError, TypeError, ValueError):
-        raw = None
-        response = "I couldn’t verify your order history right now. Please try again."
+        return {
+            "response": "I couldn’t verify your order history right now. Please try again.",
+            "tool_results": None,
+            "workflow_state": state.get("workflow_state"),
+            "escalated": False,
+        }
+    response = await synthesize_lookup_reply(
+        message=state["message"], history=state.get("conversation_history", []),
+        facts={"kind": "order_history", "records": records}, fallback=response,
+    )
     return {
         "response": response,
         "tool_results": raw,
         "workflow_state": state.get("workflow_state"),
+        "lookup_context": LookupContext(kind="order_history").model_dump(),
         "escalated": False,
     }
 
@@ -109,6 +138,8 @@ async def handle_order_request(state: dict[str, Any]) -> dict[str, Any]:
         and any(phrase in msg_lower for phrase in ("order history", "past order", "previous order", "order list", "my orders"))
     ):
         return await _order_history(state)
+    if order_id is None:
+        order_id = state.get("lookup_order_id")
     if order_id is None:
         raw_ws = state.get("workflow_state") or {}
         ord_st = raw_ws.get("order_state") if isinstance(raw_ws, dict) else getattr(raw_ws, "order_state", None)
@@ -191,21 +222,48 @@ async def handle_order_request(state: dict[str, Any]) -> dict[str, Any]:
             "escalated": False,
         }
 
-    raw = await asyncio.to_thread(track_order, order_id, state.get("customer_id"))
-    try:
-        order = json.loads(raw)
-    except json.JSONDecodeError:
-        order = {"error": "Unable to read the order record."}
-    if order.get("error"):
+    customer_id = state.get("customer_id")
+    if type(customer_id) is not int or customer_id <= 0:
         return {
-            "response": f"I couldn't retrieve that order: {order['error']}",
+            "response": "I couldn’t verify that order right now. Please try again.",
             "workflow_state": ws_updated,
             "escalated": False,
         }
+    try:
+        raw = await asyncio.to_thread(track_order, order_id, customer_id)
+        order = json.loads(raw)
+        if not isinstance(order, dict):
+            raise ValueError("Unexpected order tool result")
+        if error := order.get("error"):
+            if error in (
+                f"Order #{order_id} not found",
+                f"Order #{order_id} not found or does not belong to you",
+            ):
+                return {
+                    "response": f"I couldn't find order #{order_id} on your account.",
+                    "workflow_state": ws_updated,
+                    "escalated": False,
+                }
+            raise ValueError("Order lookup failed")
+        if order.get("customer_id", customer_id) != customer_id or order.get("id") != order_id:
+            raise ValueError("Unexpected order identity")
+        facts = _order_facts(order)
+    except Exception:
+        return {
+            "response": "I couldn’t verify that order right now. Please try again.",
+            "workflow_state": ws_updated,
+            "escalated": False,
+        }
+
+    response = await synthesize_lookup_reply(
+        message=state["message"], history=state.get("conversation_history", []),
+        facts={"kind": "order", "records": [facts]}, fallback=_format_tracking(order),
+    )
     ws_with_tool = _update_order_state(state.get("workflow_state"), order_id, "track_order", raw)
     return {
-        "response": _format_tracking(order),
+        "response": response,
         "tool_results": raw,
         "workflow_state": ws_with_tool,
+        "lookup_context": LookupContext(kind="order", record_id=order_id).model_dump(),
         "escalated": False,
     }

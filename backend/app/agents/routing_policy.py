@@ -117,6 +117,30 @@ def is_ticket_status_query(message: str) -> bool:
     )
 
 
+_LOOKUP_FOLLOWUP = re.compile(
+    r"^(?:and\s+)?(?:(?:why|when|what)\b.*\b(?:it|this|that|they|these|those)\b"
+    r"|which (?:one|ones|of (?:these|those|them))\b|(?:is|are|was|were|has|have|did)\s+(?:it|they|this|that)\b"
+    r"|(?:any|an) (?:update|news)\b|(?:please )?try again\b)",
+    re.IGNORECASE,
+)
+_LOOKUP_HANDOFF = re.compile(
+    r"(?:please\s+)?(?:(?:can|could|would) you\s+)?(?:please\s+)?"
+    r"escalate\s+(?:it|this|that)(?:\s+(?:ticket|case|order))?"
+    r"(?:\s+to\s+(?:a\s+)?(?:human|agent)(?:\s+agent)?)?"
+    r"(?:\s+please)?[.? !]*",
+    re.IGNORECASE,
+)
+_NUMBERED_LOOKUP = re.compile(r"(?<!\w)#\s*[0-9]+|\b(?:ticket|case|order)\s+[0-9]+\b", re.IGNORECASE)
+
+
+def is_lookup_followup(message: str) -> bool:
+    return not _NUMBERED_LOOKUP.search(message) and bool(_LOOKUP_FOLLOWUP.match(message.strip()))
+
+
+def asks_to_escalate_lookup(message: str) -> bool:
+    return bool(_LOOKUP_HANDOFF.fullmatch(message.strip()))
+
+
 def telemetry_intent(value: str) -> str:
     # A model can put customer data in an unconstrained intent field.
     if len(value) <= 64 and value.strip().lower() in _TELEMETRY_INTENTS:

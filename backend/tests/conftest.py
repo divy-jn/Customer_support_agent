@@ -107,6 +107,17 @@ def configure_test_approval_signing_secret(monkeypatch):
         monkeypatch.setattr(settings, "approval_signing_secret", "test-approval-signing-secret-key-32chars")
 
 
+@pytest.fixture(autouse=True)
+def mock_grounded_reply_provider(monkeypatch):
+    """Keep read-only reply synthesis offline, even in live classifier-only evals."""
+    from app.agents import grounded_response
+
+    def unavailable(**_kwargs):
+        raise RuntimeError("Mocked synthesis provider unavailable")
+
+    monkeypatch.setattr(grounded_response, "get_llm", unavailable)
+
+
 def _is_safe_test_database_dsn(dsn: str) -> bool:
     """Positively restrict fixture seeding to approved local loopback hosts (127.0.0.1, localhost, ::1).
 
