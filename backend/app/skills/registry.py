@@ -105,7 +105,7 @@ DatabaseSkill = AgentSkill(
         "Suggest next steps when appropriate."
     ],
     expected_output="A polite, helpful, and natural language response answering the customer's query using only the provided tool results.",
-    failure_behavior="If unable to process the database request, explain that account information could not be verified."
+    failure_behavior="If unable to process the database request, apologize and explain that account information could not be verified."
 )
 
 RAGSkill = AgentSkill(

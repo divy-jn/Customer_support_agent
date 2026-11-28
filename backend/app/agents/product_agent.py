@@ -396,8 +396,7 @@ class ProductAgent:
                 self._set_domain_status(merged_state, DomainWorkflowStatus.FAILED)
                 return ProductAgentResponse(
                     response=(
-                        "I apologize, but I'm experiencing a technical issue. "
-                        "Please try again."
+                        "I apologize, but I'm experiencing a technical issue."
                     ),
                     workflow_state=merged_state,
                     skill_used=skill.name,

@@ -167,7 +167,7 @@ Based on the tool results above, provide a helpful response to the customer."""
     except Exception as e:
         # #review: Fallback message triggers human escalation recommendation when DB LLM call fails
         return {
-            "response": "I couldn’t verify your account information right now. Please try again.",
+            "response": "I apologize, but I'm having trouble accessing your account information right now.",
             "error": str(e),
         }
 

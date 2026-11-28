@@ -94,7 +94,7 @@ async def handle_payment_request(state: dict[str, Any]) -> dict[str, Any]:
 
     if intent not in _REFUND_INTENTS:
         return {
-            "response": "Could you share more detail about the payment or billing issue?",
+            "response": "This request is about payment or billing support.",
             "workflow_state": ws_updated,
             "escalated": False,
         }

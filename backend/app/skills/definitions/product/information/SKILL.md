@@ -12,7 +12,7 @@ workflow:
     - "ONLY answer based on the provided CONTEXT. Do NOT use any external knowledge."
     - "Always cite the source document name naturally in your response."
   expected_output: "A concise, friendly, and professional response based on product info."
-  failure_behavior: "Say the product information could not be found."
+  failure_behavior: "Apologize and say the product information could not be found."
 policy:
   allowed_tools:
     - "retrieve_as_context"
