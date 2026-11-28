@@ -291,6 +291,7 @@ def health_check():
         "status": status,
         "service": "customer-support-ai",
         "version": app.version,
+        "git_sha": os.environ.get("BUILD_GIT_SHA", "unknown"),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "llm_provider": settings.llm_provider,
         "llm_model": model,

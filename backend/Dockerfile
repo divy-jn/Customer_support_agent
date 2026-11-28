@@ -7,6 +7,8 @@ RUN pip install --no-cache-dir -r requirements-runtime.txt
 
 COPY . .
 
+ARG BUILD_GIT_SHA=unknown
+ENV BUILD_GIT_SHA=${BUILD_GIT_SHA}
 ENV PORT=8002
 EXPOSE ${PORT}
 

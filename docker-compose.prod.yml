@@ -3,6 +3,8 @@ services:
     image: intellisupport-backend:prod
     build:
       context: ./backend
+      args:
+        BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unknown}
       labels:
         org.opencontainers.image.revision: ${BUILD_GIT_SHA:-unknown}
     command: ["uvicorn", "app.main:app", "--workers", "1", "--host", "0.0.0.0", "--port", "8002"]

@@ -16,6 +16,7 @@ def test_health_reports_version_last_success_and_standalone_worker(tmp_path, mon
     marker = tmp_path / "heartbeat.json"
     marker.write_text('{"dispatch": "running", "reconciliation": "running"}', encoding="utf-8")
     monkeypatch.setenv("OUTBOX_HEARTBEAT_PATH", str(marker))
+    monkeypatch.setenv("BUILD_GIT_SHA", "a" * 40)
     monkeypatch.setattr(settings, "outbox_worker_mode", "standalone")
     monkeypatch.setattr(settings, "outbox_worker_enabled", True)
     monkeypatch.setattr(settings, "reconciliation_enabled", True)
@@ -30,6 +31,7 @@ def test_health_reports_version_last_success_and_standalone_worker(tmp_path, mon
 
     result = health_check()
     assert result["version"] == app.version
+    assert result["git_sha"] == "a" * 40
     assert result["last_model_success_at"] == last_success
     assert result["outbox"] == {"mode": "standalone", "dispatch": "running", "reconciliation": "running"}
 
