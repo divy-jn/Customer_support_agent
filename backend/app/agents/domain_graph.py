@@ -24,8 +24,9 @@ from app.agents.response_composer import compose_response
 from app.agents.order_agent import handle_order_request
 from app.agents.payment_agent import handle_payment_request
 from app.agents.general_agent import handle_general_request
+from app.agents.routing_policy import telemetry_entity_keys, telemetry_intent
 from app.config import settings
-from app.models import RouterFailureType, WorkflowState
+from app.models import OrchestrationDomain, RouterFailureType, WorkflowState
 from app.tools import create_ticket, find_customer_support_cases, update_ticket
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,11 @@ class DomainAgentState(AgentState):
 
     semantic_domain: str | None
     semantic_confidence: float | None
+    raw_classifier_intent: str | None
+    is_continuation: bool
+    entity_keys: list[str]
+    semantic_failure_type: str
+    pre_turn_workflow_domain: str | None
     supervisor_action: str | None
     supervisor_reason: str | None
     architecture_mode: str | None
@@ -69,6 +75,21 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
     base_workflow = state.get("workflow_state") or {
         "session_id": state.get("session_id", "unknown"),
         "customer_id": state.get("customer_id"),
+    }
+
+    pre_turn_domain = (
+        base_workflow.get("active_domain") if isinstance(base_workflow, dict)
+        else getattr(base_workflow, "active_domain", None)
+    )
+    telemetry = {
+        "semantic_confidence": semantic.confidence,
+        "raw_classifier_intent": telemetry_intent(semantic.intent),
+        "is_continuation": semantic.is_continuation,
+        "entity_keys": telemetry_entity_keys(semantic.entities),
+        "semantic_failure_type": semantic.diagnostics.failure_type.value,
+        "pre_turn_workflow_domain": (
+            pre_turn_domain if pre_turn_domain in tuple(OrchestrationDomain) else None
+        ),
     }
 
     current_mode = state.get("architecture_mode") or settings.agent_architecture_mode
@@ -96,11 +117,11 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
                 else None
             )
             return {
+                **telemetry,
                 "intent": semantic.intent,
                 "sentiment": semantic.sentiment,
                 "urgency": semantic.urgency,
                 "semantic_domain": semantic.domain,
-                "semantic_confidence": semantic.confidence,
                 "supervisor_action": decision.action.value,
                 "supervisor_reason": decision.transition_reason,
                 "resumed_domain": res_dom,
@@ -110,12 +131,12 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
             }
     except (ValueError, TypeError):
         # A malformed persisted workflow must never create a new V2 state.
-        pass
+        telemetry["semantic_failure_type"] = RouterFailureType.WORKFLOW_VALIDATION_ERROR.value
 
     # Full V2 handles router or state failures through clarification.
     return {
+        **telemetry,
         "semantic_domain": "unknown",
-        "semantic_confidence": 0.0,
         "supervisor_action": "legacy_fallback",
         "supervisor_reason": "Semantic routing or workflow validation failed.",
         "architecture_mode": current_mode,

@@ -242,6 +242,7 @@ class RouterFailureType(str, Enum):
     TIMEOUT_ERROR = "timeout_error"
     PARSER_ERROR = "parser_error"
     SCHEMA_VALIDATION_ERROR = "schema_validation_error"
+    WORKFLOW_VALIDATION_ERROR = "workflow_validation_error"
     INTERNAL_ERROR = "internal_error"
 
 class RouterDiagnostics(BaseModel):

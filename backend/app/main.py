@@ -14,6 +14,9 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
+
+from langsmith import utils as langsmith_utils
 
 from fastapi import FastAPI, WebSocket, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -109,11 +112,30 @@ def _run_startup_checks():
 # ──────────────────────────────────────────────
 #  App Lifecycle
 # ──────────────────────────────────────────────
+def _log_tracing_status() -> None:
+    # Log only the origin. An endpoint may include credentials or query parameters.
+    try:
+        endpoint = urlsplit(langsmith_utils.get_api_url(None))
+        origin = f"{endpoint.scheme}://{endpoint.hostname}"
+        if endpoint.port:
+            origin += f":{endpoint.port}"
+    except ValueError:
+        origin = "invalid"
+    logger.info(
+        "LangSmith tracing %s project=%s endpoint=%s api_key_set=%s",
+        "enabled" if langsmith_utils.tracing_is_enabled() else "disabled",
+        langsmith_utils.get_tracer_project(),
+        origin,
+        bool(langsmith_utils.get_env_var("API_KEY")),
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.llm_factory import resolve_model
 
     logger.info("=== Customer Support AI Server Starting ===")
+    _log_tracing_status()
     logger.info("LLM Provider  : %s", settings.llm_provider)
     logger.info(f"LLM Model     : {resolve_model()}")
     if settings.llm_provider == "bedrock":

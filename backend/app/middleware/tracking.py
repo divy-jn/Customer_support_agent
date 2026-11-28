@@ -8,6 +8,8 @@ Also collects aggregate metrics for the admin dashboard.
 """
 
 import time
+
+from app.agents.routing_policy import telemetry_entity_keys, telemetry_intent
 import logging
 import functools
 import threading
@@ -31,7 +33,14 @@ def emit_workflow_turn(event: dict) -> None:
         "ticket_id", "guardian_ticket_id", "pending_approval", "escalated", "latency_ms", "outcome",
         "approval_id", "approval_action", "approval_status",
     }
-    logger.info("workflow_turn", extra={key: value for key, value in event.items() if key in allowed})
+    record = {key: value for key, value in event.items() if key in allowed}
+    for field in ("intent", "raw_classifier_intent"):
+        if isinstance(event.get(field), str):
+            record[field] = telemetry_intent(event[field]) if event[field] else ""
+    for field in ("semantic_confidence", "is_continuation", "semantic_failure_type", "pre_turn_workflow_domain"):
+        record[field] = event.get(field)
+    record["entity_keys"] = telemetry_entity_keys(event.get("entity_keys") or [])
+    logger.info("workflow_turn", extra=record)
 
 
 # ──────────────────────────────────────────────
