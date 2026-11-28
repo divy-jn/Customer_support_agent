@@ -184,7 +184,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Intelligent Customer Support System",
     description="Multi-agent customer support powered by LangGraph, MCP, and RAG.",
-    version="2.0.0",  #review: version says 2.0.0 but /health returns 1.0.0 — pick one
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -279,19 +279,23 @@ async def ws_agent(websocket: WebSocket, session_id: str, _: bool = Depends(veri
 # ──────────────────────────────────────────────
 @app.get("/health", tags=["system"])
 def health_check():
-    # Only checks Supabase; Pinecone & LLM are NOT checked here
-    from app.llm_factory import resolve_model
+    from app.llm_factory import last_model_success, resolve_model
+    from app.outbox.lifecycle import outbox_health
     from app.tools import check_supabase_health
+
+    model = resolve_model()
     db_health = check_supabase_health()
     status = "healthy" if db_health.get("status") == "healthy" else "unhealthy"
     
     response = {
         "status": status,
         "service": "customer-support-ai",
-        "version": "1.0.0",  #review: hard-coded — should match app.version (2.0.0)
+        "version": app.version,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "llm_provider": settings.llm_provider,
-        "llm_model": resolve_model(),
+        "llm_model": model,
+        "last_model_success_at": last_model_success(model),
+        "outbox": outbox_health(),
         "supabase_connected": status == "healthy",
         "details": db_health
     }

@@ -45,7 +45,9 @@ from typing import Optional
 
 from app.config import settings
 from app.logger import setup_logger
-from app.outbox.lifecycle import _build_dsn, start_reconciliation_scheduler, stop_reconciliation_scheduler
+from app.outbox.lifecycle import (
+    _build_dsn, publish_standalone_heartbeat, start_reconciliation_scheduler, stop_reconciliation_scheduler,
+)
 from app.outbox.sender import EmailSender, GmailSmtpSender
 from app.outbox.worker import OutboxWorker, RetryPolicy, emit_outbox_telemetry
 
@@ -271,7 +273,8 @@ async def run_standalone_worker(
 
     # 7. Worker execution loop
     try:
-        await worker.run_forever(stop_event=termination_event)
+        async with publish_standalone_heartbeat(worker):
+            await worker.run_forever(stop_event=termination_event)
     except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info(
             "Worker execution interrupted; draining current tasks...",

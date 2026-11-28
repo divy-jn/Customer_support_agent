@@ -14,6 +14,7 @@ SETTINGS_FILE = settings.llm_settings_path
 _HEALTH_TTL = timedelta(minutes=5)
 _provider_success: dict[tuple[str, str | None, str | None], str] = {}
 _bedrock_success: dict[tuple[str, str | None], str] = {}
+_last_success: dict[tuple, str] = {}
 MODEL_CHOICES = {
     "bedrock": ("deepseek.v3.2", "qwen.qwen3-next-80b-a3b", "mistral.ministral-3-14b-instruct"),
     "vertex": ("gemini-2.5-flash", "gemini-3.8-flash"),
@@ -39,6 +40,21 @@ def last_provider_success(model: str, project: str | None, location: str | None)
 
 def last_bedrock_success(model: str, region: str) -> str | None:
     return _recent_success(_bedrock_success.get((model, region)))
+
+
+def last_model_success(model: str) -> str | None:
+    """Return the last successful response for the configured provider and model."""
+    if settings.llm_provider == "bedrock":
+        return _last_success.get(("bedrock", model, settings.aws_region))
+    return _last_success.get((
+        "vertex", model.removeprefix("models/"), settings.vertex_project_id, settings.vertex_location,
+    ))
+
+
+def _record_bedrock_success(key: tuple[str, str | None]) -> None:
+    observed_at = datetime.now(timezone.utc).isoformat()
+    _bedrock_success[key] = observed_at
+    _last_success[("bedrock", *key)] = observed_at
 
 
 def _recent_success(observed_at: str | None) -> str | None:
@@ -82,7 +98,9 @@ class _NormalizedChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
 
     def _record_provider_success(self) -> None:
         key = (self.model.removeprefix("models/"), self.project, self.location)
-        _provider_success[key] = datetime.now(timezone.utc).isoformat()
+        observed_at = datetime.now(timezone.utc).isoformat()
+        _provider_success[key] = observed_at
+        _last_success[("vertex", *key)] = observed_at
 
     def _record_provider_failure(self) -> None:
         _provider_success.pop((self.model.removeprefix("models/"), self.project, self.location), None)
@@ -176,7 +194,7 @@ class _ObservedBedrockConverse(ChatBedrockConverse):
         except Exception:
             _bedrock_success.pop(key, None)
             raise
-        _bedrock_success[key] = datetime.now(timezone.utc).isoformat()
+        _record_bedrock_success(key)
         for generation in result.generations:
             _normalize_bedrock_text(generation.message)
         return result
@@ -187,7 +205,7 @@ class _ObservedBedrockConverse(ChatBedrockConverse):
         try:
             for chunk in super()._stream(messages, stop=stop, run_manager=run_manager, **kwargs):
                 if not observed:
-                    _bedrock_success[key] = datetime.now(timezone.utc).isoformat()
+                    _record_bedrock_success(key)
                     observed = True
                 yield chunk
         except Exception:

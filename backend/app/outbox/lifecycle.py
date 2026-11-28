@@ -15,8 +15,13 @@ with a connection string and calling ``run_forever()``.
 
 from __future__ import annotations
 
-import logging
 import asyncio
+import json
+import logging
+import os
+import time
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 from app.config import settings
@@ -31,8 +36,86 @@ _reconciliation_task: Optional[asyncio.Task] = None
 _reconciliation_cancel_event: Optional[asyncio.Event] = None
 _reconciliation_lock: Optional[asyncio.Lock] = None
 
+_HEARTBEAT_INTERVAL_SECONDS = 5
+_HEARTBEAT_MAX_AGE_SECONDS = 30
 
-import os
+
+def _heartbeat_path() -> Path | None:
+    configured_path = os.environ.get("OUTBOX_HEARTBEAT_PATH")
+    return Path(configured_path) if configured_path else None
+
+
+def _local_worker_status(worker: OutboxWorker | None) -> dict[str, str]:
+    reconciliation_running = _reconciliation_task is not None and not _reconciliation_task.done()
+    return {
+        "dispatch": "running" if worker is not None and worker.running else "unavailable",
+        "reconciliation": (
+            "running" if reconciliation_running
+            else "unavailable" if settings.reconciliation_enabled
+            else "disabled"
+        ),
+    }
+
+
+def outbox_health() -> dict[str, str]:
+    """Report observed worker liveness without contacting the mail sender or database."""
+    mode = settings.outbox_worker_mode
+    if mode == "disabled" or not settings.outbox_worker_enabled:
+        return {"mode": mode, "dispatch": "disabled", "reconciliation": (
+            "running" if _reconciliation_task is not None and not _reconciliation_task.done() else "disabled"
+        )}
+    if mode != "standalone":
+        return {"mode": mode, **_local_worker_status(_worker_instance)}
+
+    path = _heartbeat_path()
+    if path is not None:
+        try:
+            if time.time() - path.stat().st_mtime <= _HEARTBEAT_MAX_AGE_SECONDS:
+                heartbeat = json.loads(path.read_text(encoding="utf-8"))
+                dispatch = heartbeat["dispatch"]
+                reconciliation = heartbeat["reconciliation"]
+                if dispatch in ("running", "unavailable") and reconciliation in ("running", "unavailable", "disabled"):
+                    return {"mode": mode, "dispatch": dispatch, "reconciliation": reconciliation}
+        except (OSError, ValueError, TypeError, KeyError):
+            pass
+    return {
+        "mode": mode,
+        "dispatch": "unavailable",
+        "reconciliation": "unavailable" if settings.reconciliation_enabled else "disabled",
+    }
+
+
+@asynccontextmanager
+async def publish_standalone_heartbeat(worker: OutboxWorker):
+    path = _heartbeat_path()
+    if path is None:
+        yield
+        return
+
+    def publish(status: dict[str, str]) -> None:
+        try:
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(status), encoding="utf-8")
+            temporary.replace(path)
+        except OSError:
+            logger.warning("Could not publish outbox worker heartbeat")
+
+    async def pulse() -> None:
+        while True:
+            publish(_local_worker_status(worker))
+            await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
+
+    task = asyncio.create_task(pulse(), name="outbox-health-heartbeat")
+    try:
+        yield
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        publish({
+            "dispatch": "unavailable",
+            "reconciliation": "unavailable" if settings.reconciliation_enabled else "disabled",
+        })
+
 
 def _build_dsn() -> str:
     """

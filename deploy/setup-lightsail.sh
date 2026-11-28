@@ -45,8 +45,6 @@ fi
 systemctl enable --now docker
 
 cat <<'EOF'
-From the release checkout, fill in .env.prod and run:
-sudo env COMPOSE_PARALLEL_LIMIT=1 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
-
-To enable email dispatch, add --profile email before up after configuring the database and Gmail credentials.
+From the release checkout, follow DEPLOY.md to configure .env.prod and build labeled images.
+Dispatch and reconciliation start by default. Set OUTBOX_WORKER_ENABLED=false to disable both.
 EOF

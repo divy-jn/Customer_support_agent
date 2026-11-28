@@ -1,16 +1,23 @@
 services:
   backend:
     image: intellisupport-backend:prod
-    build: ./backend
+    build:
+      context: ./backend
+      labels:
+        org.opencontainers.image.revision: ${BUILD_GIT_SHA:-unknown}
     command: ["uvicorn", "app.main:app", "--workers", "1", "--host", "0.0.0.0", "--port", "8002"]
     env_file: ${PROD_ENV_FILE:-.env.prod}
     environment:
       WEB_CONCURRENCY: "1"
+      OUTBOX_WORKER_ENABLED: ${OUTBOX_WORKER_ENABLED:-true}
+      RECONCILIATION_ENABLED: ${OUTBOX_WORKER_ENABLED:-true}
+      OUTBOX_HEARTBEAT_PATH: /app/data/outbox-health/heartbeat.json
       OUTBOX_WORKER_MODE: standalone
       TRANSCRIPT_SPOOL_PATH: /app/data/spool/pending_transcripts.json
       LLM_SETTINGS_PATH: /app/data/spool/llm-settings.json
     volumes:
       - transcript_spool:/app/data/spool
+      - outbox_health:/app/data/outbox-health:ro
     healthcheck:
       test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8002/health', timeout=4).close()"]
       interval: 30s
@@ -22,10 +29,14 @@ services:
 
   outbox:
     image: intellisupport-backend:prod
-    profiles: ["email"]
     env_file: ${PROD_ENV_FILE:-.env.prod}
     environment:
       OUTBOX_WORKER_MODE: standalone
+      OUTBOX_WORKER_ENABLED: ${OUTBOX_WORKER_ENABLED:-true}
+      RECONCILIATION_ENABLED: ${OUTBOX_WORKER_ENABLED:-true}
+      OUTBOX_HEARTBEAT_PATH: /app/data/outbox-health/heartbeat.json
+    volumes:
+      - outbox_health:/app/data/outbox-health
     command: ["python", "-m", "app.outbox.standalone"]
     depends_on:
       backend:
@@ -36,6 +47,8 @@ services:
   frontend:
     build:
       context: ./frontend
+      labels:
+        org.opencontainers.image.revision: ${BUILD_GIT_SHA:-unknown}
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?set NEXT_PUBLIC_API_URL}
         NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:?set NEXT_PUBLIC_WS_URL}
@@ -63,5 +76,6 @@ services:
 
 volumes:
   transcript_spool:
+  outbox_health:
   caddy_data:
   caddy_config:

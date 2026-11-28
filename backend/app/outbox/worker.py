@@ -393,6 +393,10 @@ class OutboxWorker:
 
     # ── Public API ────────────────────────────
 
+    @property
+    def running(self) -> bool:
+        return all(task is not None and not task.done() for task in (self._task, self._recovery_task))
+
     async def start(self) -> None:
         """Start the polling and recovery loops as asyncio background tasks."""
         logger.info(
