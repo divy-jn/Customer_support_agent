@@ -68,6 +68,20 @@ async def _execute_cas(session_id: str, loader_fn, mutator_fn, retries: int) -> 
     raise RuntimeError("Concurrency conflict: stale session data could not be saved safely.")
 
 
+def _restore_transcript(transcript: list[dict]) -> list[dict]:
+    """Keep historical receipts, dropping action cards without a live claim."""
+    history = []
+    for entry in transcript:
+        approval = entry.get("approval")
+        if isinstance(approval, dict) and (approval.get("status") or "pending") in {
+            "pending", "ambiguous", "executing",
+        }:
+            entry = dict(entry)
+            entry.pop("approval")
+        history.append(entry)
+    return history
+
+
 async def _get_session(
     session_id: str, authenticated_customer_id: int | None = None, *, persisted: dict | None = None,
 ) -> dict:
@@ -93,7 +107,7 @@ async def _get_session(
         }
         if persisted and persisted["customer_id"] == authenticated_customer_id:
             new_session["_session_revision"] = max(1, persisted.get("session_revision") or 0)
-            new_session["conversation_history"] = persisted.get("transcript") or []
+            new_session["conversation_history"] = _restore_transcript(persisted.get("transcript") or [])
             new_session["escalated"] = bool(persisted.get("escalated"))
             if persisted.get("started_at"):
                 new_session["created_at"] = persisted["started_at"]
