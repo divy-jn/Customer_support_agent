@@ -5,6 +5,7 @@ import json
 import threading
 from datetime import datetime
 from types import SimpleNamespace
+from uuid import uuid4
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -342,3 +343,39 @@ async def test_admin_reingestion_surfaces_nonzero_exit(monkeypatch):
         await routes.admin_reingest_kb(True)
     assert error.value.status_code == 503
     assert run.call_args.args[0][1:] == ["-m", "scripts.ingest_knowledge"]
+
+
+
+@pytest.mark.asyncio
+async def test_human_reply_retry_persists_and_broadcasts_once_per_id(local_sessions, monkeypatch):
+    from app.models import EscalationLifecycleStatus
+
+    monkeypatch.setattr(
+        "app.persistence.escalation.ensure_durable_escalation_state",
+        Mock(return_value=EscalationLifecycleStatus.ACTIVE),
+    )
+    session_id = "human-reply"
+    await local_sessions.save_session(session_id, {**snapshot(1), "mode": "human"})
+    customer, observer, sender = AsyncMock(), AsyncMock(), AsyncMock()
+    chat_handler.manager.active_connections[session_id] = customer
+    await chat_handler.manager.connect_agent(observer, session_id)
+    identifiers = [str(uuid4()), str(uuid4())]
+    payload = {"type": "agent_message", "message": "I can help with that."}
+    sender.receive_text.side_effect = [
+        json.dumps({**payload, "client_message_id": message_id})
+        for message_id in [identifiers[0], identifiers[0], identifiers[1], None]
+    ] + [WebSocketDisconnect()]
+
+    await chat_handler.handle_agent_ws(sender, session_id)
+
+    assert chat_handler.manager.agent_connections[session_id] == [observer]
+    session = await local_sessions.get_session(session_id)
+    entries = [entry for entry in session["conversation_history"] if entry.get("human_agent")]
+    assert len(entries) == 3
+    assert [entry["message_id"] for entry in entries[:2]] == identifiers
+    assert entries[2]["message_id"] not in identifiers
+    for socket in (customer, observer, sender):
+        events = [json.loads(item.args[0]) for item in socket.send_text.await_args_list]
+        replies = [event for event in events if event["type"] == "human_message"]
+        assert [reply["message_id"] for reply in replies] == [entry["message_id"] for entry in entries]
+        assert [reply["timestamp"] for reply in replies] == [entry["timestamp"] for entry in entries]

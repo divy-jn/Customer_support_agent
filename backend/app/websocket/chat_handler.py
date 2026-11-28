@@ -1281,31 +1281,31 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
     """
     await manager.connect_agent(websocket, session_id)
 
-    # Send current conversation history to the agent
-    session = await _get_session(session_id)
-    cust_id = session.get("customer_id")
-    if cust_id:
-        try:
-            from app.persistence.escalation import ensure_durable_escalation_state
-            from app.models import EscalationLifecycleStatus
-            d_status = await asyncio.to_thread(ensure_durable_escalation_state, session_id, cust_id)
-            if d_status == EscalationLifecycleStatus.ACTIVE and session.get("mode") != "human":
-                def _set_mode(s):
-                    s["mode"] = "human"
-                    return True
-                session, _ = await _mutate_session(session_id, _set_mode, allow_retry=True)
-        except Exception as e:
-            logger.debug(f"Could not sync initial agent ws durable state: {e}")
-
-    await websocket.send_text(json.dumps({
-        "type": "session_state",
-        "session_id": session_id,
-        "conversation_history": session.get("conversation_history", []),
-        "customer_id": session.get("customer_id"),
-        "mode": session.get("mode", "ai"),
-    }))
-
     try:
+        # Send current conversation history to the agent
+        session = await _get_session(session_id)
+        cust_id = session.get("customer_id")
+        if cust_id:
+            try:
+                from app.persistence.escalation import ensure_durable_escalation_state
+                from app.models import EscalationLifecycleStatus
+                d_status = await asyncio.to_thread(ensure_durable_escalation_state, session_id, cust_id)
+                if d_status == EscalationLifecycleStatus.ACTIVE and session.get("mode") != "human":
+                    def _set_mode(s):
+                        s["mode"] = "human"
+                        return True
+                    session, _ = await _mutate_session(session_id, _set_mode, allow_retry=True)
+            except Exception as e:
+                logger.debug(f"Could not sync initial agent ws durable state: {e}")
+
+        await websocket.send_text(json.dumps({
+            "type": "session_state",
+            "session_id": session_id,
+            "conversation_history": session.get("conversation_history", []),
+            "customer_id": session.get("customer_id"),
+            "mode": session.get("mode", "ai"),
+        }))
+
         while True:
             try:
                 raw = await websocket.receive_text()
@@ -1352,25 +1352,50 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                 if not agent_message:
                     continue
 
-                # Append to history
-                def _agent_message(s):
-                    s["conversation_history"].append({
-                        "role": "agent",
-                        "content": agent_message,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "human_agent": True,
-                        "agent_name": agent_name,
-                    })
-                    return True
-                session, _ = await _mutate_session(session_id, _agent_message, allow_retry=True)
+                raw_message_id = data.get("client_message_id")
+                try:
+                    message_id = str(uuid.uuid4() if raw_message_id is None else uuid.UUID(raw_message_id))
+                except (ValueError, TypeError, AttributeError):
+                    await websocket.send_text(json.dumps({
+                        "type": "error", "message": "Invalid message ID. Please try again.",
+                    }))
+                    continue
 
-                # Send to customer
+                timestamp = datetime.now(timezone.utc).isoformat()
+                entry = {
+                    "role": "agent",
+                    "content": agent_message,
+                    "timestamp": timestamp,
+                    "human_agent": True,
+                    "agent_name": agent_name,
+                    "message_id": message_id,
+                }
+
+                def _agent_message(s):
+                    history = s["conversation_history"]
+                    if s.get("mode") != "human" or any(
+                        item.get("human_agent") and item.get("message_id") == message_id for item in history
+                    ):
+                        return False
+                    history.append(entry)
+                    return True
+
+                session, saved = await _mutate_session(session_id, _agent_message, allow_retry=True)
+                if not saved:
+                    if session.get("mode") != "human":
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "message": "Take over the conversation before sending a human-agent reply.",
+                        }))
+                    continue
+
                 out_msg = {
                     "type": "human_message",
                     "session_id": session_id,
                     "message": agent_message,
                     "agent_name": agent_name,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": timestamp,
+                    "message_id": message_id,
                 }
                 await manager.send_personal_message(out_msg, session_id)
                 await manager.broadcast_to_agents(out_msg, session_id)
@@ -1568,5 +1593,7 @@ async def handle_agent_ws(websocket: WebSocket, session_id: str):
                     }))
 
     except WebSocketDisconnect:
+        pass
+    finally:
         manager.disconnect_agent(websocket, session_id)
         logger.info(f"Agent disconnected from session: {session_id}")

@@ -6,6 +6,7 @@ import { useToast } from "../../components/Toast";
 import { API_BASE, WS_BASE } from "../../lib/api";
 import { signOutIfCurrent } from "../../lib/supabase-auth";
 import { agentFetch, getAgentToken } from "../../lib/agent-auth";
+import { closeTranscriptSocket, humanReplyFromEvent, mergeHumanReply, mergeTranscript } from "../../lib/transcript.mjs";
 
 const CANNED_RESPONSES = [
   { label: "Greeting", text: "Hello! I'm a support agent. Let me help you with your concern." },
@@ -67,10 +68,7 @@ export default function LiveSessionsPage() {
       selectedSessionRef.current = null;
       const socket = wsRef.current;
       wsRef.current = null;
-      if (socket) {
-        socket.onclose = null;
-        socket.close();
-      }
+      closeTranscriptSocket(socket);
     };
   }, []);
 
@@ -78,126 +76,105 @@ export default function LiveSessionsPage() {
   const monitorSession = useCallback(async (session) => {
     const previousSocket = wsRef.current;
     wsRef.current = null;
-    if (previousSocket) {
-      previousSocket.onclose = null;
-      previousSocket.close();
-    }
+    closeTranscriptSocket(previousSocket);
+    clearTimeout(reconnectTimerRef.current);
 
+    const selection = { sessionId: session.session_id };
+    selectedSessionRef.current = selection;
     setSelectedSession(session);
-    selectedSessionRef.current = session;
     setSessionMessages([]);
-    setIsMonitoring(true);
+    setIsMonitoring(false);
     setHasTakenOver(session.mode === "human");
-    if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
 
-    let token;
-    try {
-      token = await getAgentToken();
-    } catch (error) {
-      setIsMonitoring(false);
-      toast(error.message || "Agent authentication failed.", "error");
-      return;
-    }
-    if (selectedSessionRef.current?.session_id !== session.session_id) return;
-
-    const wsUrl = `${WS_BASE}/ws/agent/${encodeURIComponent(session.session_id)}?token=${encodeURIComponent(token)}`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === "ping") return;
-
-      if (data.type === "session_state") {
-        setSessionMessages(data.conversation_history || []);
-        if (data.mode) {
-          setHasTakenOver(data.mode === "human");
+    async function connect() {
+      let token;
+      try {
+        token = await getAgentToken();
+      } catch (error) {
+        if (selectedSessionRef.current === selection) {
+          toast(error.message || "Agent authentication failed.", "error");
         }
-      } else if (data.type === "customer_message") {
-        setSessionMessages((prev) => [
-          ...prev,
-          { role: "customer", content: data.message, timestamp: data.timestamp },
-        ]);
-      } else if (data.type === "agent_response") {
-        setSessionMessages((prev) => [
-          ...prev,
-          {
-            role: "agent",
-            content: data.message,
-            agent_name: data.agent_name || "Adi",
-            escalated: data.escalated,
-            timestamp: data.timestamp,
-          },
-        ]);
-      } else if (data.type === "human_message") {
-        setSessionMessages((prev) => {
-          const exists = prev.some(
-            (m) => m.role === "agent" && m.content === data.message && m.timestamp === data.timestamp
-          );
-          if (exists) return prev;
-          return [
+        return;
+      }
+      if (selectedSessionRef.current !== selection) return;
+
+      const wsUrl = `${WS_BASE}/ws/agent/${encodeURIComponent(selection.sessionId)}?token=${encodeURIComponent(token)}`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+      let repliesBeforeHistory = [];
+
+      ws.onopen = () => {
+        if (wsRef.current === ws) setIsMonitoring(true);
+      };
+      ws.onmessage = (event) => {
+        if (wsRef.current !== ws) return;
+        const data = JSON.parse(event.data);
+        if (data.type === "ping") return;
+
+        if (data.type === "session_state") {
+          const history = mergeTranscript(data.conversation_history || [], repliesBeforeHistory || []);
+          repliesBeforeHistory = null;
+          setSessionMessages(history);
+          if (data.mode) setHasTakenOver(data.mode === "human");
+        } else if (data.type === "customer_message") {
+          setSessionMessages((prev) => [
+            ...prev,
+            { role: "customer", content: data.message, timestamp: data.timestamp },
+          ]);
+        } else if (data.type === "agent_response") {
+          setSessionMessages((prev) => [
             ...prev,
             {
               role: "agent",
               content: data.message,
-              agent_name: data.agent_name || "Support Agent",
-              human_agent: true,
+              agent_name: data.agent_name || "Adi",
+              escalated: data.escalated,
               timestamp: data.timestamp,
             },
-          ];
-        });
-      } else if (data.type === "escalation_alert") {
-        setSessions((prev) =>
-          prev.map((s) =>
-            s.session_id === data.session_id
-              ? { ...s, escalated: true, urgency: data.urgency }
-              : s
-          )
-        );
-        toast("🚨 Escalation alert! Customer requires human attention.", "error");
-      } else if (data.type === "mode_change") {
-        if (data.mode === "human") {
-          setHasTakenOver(true);
-          toast("You've taken over this conversation.", "success");
-        } else if (data.mode === "ai") {
-          setHasTakenOver(false);
-          toast("Released conversation to AI Assistant.", "info");
-        }
-      } else if (data.type === "error") {
-        toast(data.message || "An error occurred.", "error");
-      }
-    };
-
-    ws.onclose = (event) => {
-      setIsMonitoring(false);
-      if (event.code === 1008) {
-        signOutIfCurrent("staff", token);
-        return;
-      }
-      // Auto-reconnect after 3 seconds if we still have a selected session
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = setTimeout(async () => {
-        if (selectedSessionRef.current) {
-          let freshToken;
-          try {
-            freshToken = await getAgentToken();
-          } catch (error) {
-            toast(error.message || "Agent reconnect failed.", "error");
-            return;
+          ]);
+        } else if (data.type === "human_message") {
+          const reply = humanReplyFromEvent(data);
+          repliesBeforeHistory?.push(reply);
+          setSessionMessages((prev) => mergeHumanReply(prev, reply));
+        } else if (data.type === "escalation_alert") {
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.session_id === data.session_id
+                ? { ...s, escalated: true, urgency: data.urgency }
+                : s
+            )
+          );
+          toast("🚨 Escalation alert! Customer requires human attention.", "error");
+        } else if (data.type === "mode_change") {
+          if (data.mode === "human") {
+            setHasTakenOver(true);
+            toast("You've taken over this conversation.", "success");
+          } else if (data.mode === "ai") {
+            setHasTakenOver(false);
+            toast("Released conversation to AI Assistant.", "info");
           }
-          if (!selectedSessionRef.current) return;
-          const wsUrl = `${WS_BASE}/ws/agent/${encodeURIComponent(selectedSessionRef.current.session_id)}?token=${encodeURIComponent(freshToken)}`;
-          const ws2 = new WebSocket(wsUrl);
-          wsRef.current = ws2;
-          ws2.onmessage = ws.onmessage;
-          ws2.onclose = ws.onclose;
-          ws2.onopen = () => setIsMonitoring(true);
-          ws2.onerror = () => ws2.close();
+        } else if (data.type === "error") {
+          toast(data.message || "An error occurred.", "error");
         }
-      }, 3000);
-    };
+      };
 
-    ws.onerror = () => ws.close();
+      ws.onclose = (event) => {
+        if (wsRef.current !== ws) return;
+        wsRef.current = null;
+        closeTranscriptSocket(ws);
+        setIsMonitoring(false);
+        if (event.code === 1008) {
+          signOutIfCurrent("staff", token);
+          return;
+        }
+        reconnectTimerRef.current = setTimeout(() => {
+          if (selectedSessionRef.current === selection) void connect();
+        }, 3000);
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    await connect();
   }, [toast]);
 
   // Send message as human agent (takeover)
@@ -214,19 +191,9 @@ export default function LiveSessionsPage() {
         type: "agent_message",
         message: agentInput.trim(),
         agent_name: "Support Agent",
+        client_message_id: crypto.randomUUID(),
       })
     );
-
-    setSessionMessages((prev) => [
-      ...prev,
-      {
-        role: "agent",
-        content: agentInput.trim(),
-        agent_name: "Support Agent",
-        human_agent: true,
-        timestamp: new Date().toISOString(),
-      },
-    ]);
 
     setAgentInput("");
   };
@@ -394,7 +361,7 @@ export default function LiveSessionsPage() {
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
               {sessionMessages.map((msg, i) => (
                 <div
-                  key={i}
+                  key={msg.message_id || i}
                   className={`flex ${msg.role === "customer" ? "justify-end" : "justify-start"} ${
                     msg.role === "customer" ? "chat-bubble-customer" : "chat-bubble-agent"
                   }`}
@@ -444,7 +411,7 @@ export default function LiveSessionsPage() {
                 <div className="px-6 pt-3 flex flex-wrap gap-2 animate-fade-in">
                   {CANNED_RESPONSES.map((c, i) => (
                     <button
-                      key={i}
+                      key={msg.message_id || i}
                       onClick={() => insertCanned(c.text)}
                       className="text-[11px] px-3 py-1.5 rounded-full bg-[var(--bg-input)] border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-white transition-all"
                       title={c.text}

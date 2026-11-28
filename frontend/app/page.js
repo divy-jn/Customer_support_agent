@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { useToast } from "./components/Toast";
 import ApprovalCard from "./components/ApprovalCard";
 import { API_BASE, WS_BASE } from "./lib/api";
+import { closeTranscriptSocket, humanReplyFromEvent, mergeHumanReply, mergeTranscript } from "./lib/transcript.mjs";
 import { getPortalToken, signIn, signOut, signOutIfCurrent } from "./lib/supabase-auth";
 
 export default function CustomerChatPage() {
@@ -70,10 +71,9 @@ export default function CustomerChatPage() {
     // Only skip if we already have a fully open connection
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
     // Clean up any lingering socket (CONNECTING or CLOSING state)
-    if (wsRef.current) {
-      try { wsRef.current.close(); } catch {}
-      wsRef.current = null;
-    }
+    const previousSocket = wsRef.current;
+    wsRef.current = null;
+    closeTranscriptSocket(previousSocket);
 
     const token = getPortalToken("customer");
     if (!token) {
@@ -87,6 +87,7 @@ export default function CustomerChatPage() {
     const wsUrl = `${WS_BASE}${path}?token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
+    let repliesBeforeHistory = [];
 
     ws.onopen = () => {
       if (wsRef.current !== ws) return;
@@ -108,17 +109,20 @@ export default function CustomerChatPage() {
         if (data.session_id) setSessionId(data.session_id);
         if (data.mode) setChatMode(data.mode);
         
-        // Load history on reconnect if provided
-        if (data.history && data.history.length > 0) {
-          setMessages(data.history.map(msg => ({
+        // Load history on reconnect, retaining a reply received before the snapshot.
+        const earlyReplies = repliesBeforeHistory || [];
+        repliesBeforeHistory = null;
+        if (data.history?.length || earlyReplies.length) {
+          setMessages(mergeTranscript((data.history || []).map(msg => ({
             role: msg.role === "customer" ? "customer" : "agent",
             content: msg.content,
             timestamp: msg.timestamp,
             agent_name: msg.agent_name || (msg.human_agent ? "Support Agent" : "Adi"),
             human_agent: msg.human_agent,
+            message_id: msg.message_id,
             status: msg.role === "customer" ? "delivered" : undefined,
             approval: msg.approval || null,
-          })));
+          })), earlyReplies));
         } else if (data.message) {
           setMessages((prev) => {
             // Prevent duplicate welcome messages on reconnect
@@ -143,17 +147,9 @@ export default function CustomerChatPage() {
       } else if (data.type === "human_message") {
         setIsTyping(false);
         if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "agent",
-            content: data.message,
-            agent_name: data.agent_name || "Support Agent",
-            human_agent: true,
-            timestamp: data.timestamp,
-            status: "delivered",
-          },
-        ]);
+        const reply = { ...humanReplyFromEvent(data), status: "delivered" };
+        repliesBeforeHistory?.push(reply);
+        setMessages((prev) => mergeHumanReply(prev, reply));
       } else if (data.type === "agent_response") {
         setIsTyping(false);
         if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
@@ -181,6 +177,7 @@ export default function CustomerChatPage() {
     ws.onclose = (event) => {
       if (wsRef.current !== ws) return;
       wsRef.current = null;
+      closeTranscriptSocket(ws);
       setIsConnected(false);
       setIsTyping(false);
       if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
@@ -246,7 +243,7 @@ export default function CustomerChatPage() {
       }
       const socket = wsRef.current;
       wsRef.current = null;
-      socket?.close();
+      closeTranscriptSocket(socket);
     };
   }, [connectWebSocket]);
 
@@ -262,7 +259,7 @@ export default function CustomerChatPage() {
       localStorage.removeItem("intellisupport_session_id");
       const socket = wsRef.current;
       wsRef.current = null;
-      socket?.close();
+      closeTranscriptSocket(socket);
       setIdentifiedCustomer(customer);
       setSessionId(null);
       setMessages([]);
@@ -393,7 +390,7 @@ export default function CustomerChatPage() {
   const endChat = useCallback(() => {
     const socket = wsRef.current;
     wsRef.current = null;
-    socket?.close();
+    closeTranscriptSocket(socket);
     clearInterval(reconnectTimerRef.current);
     reconnectTimerRef.current = null;
     localStorage.removeItem("intellisupport_session_id");
@@ -623,7 +620,7 @@ export default function CustomerChatPage() {
             {/* Message bubbles */}
             {messages.map((msg, i) => (
               <div
-                key={i}
+                key={msg.message_id || i}
                 className={`flex ${
                   msg.role === "customer" ? "justify-end" : "justify-start"
                 } ${
