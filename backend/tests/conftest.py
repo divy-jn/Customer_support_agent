@@ -79,8 +79,8 @@ def _probe_llm_connectivity() -> bool:
 def pytest_runtest_setup(item):
     """Auto-skip llm_eval tests when the LLM provider rejects authentication,
     and auto-skip requires_postgres tests when no real test database is configured."""
-    markers = list(item.iter_markers(name="llm_eval"))
-    if markers:
+    marker = item.get_closest_marker("llm_eval")
+    if marker and marker.kwargs.get("probe", True):
         if not _probe_llm_connectivity():
             pytest.skip(_llm_skip_reason or "LLM authentication failed — skipping live LLM eval")
 
