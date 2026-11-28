@@ -1,6 +1,7 @@
 """Small deterministic boundary for turning workflow outcomes into customer text."""
 
 import re
+from datetime import datetime, timezone
 
 from app.agents.guardian import GuardianAction, GuardianDecision
 
@@ -13,6 +14,19 @@ _HANDOFF_CLAIM = re.compile(
     r"(?:has been notified|is being notified|will be with you)\b)[^.!?\n]*[.!?]?",
     re.IGNORECASE,
 )
+
+
+def format_support_timestamp(value: str | None) -> str | None:
+    """Present a database timestamp in UTC without exposing its storage format."""
+    if not isinstance(value, str):
+        return None
+    try:
+        timestamp = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return timestamp.astimezone(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
 
 
 def remove_unconfirmed_handoff_claims(response: str) -> str:

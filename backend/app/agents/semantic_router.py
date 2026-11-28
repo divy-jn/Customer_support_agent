@@ -27,7 +27,7 @@ Extract and output a JSON object exactly matching this schema:
   "confidence": <float_between_0_and_1>,
   "is_continuation": <boolean>,
   "entities": {
-     // Extracted entities like order_id, product_name, etc. if explicitly mentioned
+     // Extracted entities like order_id, ticket_id, and product_name if explicitly mentioned
   }
 }
 

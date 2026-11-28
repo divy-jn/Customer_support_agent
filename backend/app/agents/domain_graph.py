@@ -20,16 +20,16 @@ from app.agents import semantic_router
 from app.agents.graph import AgentState, customer_support_graph, product_node
 from app.agents.supervisor import Supervisor, SupervisorAction
 from app.agents.guardian import Guardian, GuardianAction, GuardianDecision, GuardianInput, SupportCase
-from app.agents.response_composer import compose_response
+from app.agents.response_composer import compose_response, format_support_timestamp
 from app.agents.order_agent import handle_order_request
 from app.agents.payment_agent import handle_payment_request
 from app.agents.general_agent import handle_general_request
 from app.agents.routing_policy import (
-    is_ticket_status_query, normalize_intent, telemetry_entity_keys, telemetry_intent,
+    extract_ticket_id, is_ticket_status_query, normalize_intent, telemetry_entity_keys, telemetry_intent,
 )
 from app.config import settings
 from app.models import OrchestrationDomain, RouterFailureType, WorkflowState
-from app.tools import create_ticket, find_customer_support_cases, update_ticket
+from app.tools import create_ticket, find_customer_support_cases, get_ticket, update_ticket
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,8 @@ class DomainAgentState(AgentState):
     supervisor_action: str | None
     supervisor_target_domain: str | None
     ticket_snapshot: tuple[list[dict] | None, int]
+    lookup_ticket_id: int | None
+    ticket_lookup_failed: bool
     supervisor_reason: str | None
     architecture_mode: str | None
     guardian_action: str | None
@@ -90,13 +92,23 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
 
     domain = semantic.domain
     intent = normalize_intent(domain, semantic.intent)
-    ticket_query = current_mode == "v2_all" and is_ticket_status_query(state["message"])
-    if ticket_query:
-        domain, intent = "general", "ticket_status"
+    classified = semantic.diagnostics.failure_type == RouterFailureType.SUCCESS
+    ticket_query = False
+    lookup_ticket_id = None
+    if current_mode == "v2_all":
+        message = state["message"]
+        ticket_query = is_ticket_status_query(message)
+        lookup_ticket_id = extract_ticket_id(
+            message,
+            semantic.entities if classified else {},
+            ticket_context=ticket_query or (domain == "general" and intent == "ticket_status"),
+        )
+        if ticket_query or lookup_ticket_id is not None:
+            domain, intent = "general", "ticket_status"
 
     try:
         workflow = WorkflowState.from_legacy(base_workflow)
-        if ticket_query or semantic.diagnostics.failure_type == RouterFailureType.SUCCESS:
+        if ticket_query or lookup_ticket_id is not None or classified:
             decision = Supervisor.decide(
                 domain,
                 intent,
@@ -120,6 +132,7 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
                 "sentiment": semantic.sentiment,
                 "urgency": semantic.urgency,
                 "semantic_domain": domain,
+                "lookup_ticket_id": lookup_ticket_id,
                 "supervisor_action": decision.action.value,
                 "supervisor_target_domain": decision.target_domain.value,
                 "supervisor_reason": decision.transition_reason,
@@ -297,7 +310,56 @@ def _guardian_ticket_history(snapshot: tuple[list[dict] | None, int]) -> tuple[l
     return cases, recent_count, rows is None
 
 
+def _format_ticket_reply(ticket: dict, *, include_priority: bool = True) -> str:
+    subject = " ".join(str(ticket.get("subject") or "Support request").split())[:120]
+    status = ticket["status"].replace("_", " ").capitalize()
+    response = f"**Ticket #{ticket['id']}** — {subject}. Status: {status}."
+    priority = ticket.get("priority")
+    if include_priority and isinstance(priority, str) and priority.strip():
+        response += f" Priority: {priority.replace('_', ' ').capitalize()}."
+    updated = format_support_timestamp(ticket.get("updated_at")) or "Unavailable"
+    return f"{response} Last updated: {updated}."
+
+
+async def _exact_ticket_reply(ticket_id: int, customer_id: int | None) -> dict[str, Any]:
+    unavailable = {
+        "response": f"I couldn’t verify ticket #{ticket_id} right now. Please try again.",
+        "ticket_lookup_failed": True,
+    }
+    if type(customer_id) is not int or customer_id <= 0:
+        return unavailable
+
+    try:
+        payload = json.loads(await asyncio.to_thread(get_ticket, ticket_id, customer_id=customer_id))
+    except Exception:
+        return unavailable
+    if not isinstance(payload, dict):
+        return unavailable
+    not_found = {
+        "response": f"I couldn’t find ticket #{ticket_id} on your account.",
+        "ticket_lookup_failed": False,
+    }
+    if payload.get("error"):
+        if payload.get("error_code") == "not_found" or (
+            "error_code" not in payload and payload["error"] in (
+                f"Ticket #{ticket_id} not found",
+                f"Ticket #{ticket_id} not found or does not belong to you",
+            )
+        ):
+            return not_found
+        return unavailable
+    if payload.get("customer_id", customer_id) != customer_id:
+        return not_found
+    if payload.get("id") != ticket_id or not isinstance(payload.get("status"), str):
+        return unavailable
+
+    return {"response": _format_ticket_reply(payload), "ticket_lookup_failed": False}
+
+
 async def v2_ticket_status_node(state: DomainAgentState) -> dict[str, Any]:
+    if ticket_id := state.get("lookup_ticket_id"):
+        return await _exact_ticket_reply(ticket_id, state.get("customer_id"))
+
     snapshot = await asyncio.to_thread(_load_ticket_snapshot, state.get("customer_id"))
     cases, _ = snapshot
     if cases is None:
@@ -305,14 +367,10 @@ async def v2_ticket_status_node(state: DomainAgentState) -> dict[str, Any]:
     elif not cases:
         response = "You have no active support tickets on your account."
     else:
-        lines = ["Here are your active support tickets:"]
-        for case in cases[:10]:
-            subject = " ".join(str(case.get("subject") or "Support request").split())[:120]
-            status = case["status"].replace("_", " ").capitalize()
-            updated = case.get("updated_at") or "Unavailable"
-            lines.append(f"- **Ticket #{case['id']}** — {subject}. Status: {status}. Last updated: {updated}.")
+        lines = ["Here are your active support tickets:", ""]
+        lines.extend(f"- {_format_ticket_reply(case, include_priority=False)}" for case in cases[:10])
         if len(cases) > 10:
-            lines.append(f"Showing 10 of {len(cases)} active tickets.")
+            lines.extend(("", f"Showing 10 of {len(cases)} active tickets."))
         response = "\n".join(lines)
     return {"response": response, "ticket_snapshot": snapshot}
 
@@ -346,12 +404,16 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
     clarification_only = bool(state.get("clarification_only"))
     intent = normalize_intent(domain, state.get("intent", ""))
     read_only = domain == "general" or intent in _READ_ONLY_INTENTS.get(domain, ())
-    ticket_status = "ticket_snapshot" in state
+    exact_ticket = "ticket_lookup_failed" in state
+    ticket_status = exact_ticket or "ticket_snapshot" in state
     customer_id = state.get("customer_id")
-    snapshot = state["ticket_snapshot"] if ticket_status else (
-        await asyncio.to_thread(_load_ticket_snapshot, customer_id) if customer_id else ([], 0)
-    )
-    active_cases, recent_count, ticket_history_lookup_failed = _guardian_ticket_history(snapshot)
+    if exact_ticket:
+        active_cases, recent_count, ticket_history_lookup_failed = [], 0, state["ticket_lookup_failed"]
+    else:
+        snapshot = state.get("ticket_snapshot")
+        if snapshot is None:
+            snapshot = await asyncio.to_thread(_load_ticket_snapshot, customer_id) if customer_id else ([], 0)
+        active_cases, recent_count, ticket_history_lookup_failed = _guardian_ticket_history(snapshot)
     customer_requests_human = _requests_human(state["message"])
     previously_requested_human = _previously_requested_human(
         state.get("conversation_history", []), state["message"],

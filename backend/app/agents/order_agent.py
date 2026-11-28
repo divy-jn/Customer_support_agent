@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from app.agents.approval_service import create_pending_approval
+from app.agents.response_composer import format_support_timestamp
 from app.agents.routing_policy import normalize_intent
 from app.tools import track_order, get_customer_history
 
@@ -73,12 +74,12 @@ async def _order_history(state: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(orders, list):
             raise ValueError("Invalid order history result")
         if orders:
-            lines = ["Here is your recent order history:"]
+            lines = ["Here is your recent order history:", ""]
             for order in orders:
                 product = (order.get("products") or {}).get("name", "Product")
                 status = order.get("status", "unknown")
-                entry = f"• **Order #{order['id']}**: {product} — Status: *{status}*"
-                if date := order.get("order_date"):
+                entry = f"- **Order #{order['id']}**: {product} — Status: *{status}*"
+                if date := format_support_timestamp(order.get("order_date")):
                     entry += f" (Placed: {date})"
                 if tracking := order.get("tracking_number"):
                     entry += f" | Tracking: `{tracking}`"

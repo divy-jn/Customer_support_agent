@@ -191,17 +191,23 @@ def get_ticket(ticket_id: int, customer_id: int | None = None) -> str:
     """Get details of a specific ticket, including updates."""
     try:
         _validate_positive_int(ticket_id, "ticket_id")
-        response = supabase.table("tickets").select("*, customers(name, email)").eq("id", ticket_id).execute()
-        if not response.data:
-            return json.dumps({"error": f"Ticket #{ticket_id} not found"})
-            
-        # Enforce customer ownership
-        if customer_id is not None and response.data[0].get("customer_id") != customer_id:
-            return json.dumps({"error": f"Ticket #{ticket_id} not found or does not belong to you"})
-            
-        return json.dumps(response.data[0], indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+        query = supabase.table("tickets").select("*, customers(name, email)").eq("id", ticket_id)
+        if customer_id is not None:
+            _validate_positive_int(customer_id, "customer_id")
+            query = query.eq("customer_id", customer_id)
+        rows = query.execute().data
+        if not isinstance(rows, list):
+            raise ValueError("Unexpected ticket lookup result")
+        if not rows:
+            return json.dumps({"error": f"Ticket #{ticket_id} not found", "error_code": "not_found"})
+
+        ticket = rows[0]
+        if customer_id is not None and ticket.get("customer_id") != customer_id:
+            return json.dumps({"error": f"Ticket #{ticket_id} not found", "error_code": "not_found"})
+
+        return json.dumps(ticket, indent=2)
+    except Exception:
+        return json.dumps({"error": "Ticket lookup failed", "error_code": "lookup_failed"})
 
 
 def get_pending_handoff(customer_id: int, client_request_id: str) -> dict | None:

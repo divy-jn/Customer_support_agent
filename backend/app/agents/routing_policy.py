@@ -81,6 +81,33 @@ def normalize_intent(domain: str, intent: str) -> str:
     return normalized
 
 
+_TICKET_REFERENCE = re.compile(r"\b(?:ticket|case)\s+(?:#\s*)?([0-9]+)\b", re.IGNORECASE)
+_HASH_REFERENCE = re.compile(r"(?<!\w)#\s*([0-9]+)\b")
+_TICKET_MUTATION = re.compile(
+    r"^\s*(?:please\s+)?(?:(?:can|could|would) you\s+)?"
+    r"(?:close|reopen|change|create|cancel|resolve|update)\s+(?:(?:my|the|a)\s+)?(?:ticket|case)\b",
+    re.IGNORECASE,
+)
+_TICKET_LIST = re.compile(r"\b(?:tickets|support cases)\b", re.IGNORECASE)
+
+
+def extract_ticket_id(message: str, entities: dict, *, ticket_context: bool) -> int | None:
+    """Resolve numbered ticket queries without interpreting an order number as a ticket."""
+    if _TICKET_MUTATION.search(message):
+        return None
+    if explicit := _TICKET_REFERENCE.search(message):
+        candidate = explicit.group(1)
+    elif ticket_context and not _TICKET_LIST.search(message):
+        bare = _HASH_REFERENCE.search(message)
+        candidate = bare.group(1) if bare else entities.get("ticket_id")
+    else:
+        return None
+
+    if isinstance(candidate, str) and re.fullmatch(r"[0-9]{1,19}", candidate.strip()):
+        candidate = int(candidate)
+    return candidate if type(candidate) is int and 0 < candidate <= 2**63 - 1 else None
+
+
 def is_ticket_status_query(message: str) -> bool:
     return bool(
         re.search(r"\b(?:tickets?|support cases?)\b", message, re.IGNORECASE)

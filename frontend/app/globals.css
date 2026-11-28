@@ -32,6 +32,12 @@ body {
   font-family: system-ui, sans-serif;
 }
 
+.markdown-body ul {
+  list-style: disc;
+  padding-inline-start: 1.25rem;
+  white-space: normal;
+}
+
 /* ──────────────────────────────────────────
    Focus States (Accessibility)
    ────────────────────────────────────────── */
