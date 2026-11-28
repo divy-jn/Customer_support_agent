@@ -23,9 +23,11 @@ async def test_cancellation_only_creates_approval_request():
 
 
 @pytest.mark.asyncio
-async def test_order_id_is_required_before_any_database_lookup():
+@patch("app.agents.order_agent.get_customer_history")
+async def test_authentication_is_required_before_any_recent_order_lookup(mock_history):
     result = await handle_order_request({"message": "Where is my order?", "intent": "order_tracking"})
-    assert "share the order number" in result["response"]
+    assert "couldn’t verify" in result["response"]
+    mock_history.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -55,11 +57,25 @@ async def test_order_history_direct_retrieval(mock_history):
 
 
 @pytest.mark.asyncio
-async def test_order_follow_up_inquiry_without_order_id():
+@patch("app.agents.order_agent.get_customer_history", return_value='{"recent_orders": []}')
+async def test_order_follow_up_inquiry_without_order_id(mock_history):
     result = await handle_order_request({
         "message": "now?",
         "intent": "follow_up_inquiry",
         "customer_id": 7,
     })
-    assert "order number" in result["response"]
+    assert "don't have any past orders" in result["response"]
+    mock_history.assert_called_once_with(7)
 
+
+
+
+@pytest.mark.asyncio
+@patch("app.agents.order_agent.get_customer_history")
+async def test_cancellation_of_my_orders_still_requires_an_order_id(mock_history):
+    result = await handle_order_request({
+        "message": "cancel my orders", "intent": "cancel_order", "customer_id": 7,
+    })
+    assert "order number you want to cancel" in result["response"]
+    assert "pending_approval" not in result
+    mock_history.assert_not_called()

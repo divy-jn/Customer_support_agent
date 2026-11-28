@@ -145,7 +145,7 @@ async def test_order_history_followup_synthesizes_list_instead_of_tracking_stale
     offline_lookup.classifier.return_value = _classification("order", "view_order_history")
     offline_lookup.model.ainvoke.side_effect = [
         SimpleNamespace(content="Your orders are #42 and #43."),
-        SimpleNamespace(content="Order #42 is the one that shipped."),
+        SimpleNamespace(content='{"reply":"Order #42 is the one that shipped.","order_id":42}'),
     ]
     first = await _turn("show my order history", {
         "workflow_state": {
@@ -159,6 +159,7 @@ async def test_order_history_followup_synthesizes_list_instead_of_tracking_stale
     assert prompt["question"] == "which one is shipped?"
     assert prompt["verified_records"]["records"][0]["placed_at"] == "15 Sep 2026, 10:55 UTC"
     assert followup["response"] == "Order #42 is the one that shipped."
+    assert followup["workflow_state"]["lookup_context"] == {"kind": "order", "record_id": 42}
     assert orders.call_args_list == [call(7), call(7)]
     track.assert_not_called()
 
@@ -205,3 +206,120 @@ async def test_explicit_escalation_rechecks_active_ticket_and_skips_synthesis(
     assert followup["guardian_ticket_id"] == 642
     assert followup["explicit_lookup_escalation"]
     offline_lookup.model.ainvoke.assert_awaited_once()
+
+
+
+@pytest.fixture
+def recent_orders(monkeypatch):
+    rows = [
+        {"id": 451, "customer_id": 7, "status": "active", "order_date": "2026-09-16T10:55:47Z",
+         "products": {"name": "PixelPro 9"}},
+        {"id": 1, "customer_id": 7, "status": "delivered", "order_date": "2026-09-15T10:55:47Z",
+         "products": {"name": "PixelPro 9"}},
+        {"id": 151, "customer_id": 7, "status": "delivered", "order_date": "2026-04-18T10:55:47Z",
+         "products": {"name": "Headphones"}},
+    ]
+    history = Mock(return_value=json.dumps({"customer_id": 7, "recent_orders": rows}))
+    exact = Mock(return_value=json.dumps(rows[1]))
+    monkeypatch.setattr(order_agent, "get_customer_history", history)
+    monkeypatch.setattr(order_agent, "track_order", exact)
+    return SimpleNamespace(history=history, exact=exact)
+
+
+def _model_selection(reply, order_id):
+    return SimpleNamespace(content=json.dumps({"reply": reply, "order_id": order_id}))
+
+
+@pytest.mark.asyncio
+async def test_latest_order_details_fetch_owned_orders_without_an_id(offline_lookup, recent_orders):
+    offline_lookup.model.ainvoke.return_value = _model_selection("Order #451 for PixelPro 9 is active.", 451)
+
+    result = await _turn("can u gove me order details of latest order")
+
+    assert result["response"] == "Order #451 for PixelPro 9 is active."
+    assert result["workflow_state"]["order_state"]["order_id"] == "451"
+    assert result["workflow_state"]["lookup_context"] == {"kind": "order", "record_id": 451}
+    recent_orders.history.assert_called_once_with(7)
+    recent_orders.exact.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_order_followup_chain_resolves_descriptions_and_missing_date(offline_lookup, recent_orders):
+    questions = ["which was the latest delivered", "and delivered on which date?", "this pixel pro order"]
+    offline_lookup.model.ainvoke.side_effect = [
+        _model_selection("Order #1 was the latest placed order marked delivered.", 1),
+        SimpleNamespace(content="Order #1 is marked delivered. Its exact delivery date is not recorded."),
+        _model_selection("Order #1 is your delivered PixelPro 9 order.", 1),
+    ]
+    results = []
+    history = []
+    previous = None
+    for question in questions:
+        previous = await _turn(question, previous, history)
+        results.append(previous)
+        history.extend([
+            {"role": "customer", "content": question},
+            {"role": "agent", "content": previous["response"]},
+        ])
+
+    assert all(result["workflow_state"]["lookup_context"] == {"kind": "order", "record_id": 1} for result in results)
+    prompts = [json.loads(item.args[0][1]["content"]) for item in offline_lookup.model.ainvoke.await_args_list]
+    assert [prompt["question"] for prompt in prompts] == questions
+    assert prompts[0]["verified_records"]["latest_matching_order_id"] == 1
+    assert prompts[1]["verified_records"]["records"] == [{
+        "id": 1, "product": "PixelPro 9", "status": "delivered", "tracking_number": None,
+        "placed_at": "15 Sep 2026, 10:55 UTC", "delivered_at": None,
+    }]
+    assert prompts[2]["verified_records"]["active_order_id"] == 1
+    assert prompts[2]["recent_history"][-2]["content"] == questions[1]
+    assert "exact delivery date is not recorded" in results[1]["response"]
+    assert "Order #1" in results[2]["response"]
+    assert recent_orders.history.call_args_list == [call(7), call(7)]
+    recent_orders.exact.assert_called_once_with(1, 7)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selected_id", [None, 999])
+async def test_ambiguous_or_unverified_order_selection_does_not_set_an_active_id(
+    offline_lookup, recent_orders, selected_id,
+):
+    reply = "Which PixelPro 9 order did you mean?" if selected_id is None else "Order #999 has shipped."
+    offline_lookup.model.ainvoke.return_value = _model_selection(reply, selected_id)
+
+    result = await _turn("this pixel pro order")
+
+    assert result["workflow_state"]["lookup_context"] == {"kind": "order_history", "record_id": None}
+    assert result["workflow_state"]["order_state"]["order_id"] is None
+    assert "999" not in result["response"]
+    if selected_id is None:
+        assert result["response"] == reply
+    recent_orders.history.assert_called_once_with(7)
+    recent_orders.exact.assert_not_called()
+
+
+
+@pytest.mark.asyncio
+async def test_latest_order_uses_full_timestamp_when_orders_share_a_minute(offline_lookup, recent_orders):
+    payload = json.loads(recent_orders.history.return_value)
+    payload["recent_orders"][0]["order_date"] = "2026-09-15T10:55:48Z"
+    recent_orders.history.return_value = json.dumps(payload)
+    # The model selects a real but older order. Fall back to the verified latest.
+    offline_lookup.model.ainvoke.return_value = _model_selection("Order #1 was your latest.", 1)
+
+    result = await _turn("order details of latest order")
+
+    assert "Order #451" in result["response"]
+    assert "Placed: 15 Sep 2026, 10:55 UTC" in result["response"]
+    assert result["workflow_state"]["lookup_context"] == {"kind": "order", "record_id": 451}
+
+
+@pytest.mark.asyncio
+async def test_order_selection_accepts_fenced_json(offline_lookup, recent_orders):
+    body = _model_selection("Order #1 is your delivered PixelPro 9 order.", 1).content
+    fence = chr(96) * 3
+    offline_lookup.model.ainvoke.return_value = SimpleNamespace(content=f"{fence}json\n{body}\n{fence}")
+
+    result = await _turn("this delivered pixel pro order")
+
+    assert result["response"] == "Order #1 is your delivered PixelPro 9 order."
+    assert result["workflow_state"]["lookup_context"] == {"kind": "order", "record_id": 1}

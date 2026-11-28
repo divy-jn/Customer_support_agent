@@ -8,12 +8,13 @@ node performs the mutation after explicit customer confirmation.
 import asyncio
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from app.agents.approval_service import create_pending_approval
-from app.agents.grounded_response import synthesize_lookup_reply
+from app.agents.grounded_response import synthesize_lookup_reply, synthesize_order_selection
 from app.agents.response_composer import format_support_timestamp
-from app.agents.routing_policy import normalize_intent
+from app.agents.routing_policy import is_order_delivery_date_question, normalize_intent
 from app.models import LookupContext
 from app.tools import track_order, get_customer_history
 
@@ -43,10 +44,12 @@ def _format_tracking(order: dict[str, Any]) -> str:
     details += f" is currently {status}."
     if tracking:
         details += f" Tracking number: {tracking}."
+    if delivered := format_support_timestamp(order.get("delivered_at")):
+        details += f" Delivered: {delivered}."
     return details
 
 
-def _update_order_state(ws: Any, oid: int, tool_name: str | None = None, tool_res: Any = None) -> dict[str, Any]:
+def _update_order_state(ws: Any, oid: int | None, tool_name: str | None = None, tool_res: Any = None) -> dict[str, Any]:
     if hasattr(ws, "model_dump"):
         ws_dict = ws.model_dump(mode="json")
     elif isinstance(ws, dict):
@@ -55,7 +58,9 @@ def _update_order_state(ws: Any, oid: int, tool_name: str | None = None, tool_re
         ws_dict = {}
     if "order_state" not in ws_dict or not isinstance(ws_dict.get("order_state"), dict):
         ws_dict["order_state"] = {"domain_status": "in_progress"}
-    ws_dict["order_state"]["order_id"] = str(oid)
+    ws_dict["order_state"]["order_id"] = str(oid) if oid is not None else None
+    if oid is None:
+        ws_dict["order_state"].pop("last_tool_result", None)
     if tool_name:
         ws_dict["order_state"]["last_tool"] = tool_name
         if tool_res is not None:
@@ -74,10 +79,47 @@ def _order_facts(order: dict[str, Any]) -> dict[str, Any]:
         "status": order.get("status"),
         "tracking_number": order.get("tracking_number"),
         "placed_at": format_support_timestamp(order.get("order_date")),
+        "delivered_at": format_support_timestamp(order.get("delivered_at")),
     }
 
 
-async def _order_history(state: dict[str, Any]) -> dict[str, Any]:
+def _latest_matching_order(message: str, orders: list[dict]) -> dict | None:
+    """Resolve a recency request without relying on a model-generated order ID."""
+    recency = re.search(
+        r"\b(?:latest|most recent)\s+(?:(delivered|shipped)(?:\s+order)?|order)(?:\s+please)?[?.!]*\s*$",
+        message, re.IGNORECASE,
+    )
+    if not recency:
+        return None
+    status = (recency[1] or "").lower()
+    matches = [order for order in orders if not status or order.get("status") == status]
+    if len(matches) == 1:
+        return matches[0]
+    # The history tool sorts by placement. Use actual delivery times only
+    # when they are available for every order marked delivered.
+    def timestamp(order, field):
+        value = order.get(field)
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+    dates = [timestamp(order, "delivered_at") for order in matches] if status == "delivered" else []
+    if not dates or not all(dates):
+        dates = [timestamp(order, "order_date") for order in matches]
+    dated = sorted(
+        ((date, order) for date, order in zip(dates, matches) if date is not None),
+        key=lambda pair: pair[0], reverse=True,
+    )
+    if len(dated) >= 2 and len(dated) == len(matches) and dated[0][0] != dated[1][0]:
+        return dated[0][1]
+    return None
+
+
+async def _order_history(state: dict[str, Any], *, descriptive: bool = False) -> dict[str, Any]:
     customer_id = state.get("customer_id")
     try:
         raw = await asyncio.to_thread(get_customer_history, customer_id) if type(customer_id) is int and customer_id > 0 else "{}"
@@ -90,8 +132,12 @@ async def _order_history(state: dict[str, Any]) -> dict[str, Any]:
         orders = payload.get("recent_orders")
         if not isinstance(orders, list):
             raise ValueError("Invalid order history result")
-        if any(order.get("customer_id", customer_id) != customer_id for order in orders):
-            raise ValueError("Unexpected order owner")
+        if any(
+            order.get("customer_id", customer_id) != customer_id
+            or type(order.get("id")) is not int or order["id"] <= 0
+            for order in orders
+        ):
+            raise ValueError("Invalid order record")
         records = [_order_facts(order) for order in orders]
         if orders:
             lines = ["Here is your recent order history:", ""]
@@ -108,22 +154,45 @@ async def _order_history(state: dict[str, Any]) -> dict[str, Any]:
             response = "\n".join(lines)
         else:
             response = "You don't have any past orders on file with us yet."
-    except (AttributeError, KeyError, TypeError, ValueError):
+    except Exception:
         return {
             "response": "I couldn’t verify your order history right now. Please try again.",
             "tool_results": None,
             "workflow_state": state.get("workflow_state"),
             "escalated": False,
         }
-    response = await synthesize_lookup_reply(
-        message=state["message"], history=state.get("conversation_history", []),
-        facts={"kind": "order_history", "records": records}, fallback=response,
-    )
+    workflow = _update_order_state(state.get("workflow_state"), None, "get_customer_history")
+    context = LookupContext(kind="order_history")
+    facts = {"kind": "order_history", "records": records}
+    if descriptive and records:
+        latest = _latest_matching_order(state["message"], orders)
+        latest_id = latest["id"] if latest else None
+        facts["active_order_id"] = state.get("active_lookup_order_id")
+        facts["latest_matching_order_id"] = latest_id
+        if latest:
+            response = _format_tracking(latest)
+            if placed := format_support_timestamp(latest.get("order_date")):
+                response += f" Placed: {placed}."
+            if latest.get("status") == "delivered" and not format_support_timestamp(latest.get("delivered_at")):
+                response += " Its exact delivery date is not recorded."
+        response, selected_id = await synthesize_order_selection(
+            message=state["message"], history=state.get("conversation_history", []),
+            facts=facts, fallback=response, fallback_order_id=latest_id,
+        )
+        if selected_id is not None:
+            selected = next(record for record in records if record["id"] == selected_id)
+            workflow = _update_order_state(workflow, selected_id, "get_customer_history", selected)
+            context = LookupContext(kind="order", record_id=selected_id)
+    else:
+        response = await synthesize_lookup_reply(
+            message=state["message"], history=state.get("conversation_history", []),
+            facts=facts, fallback=response,
+        )
     return {
         "response": response,
         "tool_results": raw,
-        "workflow_state": state.get("workflow_state"),
-        "lookup_context": LookupContext(kind="order_history").model_dump(),
+        "workflow_state": workflow,
+        "lookup_context": context.model_dump(),
         "escalated": False,
     }
 
@@ -133,13 +202,16 @@ async def handle_order_request(state: dict[str, Any]) -> dict[str, Any]:
     intent = normalize_intent("order", state.get("intent", ""))
     msg_lower = state["message"].lower()
     order_id = _order_id(state["message"])
-    if intent == "view_order_history" or (
+    read_only = intent not in _CANCEL_INTENTS | _EXCEPTION_INTENTS
+    if read_only and (intent == "view_order_history" or (
         order_id is None
         and any(phrase in msg_lower for phrase in ("order history", "past order", "previous order", "order list", "my orders"))
-    ):
+    )):
         return await _order_history(state)
     if order_id is None:
         order_id = state.get("lookup_order_id")
+    if order_id is None and read_only:
+        return await _order_history(state, descriptive=True)
     if order_id is None:
         raw_ws = state.get("workflow_state") or {}
         ord_st = raw_ws.get("order_state") if isinstance(raw_ws, dict) else getattr(raw_ws, "order_state", None)
@@ -154,15 +226,15 @@ async def handle_order_request(state: dict[str, Any]) -> dict[str, Any]:
             except (ValueError, TypeError):
                 pass
 
-    if order_id is None:
-        if intent in {"follow_up_inquiry", "follow_up", "order_status", "general_order_inquiry"} or msg_lower in {"now?", "now", "what now?", "next?"}:
-            return {
-                "response": "I'm ready to assist you! If you would like to track, modify, or cancel a specific order, please let me know your order number.",
-                "workflow_state": state.get("workflow_state"),
-                "escalated": False,
-            }
+    if order_id is None and intent in _CANCEL_INTENTS:
         return {
-            "response": "Please share the order number so I can look that up for you.",
+            "response": "Please share the order number you want to cancel.",
+            "escalated": False,
+        }
+    if order_id is None:
+        return {
+            "response": "A support specialist needs to review the delivery issue.",
+            "requires_human": True,
             "escalated": False,
         }
 
@@ -255,9 +327,12 @@ async def handle_order_request(state: dict[str, Any]) -> dict[str, Any]:
             "escalated": False,
         }
 
+    fallback = _format_tracking(order)
+    if is_order_delivery_date_question(state["message"]) and not facts["delivered_at"]:
+        fallback += " The exact delivery date is not recorded."
     response = await synthesize_lookup_reply(
         message=state["message"], history=state.get("conversation_history", []),
-        facts={"kind": "order", "records": [facts]}, fallback=_format_tracking(order),
+        facts={"kind": "order", "records": [facts]}, fallback=fallback,
     )
     ws_with_tool = _update_order_state(state.get("workflow_state"), order_id, "track_order", raw)
     return {

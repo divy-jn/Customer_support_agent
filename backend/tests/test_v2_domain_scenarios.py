@@ -151,9 +151,10 @@ class TestV2BusinessDomains:
     @pytest.mark.asyncio
     @patch("app.agents.domain_graph.find_customer_support_cases", return_value='{"recent_count": 0, "cases": []}')
     @patch("app.agents.order_agent.track_order")
+    @patch("app.agents.order_agent.get_customer_history", return_value='{"recent_orders": [{"id": 42, "status": "shipped"}]}')
     @patch("app.agents.domain_graph.semantic_router.classify_semantic_intent")
-    async def test_order_domain_missing_order_id_asks_for_clarification(
-        self, mock_classify, mock_track, mock_cases, monkeypatch
+    async def test_order_domain_without_an_id_uses_recent_orders(
+        self, mock_classify, mock_history, mock_track, mock_cases, monkeypatch
     ):
         monkeypatch.setattr(settings, "agent_architecture_mode", "v2_product_order")
         mock_classify.return_value = _route("order", "tracking")
@@ -169,8 +170,8 @@ class TestV2BusinessDomains:
         result = await domain_support_graph.ainvoke(state)
 
         assert result["semantic_domain"] == "order"
-        assert "order number" in result["response"].lower()
-        # Invariant: No mutation or query tool was called without identifier
+        assert "Order #42" in result["response"]
+        mock_history.assert_called_once_with(55)
         mock_track.assert_not_called()
 
     @pytest.mark.asyncio

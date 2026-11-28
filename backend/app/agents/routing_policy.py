@@ -141,6 +141,29 @@ def asks_to_escalate_lookup(message: str) -> bool:
     return bool(_LOOKUP_HANDOFF.fullmatch(message.strip()))
 
 
+_ORDER_DESCRIPTION = re.compile(
+    r"\b(?:latest|most recent)\s+(?:order\b|(?:delivered|shipped)\b)"
+    r"|\b(?:this|that)\s+(?:[\w-]+\s+){0,4}order\b",
+    re.IGNORECASE,
+)
+_DELIVERY_DATE_QUESTION = re.compile(
+    r"\bwhen\b.*\bdeliver(?:ed|y)?\b|\bdeliver(?:ed|y)?\b.*\b(?:date|when)\b"
+    r"|\b(?:what|which)\s+date\b.*\bdeliver(?:ed|y)?\b",
+    re.IGNORECASE,
+)
+_ORDER_ACTION_REQUEST = re.compile(
+    r"\b(?:cancel|refund|return|replace|reschedule|change|escalate|damaged|missing|wrong item)\b", re.IGNORECASE,
+)
+
+
+def is_descriptive_order_lookup(message: str) -> bool:
+    return bool(_ORDER_DESCRIPTION.search(message)) and not _ORDER_ACTION_REQUEST.search(message)
+
+
+def is_order_delivery_date_question(message: str) -> bool:
+    return bool(_DELIVERY_DATE_QUESTION.search(message)) and not _ORDER_ACTION_REQUEST.search(message)
+
+
 def telemetry_intent(value: str) -> str:
     # A model can put customer data in an unconstrained intent field.
     if len(value) <= 64 and value.strip().lower() in _TELEMETRY_INTENTS:

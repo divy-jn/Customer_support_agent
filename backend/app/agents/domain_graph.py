@@ -26,7 +26,8 @@ from app.agents.order_agent import handle_order_request
 from app.agents.payment_agent import handle_payment_request
 from app.agents.general_agent import handle_general_request
 from app.agents.routing_policy import (
-    asks_to_escalate_lookup, extract_ticket_id, is_lookup_followup, is_ticket_status_query,
+    asks_to_escalate_lookup, extract_ticket_id, is_descriptive_order_lookup, is_lookup_followup,
+    is_order_delivery_date_question, is_ticket_status_query,
     normalize_intent, telemetry_entity_keys, telemetry_intent,
 )
 from app.config import settings
@@ -50,6 +51,7 @@ class DomainAgentState(AgentState):
     ticket_snapshot: tuple[list[dict] | None, int]
     lookup_ticket_id: int | None
     lookup_order_id: int | None
+    active_lookup_order_id: int | None
     ticket_lookup_failed: bool
     lookup_context: dict[str, Any]
     explicit_lookup_escalation: bool
@@ -110,6 +112,15 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
         explicit_escalation = context is not None and asks_to_escalate_lookup(message)
         contextual_lookup = context is not None and is_lookup_followup(message) and not _requests_human(message)
         ticket_query = current_mode == "v2_all" and is_ticket_status_query(message)
+        order_context = context is not None and context.kind in {"order", "order_history"}
+        order_description = (
+            current_mode in {"v2_all", "v2_core", "v2_product_order"}
+            and not _requests_human(message)
+            and is_descriptive_order_lookup(message)
+        )
+        order_date_followup = (
+            order_context and not _requests_human(message) and is_order_delivery_date_question(message)
+        )
         lookup_ticket_id = None
         lookup_order_id = None
         if current_mode == "v2_all":
@@ -126,15 +137,20 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
             lookup_ticket_id = context.record_id if context.kind == "ticket" else None
         elif ticket_query or lookup_ticket_id is not None:
             domain, intent = "general", "ticket_status"
-        elif contextual_lookup:
+        elif order_description:
+            domain, intent = "order", "order_details"
+        elif order_date_followup or contextual_lookup:
             if context.kind in {"ticket", "active_tickets"}:
                 domain, intent = "general", "ticket_status"
                 lookup_ticket_id = context.record_id
             else:
                 domain = "order"
-                intent = "view_order_history" if context.kind == "order_history" else "track_order"
+                intent = "follow_up_inquiry" if context.kind == "order_history" else "track_order"
                 lookup_order_id = context.record_id
-        if ticket_query or lookup_ticket_id is not None or classified or contextual_lookup or explicit_escalation:
+        if (
+            ticket_query or lookup_ticket_id is not None or classified or contextual_lookup
+            or order_description or order_date_followup or explicit_escalation
+        ):
             if not explicit_escalation:
                 workflow.lookup_context = None
             decision = Supervisor.decide(
@@ -144,6 +160,14 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
                 state["message"],
             )
             workflow = Supervisor.apply_decision(workflow, decision)
+            if (
+                decision.action is SupervisorAction.RESUME and domain == "order"
+                and not order_description and lookup_order_id is None
+                and workflow.customer_id == state.get("customer_id")
+                and workflow.order_state and workflow.order_state.last_tool in {"track_order", "get_customer_history"}
+                and (resumed_order_id := workflow.order_state.order_id) and resumed_order_id.isdecimal()
+            ):
+                lookup_order_id = int(resumed_order_id) or None
             res_dom = (
                 decision.transition_metadata.resumed_domain.value
                 if decision.transition_metadata and decision.transition_metadata.resumed_domain
@@ -162,6 +186,7 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
                 "semantic_domain": domain,
                 "lookup_ticket_id": lookup_ticket_id,
                 "lookup_order_id": lookup_order_id,
+                "active_lookup_order_id": context.record_id if order_context else None,
                 "explicit_lookup_escalation": explicit_escalation,
                 "supervisor_action": decision.action.value,
                 "supervisor_target_domain": decision.target_domain.value,
@@ -450,7 +475,7 @@ async def v2_ticket_status_node(state: DomainAgentState) -> dict[str, Any]:
 _READ_ONLY_INTENTS = {
     "order": frozenset({
         "view_order_history", "track_order", "tracking", "order_tracking",
-        "order_status", "order_details", "check_order",
+        "order_status", "order_details", "check_order", "follow_up_inquiry", "follow_up", "general_order_inquiry",
     }),
     "payment": frozenset({"payment_method"}),
     "product": frozenset({

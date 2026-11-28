@@ -21,7 +21,13 @@ when those fields are available. If the input flags that no reason is recorded, 
 relevant verified facts; the application explains the missing reason and offers human help.
 Never say or imply that a handoff, escalation, refund or other action has started, will
 happen, or is complete. The application handles actions separately.
-Return only concise customer-facing text. Use a compact Markdown list if multiple records
+For orders, include "Order #ID" for each specific order. Use the active order ID to
+interpret an otherwise ambiguous reference to "this" order when it matches the records.
+Treat a null or absent field as unrecorded. Never use placed_at as a delivery timestamp, and
+say explicitly when the exact delivery date was not recorded. If asked for the latest
+delivered order and delivery dates are absent, use the latest placed order marked delivered
+and make that distinction. Ask which order they mean only if multiple records fit equally.
+Write concise customer-facing text. Use a compact Markdown list if multiple records
 are relevant. Do not repeat a previous answer when the latest question narrows the focus."""
 
 _REASON_QUESTION = re.compile(
@@ -45,7 +51,27 @@ _REASON_UNAVAILABLE = (
 async def synthesize_lookup_reply(
     *, message: str, history: list[dict[str, Any]], facts: dict[str, Any], fallback: str,
 ) -> str:
-    """Generate text only; callers retain authority for every status and action."""
+    reply, _ = await _synthesize_lookup_reply(
+        message=message, history=history, facts=facts, fallback=fallback,
+    )
+    return reply
+
+
+async def synthesize_order_selection(
+    *, message: str, history: list[dict[str, Any]], facts: dict[str, Any],
+    fallback: str, fallback_order_id: int | None,
+) -> tuple[str, int | None]:
+    return await _synthesize_lookup_reply(
+        message=message, history=history, facts=facts, fallback=fallback,
+        select_order=True, fallback_order_id=fallback_order_id,
+    )
+
+
+async def _synthesize_lookup_reply(
+    *, message: str, history: list[dict[str, Any]], facts: dict[str, Any], fallback: str,
+    select_order: bool = False, fallback_order_id: int | None = None,
+) -> tuple[str, int | None]:
+    """Generate a reply and optionally identify a verified order for follow-up reads."""
     records = facts["records"]
     reason_missing = bool(_REASON_QUESTION.search(message)) and (
         not records or any(not record.get("recorded_resolution") for record in records)
@@ -69,13 +95,21 @@ async def synthesize_lookup_reply(
          "verified_records": facts, "reason_not_recorded": reason_missing},
         ensure_ascii=False,
     )
+    if select_order:
+        instructions = _SYSTEM_PROMPT + (
+            '\nReturn a JSON object with "reply" (customer-facing text) and "order_id" '
+            '(the verified integer order ID only if the question clearly resolves to one order, '
+            'otherwise null). Keep order_id null for lists, no matches, or ambiguous references.'
+        )
+    else:
+        instructions = _SYSTEM_PROMPT + "\nReturn only the reply text."
     timeout = min(settings.llm_timeout, 8)
     try:
         llm = get_llm(temperature=0.1, request_timeout=timeout, max_tokens=800)
         with track_llm_call(model_for_telemetry(llm), "grounded_lookup_reply", prompt) as tracker:
             response = await asyncio.wait_for(
                 llm.ainvoke([
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": instructions},
                     {"role": "user", "content": prompt},
                 ]),
                 timeout=timeout,
@@ -84,16 +118,32 @@ async def synthesize_lookup_reply(
             if isinstance(content, str):
                 tracker["output_text"] = content
     except Exception:
-        return fallback
+        return fallback, fallback_order_id
 
     if not isinstance(content, str) or getattr(response, "tool_calls", None):
-        return fallback
+        return fallback, fallback_order_id
     text = content.strip()
+    selected_id = None
+    if select_order:
+        fenced = re.fullmatch(r"```(?:json)?\s*(.+?)\s*```", text, re.IGNORECASE | re.DOTALL)
+        try:
+            selection = json.loads(fenced[1] if fenced else text)
+            text = selection["reply"].strip()
+            selected_id = selection["order_id"]
+        except (ValueError, KeyError, TypeError, AttributeError):
+            return fallback, fallback_order_id
+        if fallback_order_id is not None and selected_id != fallback_order_id:
+            return fallback, fallback_order_id
+        if selected_id is not None and (
+            type(selected_id) is not int or not any(row["id"] == selected_id for row in records)
+            or not re.search(rf"\bOrder #{selected_id}\b", text, re.IGNORECASE)
+        ):
+            return fallback, fallback_order_id
     if (
         not text or len(text) > 2800
         or text != remove_unconfirmed_handoff_claims(text)
         or _UNVERIFIED_ACTION.search(text)
         or (reason_missing and _UNRECORDED_CAUSE.search(text))
     ):
-        return fallback
-    return f"{text}\n\n{_REASON_UNAVAILABLE}" if reason_missing else text
+        return fallback, fallback_order_id
+    return (f"{text}\n\n{_REASON_UNAVAILABLE}" if reason_missing else text), selected_id
