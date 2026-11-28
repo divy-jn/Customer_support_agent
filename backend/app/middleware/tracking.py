@@ -46,9 +46,10 @@ def emit_workflow_turn(event: dict) -> None:
 # ──────────────────────────────────────────────
 #  Cost Estimation (per 1M tokens, approximate)
 # ──────────────────────────────────────────────
-# #review: Hardcoded cost dictionary only includes select Gemini models.
-# Unknown models will report estimated_cost_usd as 0.0 unless configured.
 MODEL_COSTS = {
+    # Bedrock standard on-demand, US East (N. Virginia).
+    # https://aws.amazon.com/bedrock/pricing/
+    "deepseek.v3.2": {"input": 0.62, "output": 1.85},
     # Vertex AI Gemini
     "gemini-3.8-flash": {"input": 0.075, "output": 0.30},
     "gemini-2.5-flash": {"input": 0.075, "output": 0.30},
@@ -64,9 +65,12 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
-def _estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
+def _estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float | None:
     """Estimate cost in USD based on model pricing."""
-    costs = MODEL_COSTS.get(model, {"input": 0.0, "output": 0.0})
+    costs = MODEL_COSTS.get(model)
+    if costs is None:
+        logger.warning("LLM cost estimate unavailable for unpriced model", extra={"model": model})
+        return None
     input_cost = (tokens_in / 1_000_000) * costs["input"]
     output_cost = (tokens_out / 1_000_000) * costs["output"]
     return round(input_cost + output_cost, 6)
@@ -85,6 +89,7 @@ _aggregate_metrics = {
         "total_tokens_out": 0,
         "total_latency_ms": 0.0,
         "total_estimated_cost_usd": 0.0,
+        "unpriced_calls": 0,
         "by_model": defaultdict(lambda: {"calls": 0, "tokens_in": 0, "tokens_out": 0, "latency_ms": 0.0, "errors": 0}),
         "by_node": defaultdict(lambda: {"calls": 0, "latency_ms": 0.0, "errors": 0}),
     },
@@ -119,6 +124,7 @@ def get_aggregate_metrics() -> dict:
                     1,
                 ),
                 "total_estimated_cost_usd": round(_aggregate_metrics["llm"]["total_estimated_cost_usd"], 6),
+                "unpriced_calls": _aggregate_metrics["llm"]["unpriced_calls"],
                 "by_model": {k: dict(v) for k, v in _aggregate_metrics["llm"]["by_model"].items()},
                 "by_node": {k: dict(v) for k, v in _aggregate_metrics["llm"]["by_node"].items()},
             },
@@ -226,7 +232,10 @@ def track_llm_call(model: str, node: str, prompt_text: str = ""):
             m["total_tokens_in"] += tracker["tokens_in"]
             m["total_tokens_out"] += tokens_out
             m["total_latency_ms"] += elapsed_ms
-            m["total_estimated_cost_usd"] += cost
+            if cost is None:
+                m["unpriced_calls"] += 1
+            else:
+                m["total_estimated_cost_usd"] += cost
 
             if tracker.get("error"):
                 m["total_errors"] += 1
