@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     agent_secret: str = Field(default="", alias="AGENT_SECRET")
     jwt_secret: str = Field(default="", alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
-    jwt_expiration_minutes: int = Field(default=1440, alias="JWT_EXPIRATION_MINUTES")
+    jwt_expiration_minutes: int = Field(default=60, gt=0, alias="JWT_EXPIRATION_MINUTES")
     approval_signing_secret: str = Field(default="", alias="APPROVAL_SIGNING_SECRET")
 
     # --- Redis ---
