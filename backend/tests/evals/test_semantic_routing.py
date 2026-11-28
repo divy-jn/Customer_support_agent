@@ -1,7 +1,18 @@
+import os
+from unittest.mock import AsyncMock, Mock
+
 import pytest
-import asyncio
+
 from app.agents.semantic_router import classify_semantic_intent
 from app.models import RouterFailureType
+
+pytestmark = [
+    pytest.mark.llm_eval(probe=False),
+    pytest.mark.skipif(
+        os.environ.get("RUN_LIVE_INCIDENT_ROUTING") != "1",
+        reason="Set RUN_LIVE_INCIDENT_ROUTING=1 to make live model requests.",
+    ),
+]
 
 # ──────────────────────────────────────────────
 #  Targeted Semantic Router Evaluation Set
@@ -30,9 +41,11 @@ EVAL_CASES = [
     },
     {
         "id": "4_order_tracking",
-        "message": "Where is my order? I ordered it 3 days ago.",
+        "message": "Please track my order #123. Where is it?",
         "history": [],
-        "expected_domain": "order"
+        "expected_domain": "order",
+        "expected_tool": "track_order",
+        "tracking_intents": {"track_order", "tracking", "order_tracking", "order_status"},
     },
     {
         "id": "5_cancellation",
@@ -75,15 +88,15 @@ EVAL_CASES = [
     }
 ]
 
-@pytest.mark.llm_eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", EVAL_CASES, ids=lambda c: c["id"])
-async def test_semantic_routing_eval(case):
+async def test_semantic_routing_eval(case, monkeypatch):
     """
     Evaluates the semantic router against the 10 targeted test sets.
     Checks for:
     - Valid schema (SUCCESS)
     - Correct domain assignment
+    - Read-only tool dispatch for the tracked order
     """
     result = await classify_semantic_intent(
         message=case["message"],
@@ -92,8 +105,26 @@ async def test_semantic_routing_eval(case):
     
     # 1. System Reliability: Ensure the parser and network succeeded
     assert result.diagnostics.failure_type == RouterFailureType.SUCCESS, \
-        f"Router system failure: {result.diagnostics.error_message}"
+        f"Router system failure: {result.diagnostics.failure_type.value}"
         
     # 2. Semantic Correctness: Ensure the domain is correct
     assert result.domain == case["expected_domain"], \
         f"Expected domain '{case['expected_domain']}' but got '{result.domain}'. Intent was '{result.intent}'"
+
+
+    if case.get("expected_tool") == "track_order":
+        from app.agents import domain_graph, order_agent
+        from app.config import settings
+
+        assert result.intent.strip().lower() in case["tracking_intents"]
+        monkeypatch.setattr(settings, "agent_architecture_mode", "v2_all")
+        monkeypatch.setattr(domain_graph.semantic_router, "classify_semantic_intent", AsyncMock(return_value=result))
+        monkeypatch.setattr(domain_graph, "find_customer_support_cases", Mock(return_value='{"cases":[],"recent_count":0}'))
+        track = Mock(return_value='{"id":123,"status":"shipped","tracking_number":"SYNTHETIC-123"}')
+        monkeypatch.setattr(order_agent, "track_order", track)
+        graph_result = await domain_graph.domain_support_graph.ainvoke({
+            "message": case["message"], "conversation_history": case["history"],
+            "session_id": "synthetic-tracking-eval", "customer_id": 7,
+        })
+        track.assert_called_once_with(123, 7)
+        assert "SYNTHETIC-123" in graph_result["response"]

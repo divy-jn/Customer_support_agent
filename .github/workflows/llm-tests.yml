@@ -1,35 +1,50 @@
-name: Live LLM Integration Tests
+name: Live Bedrock Routing Evaluation
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   live-llm-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_ENVIRONMENT: test
+      DEBUG_MODE: "true"
+      AWS_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: "true"
+      LLM_PROVIDER: bedrock
+      LLM_MODEL: deepseek.v3.2
+      LLM_TIMEOUT: "120"
+      SUPABASE_URL: http://127.0.0.1:9
+      SUPABASE_KEY: synthetic-test-key
+      LANGSMITH_TRACING: "false"
+      RUN_LIVE_INCIDENT_ROUTING: "1"
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-        
-    - name: Install dependencies
-      run: |
-        cd backend
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        
-    - name: Run Pytest Live LLM Tests
-      env:
-        LLM_BASE_URL: https://ollama.com/v1
-        LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-        LLM_SMALL_MODEL: nemotron-3-super
-        LLM_LARGE_MODEL: nemotron-3-super
-        LLM_FALLBACK_MODEL: gpt-oss:120b
-        LLM_TIMEOUT: 120
-        SUPABASE_URL: https://test-project.supabase.co
-        SUPABASE_KEY: test-supabase-key-123456
-      run: |
-        cd backend
-        pytest tests/test_semantic_router.py tests/evals/test_semantic_routing.py
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+
+      - name: Assume the Bedrock evaluation role
+        uses: aws-actions/configure-aws-credentials@v6.3.1
+        with:
+          role-to-assume: ${{ vars.BEDROCK_EVAL_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: routing-eval
+
+      - name: Run classifier and dispatch checks
+        working-directory: backend
+        run: >-
+          python -m pytest -q -m llm_eval
+          tests/evals/test_semantic_routing.py tests/evals/test_incident_routing_live.py
