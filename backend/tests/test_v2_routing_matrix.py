@@ -11,7 +11,7 @@ Verifies the routing matrix across all supported architecture modes:
 Proves:
 1. Runtime entry point selection in WebSocket/chat handler.
 2. Domain routing decisions based on feature flag and intent allowlists.
-3. Full V2 clarifies unsupported intents; partial modes retain legacy fallback.
+3. Enabled domains handle unfamiliar intents; partial modes retain legacy fallback for disabled domains.
 4. Critical Invariant: REQUEST_CLARIFICATION never executes domain mutations (order, payment, product, general).
 5. Critical Invariant: ESCALATE always routes to Guardian policy control.
 6. Graph topology: Every enabled V2 domain node unconditionally terminates at guardian_response.
@@ -21,8 +21,6 @@ import pytest
 from unittest.mock import MagicMock
 
 from app.agents.domain_graph import (
-    _ORDER_V2_INTENTS,
-    _PAYMENT_V2_INTENTS,
     domain_support_graph,
     route_after_supervisor,
 )
@@ -144,11 +142,11 @@ class TestRoutingMatrix:
             "supervisor_action": SupervisorAction.CONTINUE.value,
         }) == "order"
 
-        # Order unsupported intent falls back to legacy
+        # Unfamiliar intent still reaches the enabled order agent
         assert route_after_supervisor({
             "semantic_domain": "order", "intent": "custom_brokerage_inquiry",
             "supervisor_action": SupervisorAction.CONTINUE.value,
-        }) == "legacy"
+        }) == "order"
 
         # Payment and general disabled
         assert route_after_supervisor({
@@ -186,11 +184,11 @@ class TestRoutingMatrix:
             "supervisor_action": SupervisorAction.CONTINUE.value,
         }) == "payment"
 
-        # Payment unsupported intent falls back to legacy
+        # Unfamiliar intent still reaches the enabled payment agent
         assert route_after_supervisor({
             "semantic_domain": "payment", "intent": "wire_transfer_swift_code",
             "supervisor_action": SupervisorAction.CONTINUE.value,
-        }) == "legacy"
+        }) == "payment"
 
         # General disabled
         assert route_after_supervisor({

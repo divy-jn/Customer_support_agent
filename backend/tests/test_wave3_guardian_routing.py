@@ -181,12 +181,11 @@ async def test_payment_method_uses_approved_document_without_ticket_write(monkey
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("domain", "ticket_type"), [("order", "cancellation"), ("payment", "billing")])
-async def test_full_v2_clarification_crosses_guardian_without_ticket_write(monkeypatch, turn, domain, ticket_type):
-    fake_ticket_db(monkeypatch, [{**case(42, age=72, subject="Legacy ticket"), "type": ticket_type}])
+async def test_full_v2_clarification_crosses_guardian_without_ticket_write(monkeypatch, turn):
+    fake_ticket_db(monkeypatch, [case(42, age=72, subject="Legacy ticket")])
     decide = Mock(wraps=domain_graph.Guardian.decide)
     monkeypatch.setattr(domain_graph.Guardian, "decide", decide)
-    result = await run_turn(monkeypatch, domain, "unsupported_intent", "Can you change this for me?")
+    result = await run_turn(monkeypatch, "unknown", "unknown", "Can you change this for me?")
     assert_outcome(result, turn, action="resolve", ticket=None, text="clarify your request")
     decide.assert_called_once()
     assert decide.call_args.args[0].active_cases[0].id == 42

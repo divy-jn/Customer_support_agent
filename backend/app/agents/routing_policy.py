@@ -4,6 +4,9 @@ Provides the deterministic mapping from semantic domain to execution route.
 Does NOT execute the routes or contain LLM prompts.
 """
 
+import re
+
+
 def map_domain_to_route(domain: str) -> str:
     """
     Deterministic mapping of semantic domain to target agent.
@@ -58,6 +61,33 @@ _TELEMETRY_ENTITY_KEYS = frozenset({
     "order_id", "ticket_id", "product_id", "product_name", "product_model", "tracking_number",
     "payment_id", "transaction_reference", "customer_id", "email", "name", "serial_number",
 })
+
+
+_TICKET_STATUS_ALIASES = frozenset({
+    "ticket_status", "ticket_status_request", "active_ticket_status", "list_active_tickets",
+    "ticket_inquiry", "active_tickets", "check_ticket_status",
+})
+
+
+def normalize_intent(domain: str, intent: str) -> str:
+    normalized = re.sub(r"[\s-]+", "_", intent.strip().lower())
+    if domain == "order" and (
+        normalized in ORDER_HISTORY_ALIASES
+        or any(keyword in normalized for keyword in ("history", "past_orders", "list_orders"))
+    ):
+        return "view_order_history"
+    if domain == "general" and normalized in _TICKET_STATUS_ALIASES:
+        return "ticket_status"
+    return normalized
+
+
+def is_ticket_status_query(message: str) -> bool:
+    return bool(
+        re.search(r"\b(?:tickets?|support cases?)\b", message, re.IGNORECASE)
+        and re.search(r"\b(?:my|for my account|i have)\b", message, re.IGNORECASE)
+        and re.search(r"\b(?:status|active|open|pending)\b", message, re.IGNORECASE)
+        and not re.search(r"\b(?:close|reopen|update|change|create|cancel|resolve)\b", message, re.IGNORECASE)
+    )
 
 
 def telemetry_intent(value: str) -> str:

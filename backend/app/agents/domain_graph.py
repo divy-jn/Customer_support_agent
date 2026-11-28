@@ -24,24 +24,14 @@ from app.agents.response_composer import compose_response
 from app.agents.order_agent import handle_order_request
 from app.agents.payment_agent import handle_payment_request
 from app.agents.general_agent import handle_general_request
-from app.agents.routing_policy import telemetry_entity_keys, telemetry_intent
+from app.agents.routing_policy import (
+    is_ticket_status_query, normalize_intent, telemetry_entity_keys, telemetry_intent,
+)
 from app.config import settings
 from app.models import OrchestrationDomain, RouterFailureType, WorkflowState
 from app.tools import create_ticket, find_customer_support_cases, update_ticket
 
 logger = logging.getLogger(__name__)
-
-_ORDER_V2_INTENTS = {
-    "tracking", "track_order", "order_tracking", "cancel_order", "order_cancellation", "cancellation",
-    "delivery_issue", "delivery_delay", "missing_item", "wrong_item", "damaged_item", "order_issue", "shipping_issue",
-    "view_order_history", "order_history", "list_orders", "past_orders", "my_orders",
-    "follow_up_inquiry", "follow_up", "order_status", "check_order", "order_details", "general_order_inquiry",
-}
-_PAYMENT_V2_INTENTS = {
-    "refund", "refund_request", "process_refund", "billing_issue", "payment_failure", "payment_failed",
-    "transaction_issue", "duplicate_charge", "charged_twice", "payment_method",
-}
-
 
 class DomainAgentState(AgentState):
     """Legacy-compatible state enriched with deterministic V2 routing facts."""
@@ -54,6 +44,8 @@ class DomainAgentState(AgentState):
     semantic_failure_type: str
     pre_turn_workflow_domain: str | None
     supervisor_action: str | None
+    supervisor_target_domain: str | None
+    ticket_snapshot: tuple[list[dict] | None, int]
     supervisor_reason: str | None
     architecture_mode: str | None
     guardian_action: str | None
@@ -96,12 +88,18 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
     if current_mode in {"legacy", "shadow"}:
         current_mode = "v2_product"
 
+    domain = semantic.domain
+    intent = normalize_intent(domain, semantic.intent)
+    ticket_query = current_mode == "v2_all" and is_ticket_status_query(state["message"])
+    if ticket_query:
+        domain, intent = "general", "ticket_status"
+
     try:
         workflow = WorkflowState.from_legacy(base_workflow)
-        if semantic.diagnostics.failure_type == RouterFailureType.SUCCESS:
+        if ticket_query or semantic.diagnostics.failure_type == RouterFailureType.SUCCESS:
             decision = Supervisor.decide(
-                semantic.domain,
-                semantic.intent,
+                domain,
+                intent,
                 workflow,
                 state["message"],
             )
@@ -118,11 +116,12 @@ async def semantic_supervisor_node(state: DomainAgentState) -> dict[str, Any]:
             )
             return {
                 **telemetry,
-                "intent": semantic.intent,
+                "intent": intent,
                 "sentiment": semantic.sentiment,
                 "urgency": semantic.urgency,
-                "semantic_domain": semantic.domain,
+                "semantic_domain": domain,
                 "supervisor_action": decision.action.value,
+                "supervisor_target_domain": decision.target_domain.value,
                 "supervisor_reason": decision.transition_reason,
                 "resumed_domain": res_dom,
                 "suspended_domain": sus_dom,
@@ -163,7 +162,7 @@ def route_after_supervisor(state: DomainAgentState) -> str:
     if supervisor_action not in valid_actions:
         return fallback
 
-    domain = state.get("semantic_domain")
+    domain = state.get("supervisor_target_domain") or state.get("semantic_domain")
     intent = state.get("intent")
 
     if domain == "escalation":
@@ -178,20 +177,20 @@ def route_after_supervisor(state: DomainAgentState) -> str:
         return "legacy"
 
     if domain == "order":
-        if mode in {"v2_product_order", "v2_core", "v2_all"} and intent in _ORDER_V2_INTENTS:
+        if mode in {"v2_product_order", "v2_core", "v2_all"}:
             return "order"
         return fallback
 
     if domain == "payment":
         if mode == "v2_all" and intent == "payment_method":
             return "general"
-        if mode in {"v2_core", "v2_all"} and intent in _PAYMENT_V2_INTENTS:
+        if mode in {"v2_core", "v2_all"}:
             return "payment"
         return fallback
 
     if domain == "general":
         if mode == "v2_all":
-            return "general"
+            return "ticket_status" if intent == "ticket_status" else "general"
         return "legacy"
 
     return fallback
@@ -240,6 +239,8 @@ def _safety_or_legal_issue(message: str) -> bool:
 
 def _case_domain(ticket: dict) -> str | None:
     ticket_type = ticket.get("type")
+    if not isinstance(ticket_type, str):
+        return None
     return {
         "technical_issue": "product",
         "billing": "payment",
@@ -250,36 +251,70 @@ def _case_domain(ticket: dict) -> str | None:
 
 def _case_intent(ticket: dict) -> str | None:
     subject = ticket.get("subject", "")
-    if not subject.startswith("Issue: "):
+    if not isinstance(subject, str) or not subject.startswith("Issue: "):
         return None
     return subject[7:].split(" - ", 1)[0].lower().replace(" ", "_") or None
 
 
-def _ticket_history(customer_id: int | None) -> tuple[list[SupportCase], int, bool]:
-    """Load active cases and the independent recent count for this customer."""
-    if not customer_id:
-        return [], 0, False
+def _load_ticket_snapshot(customer_id: int | None) -> tuple[list[dict] | None, int]:
+    """Read the authenticated customer's active cases and recent ticket count."""
+    if type(customer_id) is not int or customer_id <= 0:
+        return None, 0
     since = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
     try:
         payload = json.loads(find_customer_support_cases(customer_id, created_since=since))
-        if not isinstance(payload, dict) or payload.get("error"):
-            return [], 0, True
-        recent_count = payload.get("recent_count")
-        if type(recent_count) is not int or recent_count < 0 or not isinstance(payload.get("cases"), list):
-            return [], 0, True
-        cases = [
-            SupportCase(
-                id=case["id"],
-                status=case["status"],
-                domain=_case_domain(case),
-                intent=_case_intent(case),
-                priority=case.get("priority"),
+        cases = payload["cases"]
+        recent_count = payload["recent_count"]
+        if (
+            payload.get("error") or not isinstance(cases, list)
+            or type(recent_count) is not int or recent_count < 0
+            or any(
+                not isinstance(case, dict)
+                or type(case.get("id")) is not int
+                or not isinstance(case.get("status"), str)
+                for case in cases
             )
-            for case in payload["cases"]
-        ]
-        return cases, recent_count, False
+        ):
+            return None, 0
+        return cases, recent_count
     except Exception:
-        return [], 0, True
+        # Keep lookup failures distinct from an authoritative empty result.
+        return None, 0
+
+
+def _guardian_ticket_history(snapshot: tuple[list[dict] | None, int]) -> tuple[list[SupportCase], int, bool]:
+    rows, recent_count = snapshot
+    cases = [
+        SupportCase(
+            id=case["id"],
+            status=case["status"],
+            domain=_case_domain(case),
+            intent=_case_intent(case),
+            priority=case.get("priority"),
+        )
+        for case in rows or []
+    ]
+    return cases, recent_count, rows is None
+
+
+async def v2_ticket_status_node(state: DomainAgentState) -> dict[str, Any]:
+    snapshot = await asyncio.to_thread(_load_ticket_snapshot, state.get("customer_id"))
+    cases, _ = snapshot
+    if cases is None:
+        response = "I couldn’t verify your active support tickets right now. Please try again."
+    elif not cases:
+        response = "You have no active support tickets on your account."
+    else:
+        lines = ["Here are your active support tickets:"]
+        for case in cases[:10]:
+            subject = " ".join(str(case.get("subject") or "Support request").split())[:120]
+            status = case["status"].replace("_", " ").capitalize()
+            updated = case.get("updated_at") or "Unavailable"
+            lines.append(f"- **Ticket #{case['id']}** — {subject}. Status: {status}. Last updated: {updated}.")
+        if len(cases) > 10:
+            lines.append(f"Showing 10 of {len(cases)} active tickets.")
+        response = "\n".join(lines)
+    return {"response": response, "ticket_snapshot": snapshot}
 
 
 async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
@@ -292,15 +327,18 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
     else:
         new_workflow = {}
 
-    domain = state.get("semantic_domain", "general")
+    domain = state.get("supervisor_target_domain") or state.get("semantic_domain", "general")
     prior_attempts = max(0, int(new_workflow.get("unresolved_attempts", 0)))
     clarification_only = bool(state.get("clarification_only"))
     payment_methods = domain == "payment" and state.get("intent") == "payment_method" and (
         state.get("architecture_mode") or settings.agent_architecture_mode
     ) == "v2_all"
-    active_cases, recent_count, ticket_history_lookup_failed = await asyncio.to_thread(
-        _ticket_history, state.get("customer_id")
+    ticket_status = "ticket_snapshot" in state
+    customer_id = state.get("customer_id")
+    snapshot = state["ticket_snapshot"] if ticket_status else (
+        await asyncio.to_thread(_load_ticket_snapshot, customer_id) if customer_id else ([], 0)
     )
+    active_cases, recent_count, ticket_history_lookup_failed = _guardian_ticket_history(snapshot)
     customer_requests_human = _requests_human(state["message"])
     previously_requested_human = _previously_requested_human(
         state.get("conversation_history", []), state["message"],
@@ -312,10 +350,15 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         and state.get("urgency", "low").lower() not in {"high", "critical"}
         and (domain == "escalation" or state.get("supervisor_action") == SupervisorAction.ESCALATE.value)
     )
-    domain_failed = bool(state.get("requires_human")) or (
-        state.get("response") is None
-        and not one_off_human_request
-        and state.get("supervisor_action") != SupervisorAction.ESCALATE.value
+    domain_failed = (
+        clarification_only
+        or (ticket_status and ticket_history_lookup_failed)
+        or bool(state.get("requires_human"))
+        or (
+            state.get("response") is None
+            and not one_off_human_request
+            and state.get("supervisor_action") != SupervisorAction.ESCALATE.value
+        )
     )
     attempts_for_decision = prior_attempts + int(domain_failed)
     decision = Guardian.decide(GuardianInput(
@@ -330,7 +373,7 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         unresolved_attempts=attempts_for_decision,
         active_cases=active_cases,
         recent_ticket_count=recent_count,
-        allow_ticket_mutation=not (clarification_only or payment_methods),
+        allow_ticket_mutation=not (clarification_only or payment_methods or ticket_status),
         history_lookup_failed=ticket_history_lookup_failed,
         sentiment=state.get("sentiment", "neutral"),
         urgency=state.get("urgency", "low"),
@@ -359,8 +402,8 @@ async def guardian_response_node(state: DomainAgentState) -> dict[str, Any]:
         response = compose_response(response, decision)
 
     if decision.action in {GuardianAction.RESOLVE, GuardianAction.CONTINUE}:
-        answered = state.get("response") is not None and not clarification_only
-        next_unresolved_attempts = 0 if answered else prior_attempts
+        answered = state.get("response") is not None and not domain_failed
+        next_unresolved_attempts = 0 if answered else attempts_for_decision
     else:
         next_unresolved_attempts = attempts_for_decision if domain_failed else prior_attempts
 
@@ -495,6 +538,7 @@ def create_domain_support_graph():
     workflow.add_node("v2_order", v2_order_node)
     workflow.add_node("v2_payment", v2_payment_node)
     workflow.add_node("v2_general", v2_general_node)
+    workflow.add_node("v2_ticket_status", v2_ticket_status_node)
     workflow.add_node("safe_clarification", safe_clarification_node)
     workflow.add_node("guardian_response", guardian_response_node)
     workflow.add_node("legacy_fallback", legacy_fallback_node)
@@ -507,6 +551,7 @@ def create_domain_support_graph():
             "order": "v2_order",
             "payment": "v2_payment",
             "general": "v2_general",
+            "ticket_status": "v2_ticket_status",
             "guardian": "guardian_response",
             "clarification": "safe_clarification",
             "legacy": "legacy_fallback",
@@ -516,6 +561,7 @@ def create_domain_support_graph():
     workflow.add_edge("v2_order", "guardian_response")
     workflow.add_edge("v2_payment", "guardian_response")
     workflow.add_edge("v2_general", "guardian_response")
+    workflow.add_edge("v2_ticket_status", "guardian_response")
     workflow.add_conditional_edges(
         "safe_clarification",
         lambda state: "guardian_response" if state.get("clarification_only") else END,

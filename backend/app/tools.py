@@ -143,7 +143,7 @@ def find_customer_support_cases(
         while True:
             query = (
                 supabase.table("tickets")
-                .select("id, subject, type, status, priority, created_at, order_id")
+                .select("id, subject, type, status, priority, created_at, updated_at, order_id")
                 .eq("customer_id", customer_id)
                 .in_("status", list(statuses))
                 .order("id", desc=True)

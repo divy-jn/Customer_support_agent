@@ -6,6 +6,7 @@ Outputs a strictly typed SemanticRouteResult.
 
 import json
 import time
+from app.agents.routing_policy import SEMANTIC_INTENTS
 from app.llm_factory import get_llm, model_for_telemetry
 from app.middleware.tracking import track_llm_call
 from app.models import SemanticRouteResult, RouterDiagnostics, RouterFailureType
@@ -20,7 +21,7 @@ DO NOT decide which internal agent, database, or tool should handle the request.
 Extract and output a JSON object exactly matching this schema:
 {
   "domain": "general" | "product" | "order" | "payment" | "escalation" | "unknown",
-  "intent": "<string_describing_the_intent>",
+  "intent": "<one allowed value for the chosen domain>",
   "sentiment": "positive" | "neutral" | "negative",
   "urgency": "low" | "medium" | "high" | "critical",
   "confidence": <float_between_0_and_1>,
@@ -31,15 +32,21 @@ Extract and output a JSON object exactly matching this schema:
 }
 
 Definitions:
-- "general": Policies, general FAQs, store hours, generic questions.
+- "general": Policies, FAQs, and account queries including ticket status and active tickets.
+  Use "ticket_status" for the customer's own support cases, even if no ticket number is given.
 - "product": Product features, tech support, specifications, warranty queries.
-- "order": Order tracking, cancellations, missing/damaged items, shipping delays.
+- "order": Order tracking, cancellations, delivery issues, and the customer's order history.
+  Use "view_order_history" to list past orders, even if no order number is given.
 - "payment": Billing, deductions, refunds, transaction failures, and accepted payment methods.
-  Use the intent "payment_method" for questions about which payment methods are accepted.
+  Use "payment_method" for questions about which payment methods are accepted.
 - "escalation": Severe complaints, explicit human handoff requests.
 
-If you are unsure of the domain, use "unknown".
-"""
+Choose exactly one intent from the list for the selected domain. If uncertain
+about the specific intent, use the closest listed value for that domain.
+If uncertain about the domain, use "unknown" for both domain and intent.
+
+Allowed intents by domain:
+""" + "\n".join(f"- {domain}: {', '.join(intents)}" for domain, intents in SEMANTIC_INTENTS.items())
 
 def get_semantic_router_llm():
     return get_llm(temperature=0.1)
